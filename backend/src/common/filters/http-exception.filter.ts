@@ -34,7 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     } else if (exception instanceof Error) {
       this.logger.error(`Unhandled exception: ${exception.message}`, exception.stack);
       // Handle Prisma errors
-      const prismaError = exception as Record<string, unknown>;
+      const prismaError = exception as unknown as Record<string, unknown>;
       if (prismaError.code === 'P2002') {
         status = HttpStatus.CONFLICT;
         message = 'Registro já existe com esses dados';
