@@ -10,7 +10,6 @@ import {
   LogOut,
   ChevronDown,
   Loader2,
-  HardHat,
   User,
 } from 'lucide-react'
 import { useStore } from '@/store'
@@ -26,6 +25,22 @@ const NAV_TABS = [
   { to: '/programacao-semanal', label: 'Prog. Semanal', icon: ClipboardList },
   { to: '/configuracoes', label: 'Configurações', icon: Settings },
 ]
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const year = d.getFullYear()
+  return `${day}/${month}/${year}`
+}
+
+function todayFormatted(): string {
+  const d = new Date()
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const year = d.getFullYear()
+  return `${day}/${month}/${year}`
+}
 
 export function AppLayout() {
   const navigate = useNavigate()
@@ -118,180 +133,361 @@ export function AppLayout() {
 
   if (loadingProjects) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="text-muted-foreground text-sm">Carregando projetos...</p>
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'var(--bg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+          <Loader2
+            style={{ width: 36, height: 36, color: 'var(--amber)', animation: 'spin 1s linear infinite' }}
+          />
+          <p style={{ fontSize: 13, color: 'var(--t2)' }}>Carregando projetos...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* ── Top Header ─────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
-        <div className="flex items-center h-14 px-4 gap-4">
-          {/* Logo */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="bg-primary rounded-md p-1.5">
-              <HardHat className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-foreground text-base hidden sm:block leading-tight">
-              AvançoObras{' '}
-              <span className="text-primary font-extrabold">Pro</span>
-            </span>
-          </div>
+    <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
+      <div className="ao-app">
 
-          {/* Project Selector — center */}
-          <div className="flex-1 flex justify-center">
-            <div ref={projectDropdownRef} className="relative">
+        {/* ── Header ──────────────────────────────────────────────── */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            borderBottom: '0.5px solid var(--bd)',
+            marginBottom: '1rem',
+            paddingBottom: '.875rem',
+          }}
+        >
+          {/* Left: logo + project selector */}
+          <div>
+            {/* Logo */}
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+              Avanço
+              <span style={{ color: 'var(--amber)' }}>Obras</span>{' '}
+              <span style={{ fontSize: 11, color: 'var(--t2)', fontWeight: 400 }}>Pro</span>
+            </div>
+
+            {/* Project selector */}
+            <div ref={projectDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
               <button
                 onClick={() => setProjectDropdownOpen((o) => !o)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-background hover:bg-accent transition-colors text-sm font-medium max-w-xs min-w-[160px]"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 11,
+                  color: 'var(--t2)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '2px 0',
+                  fontFamily: 'var(--font)',
+                }}
               >
-                <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="truncate flex-1 text-left">
+                <span>
                   {currentProject ? currentProject.name : 'Selecionar projeto'}
+                  {currentProject?.company ? ` · ${currentProject.company}` : ''}
                 </span>
                 <ChevronDown
-                  className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform ${
-                    projectDropdownOpen ? 'rotate-180' : ''
-                  }`}
+                  style={{
+                    width: 12,
+                    height: 12,
+                    transform: projectDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.15s',
+                  }}
                 />
               </button>
 
               {projectDropdownOpen && (
-                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-64 bg-popover border border-border rounded-md shadow-lg z-50 py-1">
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    minWidth: 220,
+                    background: 'var(--bg1)',
+                    border: '0.5px solid var(--bd2)',
+                    borderRadius: 'var(--r-lg)',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+                    zIndex: 50,
+                    padding: '4px 0',
+                  }}
+                >
                   {projects.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                    <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--t2)' }}>
                       Nenhum projeto encontrado
                     </div>
                   ) : (
-                    projects.map((project) => (
-                      <button
-                        key={project.id}
-                        onClick={() => handleSelectProject(project)}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex items-center gap-2 ${
-                          currentProject?.id === project.id
-                            ? 'bg-accent text-accent-foreground font-medium'
-                            : 'text-foreground'
-                        }`}
-                      >
-                        <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        <span className="truncate">{project.name}</span>
-                        {currentProject?.id === project.id && (
-                          <span className="ml-auto text-primary text-xs">✓</span>
-                        )}
-                      </button>
-                    ))
+                    projects.map((project) => {
+                      const isActive = currentProject?.id === project.id
+                      return (
+                        <button
+                          key={project.id}
+                          onClick={() => handleSelectProject(project)}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '7px 12px',
+                            fontSize: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            background: isActive ? 'var(--bg2)' : 'none',
+                            color: isActive ? 'var(--t1)' : 'var(--t2)',
+                            fontWeight: isActive ? 500 : 400,
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font)',
+                          }}
+                        >
+                          <Building2 style={{ width: 12, height: 12, flexShrink: 0 }} />
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {project.name}
+                          </span>
+                          {isActive && (
+                            <span style={{ color: 'var(--amber)', fontSize: 11 }}>✓</span>
+                          )}
+                        </button>
+                      )
+                    })
                   )}
                 </div>
               )}
             </div>
           </div>
 
-          {/* User Menu */}
-          <div ref={userMenuRef} className="relative shrink-0">
-            <button
-              onClick={() => setUserMenuOpen((o) => !o)}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent transition-colors"
-            >
-              {user?.avatarUrl ? (
-                <img
-                  src={user.avatarUrl}
-                  alt={user.fullName}
-                  className="h-8 w-8 rounded-full object-cover"
+          {/* Right: dates + user avatar */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            {/* Date info */}
+            <div style={{ fontSize: 11, color: 'var(--t2)', textAlign: 'right' }}>
+              <div>Atualização: {todayFormatted()}</div>
+              {currentProject?.endDate && (
+                <div>Prazo: {formatDate(currentProject.endDate)}</div>
+              )}
+            </div>
+
+            {/* User avatar + menu */}
+            <div ref={userMenuRef} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setUserMenuOpen((o) => !o)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: 'none',
+                  border: '0.5px solid var(--bd)',
+                  borderRadius: 'var(--r-md)',
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font)',
+                }}
+              >
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.fullName}
+                    style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: '50%',
+                      background: 'var(--amber)',
+                      color: '#fff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 10,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {userInitials}
+                  </div>
+                )}
+                <ChevronDown
+                  style={{
+                    width: 12,
+                    height: 12,
+                    color: 'var(--t3)',
+                    transform: userMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.15s',
+                  }}
                 />
-              ) : (
-                <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
-                  {userInitials}
+              </button>
+
+              {userMenuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    right: 0,
+                    width: 200,
+                    background: 'var(--bg1)',
+                    border: '0.5px solid var(--bd2)',
+                    borderRadius: 'var(--r-lg)',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+                    zIndex: 50,
+                    padding: '4px 0',
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderBottom: '0.5px solid var(--bd)',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {user?.fullName ?? user?.username}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {user?.email}
+                    </div>
+                    <span className="ao-badge ao-bk" style={{ marginTop: 4 }}>
+                      {user?.role}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setUserMenuOpen(false)
+                      navigate('/configuracoes')
+                    }}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '7px 12px',
+                      fontSize: 12,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--t1)',
+                      fontFamily: 'var(--font)',
+                    }}
+                  >
+                    <User style={{ width: 13, height: 13 }} />
+                    Meu Perfil
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '7px 12px',
+                      fontSize: 12,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--red)',
+                      fontFamily: 'var(--font)',
+                    }}
+                  >
+                    <LogOut style={{ width: 13, height: 13 }} />
+                    Sair
+                  </button>
                 </div>
               )}
-              <span className="hidden md:block text-sm font-medium text-foreground max-w-[120px] truncate">
-                {user?.fullName ?? user?.username ?? 'Usuário'}
-              </span>
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${
-                  userMenuOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
-
-            {userMenuOpen && (
-              <div className="absolute top-full right-0 mt-1 w-52 bg-popover border border-border rounded-md shadow-lg z-50 py-1">
-                <div className="px-3 py-2 border-b border-border">
-                  <p className="text-sm font-semibold text-foreground truncate">
-                    {user?.fullName ?? user?.username}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-                  <span className="inline-flex mt-1 items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-xs font-medium">
-                    {user?.role}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setUserMenuOpen(false)
-                    navigate('/configuracoes')
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex items-center gap-2 text-foreground"
-                >
-                  <User className="h-4 w-4" />
-                  Meu Perfil
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex items-center gap-2 text-destructive"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sair
-                </button>
-              </div>
-            )}
+            </div>
           </div>
         </div>
 
-        {/* ── Navigation Tabs ───────────────────────────────────────── */}
-        <nav className="overflow-x-auto scrollbar-none">
-          <div className="flex items-center px-4 gap-0.5 min-w-max">
-            {NAV_TABS.map(({ to, label, icon: Icon }) => (
-              <NavLink
-                key={to}
-                to={to}
-                className={({ isActive }) =>
-                  `flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                    isActive
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
-                  }`
-                }
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </NavLink>
-            ))}
-          </div>
+        {/* ── Navigation ──────────────────────────────────────────── */}
+        <nav
+          style={{
+            display: 'flex',
+            background: 'var(--bg1)',
+            border: '0.5px solid var(--bd)',
+            borderRadius: 12,
+            padding: 4,
+            gap: 2,
+            overflowX: 'auto',
+            marginBottom: '1.25rem',
+          }}
+        >
+          {NAV_TABS.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              style={({ isActive }) => ({
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '6px 12px',
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: isActive ? 500 : 400,
+                color: isActive ? 'var(--t1)' : 'var(--t2)',
+                background: isActive ? 'var(--bg2)' : 'none',
+                border: 'none',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                textDecoration: 'none',
+                transition: 'all 0.15s',
+                flexShrink: 0,
+              })}
+            >
+              {({ isActive }) => (
+                <>
+                  <Icon
+                    style={{
+                      width: 14,
+                      height: 14,
+                      color: isActive ? 'var(--amber)' : 'var(--t3)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  {label}
+                </>
+              )}
+            </NavLink>
+          ))}
         </nav>
-      </header>
 
-      {/* ── Main Content ──────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-auto">
-        {!currentProject ? (
-          <div className="flex flex-col items-center justify-center h-full min-h-[60vh] gap-4 text-center px-4">
-            <Building2 className="h-16 w-16 text-muted-foreground/40" />
-            <div>
-              <h2 className="text-xl font-semibold text-foreground mb-1">
-                Nenhum projeto selecionado
-              </h2>
-              <p className="text-muted-foreground text-sm max-w-sm">
-                Selecione um projeto no menu acima para começar, ou cadastre um novo projeto.
-              </p>
+        {/* ── Main Content ────────────────────────────────────────── */}
+        <main>
+          {!currentProject ? (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '40vh',
+                gap: '1rem',
+                textAlign: 'center',
+              }}
+            >
+              <Building2 style={{ width: 48, height: 48, color: 'var(--t3)', opacity: 0.5 }} />
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>
+                  Nenhum projeto selecionado
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--t2)', maxWidth: 320 }}>
+                  Selecione um projeto no menu acima para começar, ou cadastre um novo projeto.
+                </div>
+              </div>
             </div>
-          </div>
-        ) : (
-          <Outlet />
-        )}
-      </main>
+          ) : (
+            <Outlet />
+          )}
+        </main>
+      </div>
     </div>
   )
 }

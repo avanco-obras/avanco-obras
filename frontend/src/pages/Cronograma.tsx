@@ -1,35 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import {
-  ChevronRight,
-  ChevronDown,
-  Search,
-  Download,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  AlertTriangle,
-} from 'lucide-react';
 import { useStore } from '@/store';
 import { scheduleApi } from '@/services/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import type { GanttTask } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const PX_PER_DAY = 4;
-const ROW_HEIGHT = 36;
-
-// ── Level style map ───────────────────────────────────────────────────────────
-
-const LEVEL_ROW: Record<number, string> = {
-  0: 'bg-slate-800 text-white font-bold text-sm',
-  1: 'bg-slate-600 text-white font-bold text-xs',
-  2: 'bg-slate-200 text-slate-800 font-medium text-xs',
-  3: 'bg-slate-100 text-slate-700 text-xs',
-  4: 'bg-white text-slate-500 text-xs',
-};
-
-const levelRowClass = (level: number) => LEVEL_ROW[level] ?? LEVEL_ROW[4];
+const ROW_H = 28;
+const HDR_H = 30;
+const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
@@ -79,27 +58,44 @@ function monthsInRange(minDate: Date, maxDate: Date): { label: string; left: num
     const end = endOfMonth > maxDate ? maxDate : endOfMonth;
     const left = daysBetween(minDate, start) * PX_PER_DAY;
     const width = (daysBetween(start, end) + 1) * PX_PER_DAY;
-    const label = cur.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+    // Show year prefix on January only, matching HTML reference
+    const mi = cur.getMonth();
+    const label = mi === 0 ? `${cur.getFullYear()} ${MONTHS_PT[0]}` : MONTHS_PT[mi];
     months.push({ label, left, width });
     cur.setMonth(cur.getMonth() + 1);
   }
   return months;
 }
 
+// Same thresholds and colors as HTML reference
 function barColor(actual: number, planned: number): string {
-  if (actual >= planned) return '#22c55e'; // green
-  if (actual >= planned * 0.85) return '#f59e0b'; // amber
-  return '#ef4444'; // red
+  if (actual >= planned) return '#3B6D11';
+  if (actual >= planned - 15) return '#BA7517';
+  return '#E24B4A';
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
+function badgeClass(actual: number, planned: number): string {
+  if (actual >= planned) return 'ao-badge ao-bg';
+  if (actual >= planned - 15) return 'ao-badge ao-ba';
+  return 'ao-badge ao-br';
+}
 
-function SkeletonRow() {
-  return (
-    <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 animate-pulse">
-      <div className="h-3 bg-slate-200 rounded w-4/5" />
-    </div>
-  );
+// ── Level row styles ──────────────────────────────────────────────────────────
+
+function levelStyle(level: number): React.CSSProperties {
+  switch (level) {
+    case 0: return { background: 'var(--bg3)', fontWeight: 600, fontSize: 12 };
+    case 1: return { background: 'var(--bg2)', fontWeight: 500, fontSize: 11 };
+    case 2: return { fontSize: 11, paddingLeft: 12 };
+    case 3: return { fontSize: 10, color: 'var(--t2)', paddingLeft: 20 };
+    default: return { fontSize: 10, color: 'var(--t3)', paddingLeft: 28 };
+  }
+}
+
+function rowBg(level: number): string {
+  if (level === 0) return 'var(--bg3)';
+  if (level === 1) return 'var(--bg2)';
+  return 'transparent';
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -132,7 +128,6 @@ export default function Cronograma() {
       .ganttData(projectId)
       .then((data) => {
         setTasks(data);
-        // Default: expand level 0 and 1
         const ids = data.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
@@ -156,18 +151,6 @@ export default function Cronograma() {
     }
   }, [loadData, projectId]);
 
-  // Build parent index
-  const parentIndex = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    tasks.forEach((t) => {
-      if (t.parentId) {
-        if (!map[t.parentId]) map[t.parentId] = [];
-        map[t.parentId].push(t.id);
-      }
-    });
-    return map;
-  }, [tasks]);
-
   // Ancestor set for search filtering
   const ancestorIds = useMemo((): Set<string> => {
     if (!search) return new Set();
@@ -188,17 +171,14 @@ export default function Cronograma() {
   // Visible tasks (respecting expand + search)
   const visibleTasks = useMemo(() => {
     if (search) {
-      // Show matching rows AND their ancestors
       const matchedIds = new Set(
         tasks.filter((t) => t.name.toLowerCase().includes(search)).map((t) => t.id)
       );
       return tasks.filter((t) => matchedIds.has(t.id) || ancestorIds.has(t.id));
     }
-    // Normal mode: hide children of collapsed nodes
     const hidden = new Set<string>();
     tasks.forEach((t) => {
       if (!t.parentId) return;
-      // Walk up — if any ancestor is collapsed, hide
       let pid: string | undefined = t.parentId;
       while (pid) {
         const parent = tasks.find((x) => x.id === pid);
@@ -224,40 +204,33 @@ export default function Cronograma() {
     const dates = tasks.flatMap((t) => [parseDate(t.startDate), parseDate(t.endDate)]);
     const min = new Date(Math.min(...dates.map((d) => d.getTime())));
     const max = new Date(Math.max(...dates.map((d) => d.getTime())));
-    // Pad 1 month each side
     min.setMonth(min.getMonth() - 1);
     max.setMonth(max.getMonth() + 1);
     return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * PX_PER_DAY };
   }, [tasks]);
 
   const months = useMemo(() => monthsInRange(minDate, maxDate), [minDate, maxDate]);
-
   const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * PX_PER_DAY, [minDate]);
 
-  // Scroll sync
+  // Scroll sync (vertical only — horizontal is shared in same container)
   function onLeftScroll() {
     if (syncingRef.current) return;
     syncingRef.current = true;
-    if (rightRef.current && leftRef.current) {
-      rightRef.current.scrollTop = leftRef.current.scrollTop;
-    }
+    if (rightRef.current && leftRef.current) rightRef.current.scrollTop = leftRef.current.scrollTop;
     syncingRef.current = false;
   }
 
   function onRightScroll() {
     if (syncingRef.current) return;
     syncingRef.current = true;
-    if (leftRef.current && rightRef.current) {
-      leftRef.current.scrollTop = rightRef.current.scrollTop;
-    }
+    if (leftRef.current && rightRef.current) leftRef.current.scrollTop = rightRef.current.scrollTop;
     syncingRef.current = false;
   }
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
@@ -280,20 +253,17 @@ export default function Cronograma() {
 
   function barWidth(task: GanttTask) {
     const days = daysBetween(parseDate(task.startDate), parseDate(task.endDate));
-    return Math.max(2, days * PX_PER_DAY);
+    return Math.max(4, days * PX_PER_DAY);
   }
 
   // ── No project selected ───────────────────────────────────────────────────
 
   if (!currentProject) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-        <AlertTriangle className="h-14 w-14 text-muted-foreground/40" />
-        <div>
-          <h2 className="text-xl font-semibold text-foreground mb-1">Selecione um projeto</h2>
-          <p className="text-muted-foreground text-sm">
-            Escolha um projeto no seletor acima para visualizar o cronograma.
-          </p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
+        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
+          <p>Escolha um projeto no seletor acima para visualizar o cronograma.</p>
         </div>
       </div>
     );
@@ -302,44 +272,76 @@ export default function Cronograma() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-background shrink-0 flex-wrap">
-        <h1 className="text-lg font-bold text-foreground mr-2">Cronograma</h1>
-
-        <div className="relative flex-1 min-w-[180px] max-w-xs">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
+    <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0 }}>
+      {/* Card header */}
+      <div className="ao-card-hdr" style={{ marginBottom: 8 }}>
+        <span className="ao-card-title">EAP — Cronograma completo</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
             placeholder="Buscar atividade..."
             value={searchRaw}
             onChange={(e) => setSearchRaw(e.target.value)}
-            className="pl-8 h-8 text-sm"
+            style={{
+              padding: '5px 9px',
+              fontSize: 11,
+              border: '0.5px solid var(--bd2)',
+              borderRadius: 8,
+              background: 'var(--bg1)',
+              color: 'var(--t1)',
+              width: 160,
+            }}
           />
+          <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
+          <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
+          <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
         </div>
-
-        <Button variant="outline" size="sm" onClick={expandAll} className="h-8 gap-1">
-          <ChevronsUpDown className="h-3.5 w-3.5" />
-          Expandir
-        </Button>
-        <Button variant="outline" size="sm" onClick={collapseAll} className="h-8 gap-1">
-          <ChevronsDownUp className="h-3.5 w-3.5" />
-          Recolher
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleExport} className="h-8 gap-1 ml-auto">
-          <Download className="h-3.5 w-3.5" />
-          Exportar CSV
-        </Button>
       </div>
 
-      {/* Main content: left list + right gantt */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 10, height: 5, background: 'rgba(55,138,221,.3)', borderRadius: 2, display: 'inline-block' }} />
+          Planejado
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 10, height: 5, background: '#3B6D11', borderRadius: 2, display: 'inline-block' }} />
+          No prazo
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 10, height: 5, background: '#BA7517', borderRadius: 2, display: 'inline-block' }} />
+          Leve atraso
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 10, height: 5, background: '#E24B4A', borderRadius: 2, display: 'inline-block' }} />
+          Crítico
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 1, height: 12, background: '#E24B4A', display: 'inline-block' }} />
+          Hoje
+        </span>
+      </div>
+
+      {/* Gantt wrap */}
+      <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 520 }}>
+
         {/* ── Left panel ── */}
-        <div className="w-[300px] shrink-0 flex flex-col border-r border-border">
-          {/* Header */}
-          <div
-            className="flex items-center px-3 shrink-0 bg-slate-800 text-white font-semibold text-xs border-b border-slate-700"
-            style={{ height: ROW_HEIGHT + 'px' }}
-          >
+        <div style={{ width: 260, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Sticky header */}
+          <div style={{
+            height: HDR_H,
+            background: 'var(--bg2)',
+            borderBottom: '0.5px solid var(--bd)',
+            fontSize: 11,
+            fontWeight: 500,
+            color: 'var(--t2)',
+            padding: '0 8px',
+            display: 'flex',
+            alignItems: 'center',
+            flexShrink: 0,
+            position: 'sticky',
+            top: 0,
+            zIndex: 3,
+          }}>
             Atividade
           </div>
 
@@ -347,172 +349,190 @@ export default function Cronograma() {
           <div
             ref={leftRef}
             onScroll={onLeftScroll}
-            className="flex-1 overflow-y-auto overflow-x-hidden"
+            style={{ overflowY: 'scroll', overflowX: 'hidden', flex: 1 }}
           >
             {loading
-              ? Array.from({ length: 12 }).map((_, i) => <SkeletonRow key={i} />)
+              ? Array.from({ length: 12 }).map((_, i) => (
+                  <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex', alignItems: 'center', padding: '0 8px', gap: 6 }}>
+                    <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '75%' }} />
+                  </div>
+                ))
               : visibleTasks.map((task) => {
-                  const indent = task.level * 16;
+                  const lvStyle = levelStyle(task.level);
+                  const basePad = task.level === 0 || task.level === 1 ? 8 : 0;
+                  const isExpanded = expanded.has(task.id) || !!search;
                   return (
                     <div
                       key={task.id}
-                      className={`flex items-center gap-1 px-2 border-b border-slate-100 cursor-default select-none ${levelRowClass(task.level)}`}
-                      style={{ height: ROW_HEIGHT + 'px', paddingLeft: indent + 8 + 'px' }}
+                      style={{
+                        height: ROW_H,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        paddingLeft: basePad,
+                        paddingRight: 6,
+                        borderBottom: '0.5px solid var(--bd)',
+                        userSelect: 'none',
+                        cursor: 'pointer',
+                        transition: 'background .1s',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        ...lvStyle,
+                      }}
+                      onMouseEnter={(e) => { if (task.level > 1) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg2)'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = lvStyle.background as string ?? ''; }}
                     >
+                      {/* Expand toggle — ▶ rotates 90° when open */}
                       {task.hasChildren ? (
                         <button
-                          onClick={() => toggleExpand(task.id)}
-                          className="shrink-0 hover:opacity-70 transition-opacity"
+                          onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                          style={{
+                            width: 16, height: 16, border: 'none', background: 'none',
+                            cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0,
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            padding: 0,
+                            transition: 'transform .15s',
+                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                          }}
                         >
-                          {expanded.has(task.id) || search ? (
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          )}
+                          ▶
                         </button>
                       ) : (
-                        <span className="shrink-0 w-3.5" />
+                        <span style={{ width: 16, flexShrink: 0 }} />
                       )}
-                      <span className="font-mono mr-1.5 opacity-60 text-[10px]">{task.code}</span>
-                      <span className="truncate leading-tight">{task.name}</span>
-                      {task.isCriticalPath && (
-                        <span className="ml-auto shrink-0 w-1.5 h-1.5 rounded-full bg-red-400" title="Caminho crítico" />
-                      )}
+
+                      {/* Code */}
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, flexShrink: 0 }}>{task.code}</span>
+
+                      {/* Name */}
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.name}>{task.name}</span>
+
+                      {/* Progress badge */}
+                      <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ flexShrink: 0, minWidth: 32, justifyContent: 'center', fontSize: 9, marginLeft: 4 }}>
+                        {task.actualProgress}%
+                      </span>
                     </div>
                   );
                 })}
           </div>
         </div>
 
-        {/* ── Right panel: Gantt ── */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Month header row (horizontally scrollable) */}
-          <div className="overflow-x-auto overflow-y-hidden shrink-0 border-b border-border" style={{ height: ROW_HEIGHT + 'px' }}>
-            <div className="relative bg-slate-50" style={{ width: totalWidth + 'px', height: ROW_HEIGHT + 'px' }}>
-              {months.map((m, i) => (
-                <div
-                  key={i}
-                  className="absolute top-0 flex items-center justify-center text-[10px] font-medium text-slate-600 border-r border-slate-200 capitalize"
-                  style={{ left: m.left + 'px', width: m.width + 'px', height: ROW_HEIGHT + 'px' }}
-                >
-                  {m.label}
-                </div>
-              ))}
-              {/* Today line in header */}
+        {/* ── Right Gantt panel ── */}
+        {/* Single overflow:auto container — month header is sticky inside */}
+        <div
+          ref={rightRef}
+          onScroll={onRightScroll}
+          style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}
+        >
+          {/* Sticky month header */}
+          <div style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 3,
+            background: 'var(--bg2)',
+            borderBottom: '0.5px solid var(--bd)',
+            height: HDR_H,
+            width: totalWidth,
+          }}>
+            {months.map((mon, i) => (
               <div
-                className="absolute top-0 bottom-0 w-px bg-red-400 z-10"
-                style={{ left: todayLeft + 'px' }}
-              />
-            </div>
-          </div>
-
-          {/* Gantt body */}
-          <div
-            ref={rightRef}
-            onScroll={onRightScroll}
-            className="flex-1 overflow-auto"
-          >
-            <div className="relative" style={{ width: totalWidth + 'px', minHeight: visibleTasks.length * ROW_HEIGHT + 'px' }}>
-              {/* Month column guides */}
-              {months.map((m, i) => (
-                <div
-                  key={i}
-                  className="absolute top-0 bottom-0 border-r border-slate-100"
-                  style={{ left: m.left + 'px', width: m.width + 'px' }}
-                />
-              ))}
-
-              {/* Today line */}
-              <div
-                className="absolute top-0 bottom-0 z-20 pointer-events-none"
-                style={{ left: todayLeft + 'px' }}
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: mon.left,
+                  top: 0,
+                  width: mon.width,
+                  height: HDR_H,
+                  borderLeft: '0.5px solid var(--bd)',
+                  padding: '0 4px',
+                  fontSize: 9,
+                  color: 'var(--t2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                <div className="w-px h-full bg-red-500 opacity-70" style={{ borderRight: '1.5px dashed #ef4444' }} />
+                {mon.label}
               </div>
-
-              {/* Bars per visible row */}
-              {!loading &&
-                visibleTasks.map((task, rowIdx) => {
-                  const left = barLeft(task);
-                  const width = barWidth(task);
-                  const plannedW = Math.max(2, width);
-                  const actualW = Math.max(2, (task.actualProgress / 100) * width);
-                  const color = barColor(task.actualProgress, task.plannedProgress);
-
-                  return (
-                    <div
-                      key={task.id}
-                      className="absolute flex flex-col justify-center gap-0.5"
-                      style={{
-                        top: rowIdx * ROW_HEIGHT + 4 + 'px',
-                        left: 0,
-                        width: totalWidth + 'px',
-                        height: ROW_HEIGHT - 8 + 'px',
-                      }}
-                    >
-                      {/* Planned bar */}
-                      <div
-                        className="absolute rounded-sm bg-blue-300/50 border border-blue-400/40"
-                        style={{
-                          left: left + 'px',
-                          width: plannedW + 'px',
-                          height: '10px',
-                          top: '2px',
-                        }}
-                      />
-                      {/* Actual bar */}
-                      <div
-                        className="absolute rounded-sm"
-                        style={{
-                          left: left + 'px',
-                          width: actualW + 'px',
-                          height: '10px',
-                          top: '14px',
-                          backgroundColor: color,
-                          opacity: 0.85,
-                        }}
-                      >
-                        {actualW > 28 && (
-                          <span
-                            className="absolute inset-0 flex items-center justify-center text-white text-[9px] font-bold"
-                          >
-                            {task.actualProgress.toFixed(0)}%
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
+            ))}
+            {/* Today line in header */}
+            <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: HDR_H, zIndex: 2 }} />
           </div>
-        </div>
-      </div>
 
-      {/* Legend */}
-      <div className="shrink-0 flex items-center gap-4 px-4 py-1.5 border-t border-border bg-background text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <div className="w-6 h-2 rounded-sm bg-blue-300/70 border border-blue-400/40" />
-          Planejado
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-6 h-2 rounded-sm bg-green-500/80" />
-          Realizado (ok)
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-6 h-2 rounded-sm bg-amber-400/80" />
-          Atenção
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-6 h-2 rounded-sm bg-red-500/80" />
-          Atrasado
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-0.5 h-3 bg-red-500" style={{ borderRight: '2px dashed #ef4444' }} />
-          Hoje
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-red-400" />
-          Caminho crítico
+          {/* Bar rows container */}
+          <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
+            {/* Today line through all rows */}
+            <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
+
+            {/* Bars per visible row */}
+            {!loading && visibleTasks.map((task, rowIdx) => {
+              const left = barLeft(task);
+              const width = barWidth(task);
+              const barH = task.level <= 1 ? 12 : 8;
+              const barTop = Math.round((ROW_H - barH) / 2);
+              const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
+              const color = barColor(task.actualProgress, task.plannedProgress);
+              const opacity = task.level <= 1 ? 0.9 : 0.7;
+              const top = rowIdx * ROW_H;
+              const bg = rowBg(task.level);
+
+              return (
+                <div
+                  key={task.id}
+                  style={{
+                    position: 'absolute',
+                    top,
+                    left: 0,
+                    width: totalWidth,
+                    height: ROW_H,
+                    background: bg,
+                    borderBottom: '0.5px solid var(--bd)',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg2)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = bg; }}
+                >
+                  {/* Planned bar */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left,
+                      width,
+                      height: barH,
+                      top: barTop,
+                      background: 'rgba(55,138,221,.2)',
+                      borderRadius: 3,
+                    }}
+                  />
+                  {/* Actual bar (overlaid on planned) */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left,
+                      width: actualW,
+                      height: barH,
+                      top: barTop,
+                      background: color,
+                      borderRadius: 3,
+                      opacity,
+                    }}
+                  />
+                  {/* % label to the right of actual bar */}
+                  {task.level <= 2 && actualW > 20 && (
+                    <span style={{
+                      position: 'absolute',
+                      left: left + actualW + 3,
+                      top: barTop - 1,
+                      fontSize: 9,
+                      color,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {task.actualProgress}%
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

@@ -1,37 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store';
 import { projectsApi, uploadsApi } from '@/services/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
-  Building2,
-  Upload,
-  Users,
-  Boxes,
-  Plus,
-  Trash2,
-  Save,
-  RefreshCw,
   FileText,
-  X,
+  Box,
+  Upload,
+  Link,
+  Bot,
+  Save,
+  Trash2,
+  Plus,
   Loader2,
-  Link2,
 } from 'lucide-react';
 import type { Project, Upload as UploadType, UserRole } from '@/types';
-
-// ── Tabs ─────────────────────────────────────────────────────────────────────
-
-type Tab = 'empreendimento' | 'plantas' | 'modelo3d' | 'equipe';
-
-const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: 'empreendimento', label: 'Empreendimento', icon: Building2 },
-  { id: 'plantas', label: 'Plantas', icon: Upload },
-  { id: 'modelo3d', label: 'Modelo 3D', icon: Boxes },
-  { id: 'equipe', label: 'Equipe', icon: Users },
-];
 
 // ── Form types ────────────────────────────────────────────────────────────────
 
@@ -48,6 +29,11 @@ interface ProjectFormData {
   workdaysPerWeek: string;
   hoursPerDay: string;
   timezone: string;
+  towers: string;
+  floorsPerTower: string;
+  unitsPerFloor: string;
+  engineer: string;
+  contact: string;
 }
 
 interface TeamMemberEntry {
@@ -70,16 +56,13 @@ const DEFAULT_FORM: ProjectFormData = {
   workdaysPerWeek: '5',
   hoursPerDay: '8',
   timezone: 'America/Sao_Paulo',
+  towers: '',
+  floorsPerTower: '',
+  unitsPerFloor: '',
+  engineer: '',
+  contact: '',
 };
 
-const STATUS_OPTIONS: { value: Project['status']; label: string }[] = [
-  { value: 'PLANNING', label: 'Planejamento' },
-  { value: 'IN_PROGRESS', label: 'Em Execução' },
-  { value: 'ON_HOLD', label: 'Pausado' },
-  { value: 'COMPLETED', label: 'Concluído' },
-];
-
-const CURRENCY_OPTIONS = ['BRL', 'USD', 'EUR'];
 const ROLE_OPTIONS: UserRole[] = ['ADMIN', 'ENGINEER', 'FOREMAN', 'VIEWER'];
 const ROLE_LABELS: Record<UserRole, string> = {
   ADMIN: 'Administrador',
@@ -94,27 +77,30 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function sketchfabEmbedUrl(url: string): string {
+  const match = url.match(/sketchfab\.com\/3d-models\/[^/]+-([a-zA-Z0-9]+)/);
+  if (match) return `https://sketchfab.com/models/${match[1]}/embed`;
+  return url;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Cadastro() {
   const { currentProject, setCurrentProject, addToast } = useStore();
 
-  const [activeTab, setActiveTab] = useState<Tab>('empreendimento');
   const [form, setForm] = useState<ProjectFormData>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
 
-  // Plantas tab
+  // Plantas state
   const [uploads, setUploads] = useState<UploadType[]>([]);
   const [uploading, setUploading] = useState(false);
   const [loadingUploads, setLoadingUploads] = useState(false);
-  const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Modelo 3D tab
-  const [modelUrl, setModelUrl] = useState('');
-  const [modelUrlInput, setModelUrlInput] = useState('');
+  // Modelo 3D state
+  const [sketchfabUrl, setSketchfabUrl] = useState('');
 
-  // Equipe tab
+  // Equipe state
   const [members, setMembers] = useState<TeamMemberEntry[]>([]);
   const [newMember, setNewMember] = useState<TeamMemberEntry>({
     id: '',
@@ -140,9 +126,13 @@ export default function Cadastro() {
         workdaysPerWeek: currentProject.workdaysPerWeek?.toString() ?? '5',
         hoursPerDay: currentProject.hoursPerDay?.toString() ?? '8',
         timezone: currentProject.timezone ?? 'America/Sao_Paulo',
+        towers: '',
+        floorsPerTower: '',
+        unitsPerFloor: '',
+        engineer: '',
+        contact: '',
       });
 
-      // Load members
       if (currentProject.members) {
         setMembers(
           currentProject.members.map((m) => ({
@@ -156,9 +146,9 @@ export default function Cadastro() {
     }
   }, [currentProject]);
 
-  // Load uploads when tab becomes active
+  // Load uploads on mount when project exists
   useEffect(() => {
-    if (activeTab === 'plantas' && currentProject) {
+    if (currentProject) {
       setLoadingUploads(true);
       uploadsApi
         .list(currentProject.id)
@@ -166,7 +156,7 @@ export default function Cadastro() {
         .catch(() => {})
         .finally(() => setLoadingUploads(false));
     }
-  }, [activeTab, currentProject]);
+  }, [currentProject]);
 
   function handleFormChange(field: keyof ProjectFormData, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -249,15 +239,11 @@ export default function Cadastro() {
     }
   }
 
-  function handleApplyModelUrl() {
-    setModelUrl(modelUrlInput.trim());
-  }
-
-  function sketchfabEmbedUrl(url: string): string {
-    // Convert model page URL → embed URL if needed
-    const match = url.match(/sketchfab\.com\/3d-models\/[^/]+-([a-zA-Z0-9]+)/);
-    if (match) return `https://sketchfab.com/models/${match[1]}/embed`;
-    return url;
+  function handleSetSketchfab() {
+    const url = window.prompt('Cole a URL do modelo Sketchfab ou embed:');
+    if (url && url.trim()) {
+      setSketchfabUrl(sketchfabEmbedUrl(url.trim()));
+    }
   }
 
   async function handleAddMember() {
@@ -293,548 +279,480 @@ export default function Cadastro() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      {/* Page title */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          {currentProject ? 'Editar Empreendimento' : 'Novo Empreendimento'}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {currentProject
-            ? `Configurações de ${currentProject.name}`
-            : 'Preencha os dados para cadastrar um novo projeto.'}
-        </p>
-      </div>
+    <div className="ao-app">
 
-      {/* Tab bar */}
-      <div className="flex gap-0 border-b border-border overflow-x-auto scrollbar-none">
-        {TABS.map(({ id, label, icon: Icon }) => (
+      {/* ── Section 1: Dados do empreendimento ──────────────────────── */}
+      <div className="ao-card">
+        <div className="ao-card-hdr">
+          <p className="ao-card-title">Dados do empreendimento</p>
           <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === id
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
+            className="ao-btn ao-btn-primary ao-btn-sm"
+            onClick={handleSaveProject}
+            disabled={saving}
           >
-            <Icon className="h-4 w-4" />
-            {label}
+            {saving ? (
+              <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
+            ) : (
+              <Save size={12} />
+            )}
+            {saving ? 'Salvando…' : 'Salvar'}
           </button>
-        ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+
+          {/* Nome do empreendimento — full width */}
+          <div className="ao-fg" style={{ gridColumn: 'span 2' }}>
+            <label>Nome do empreendimento</label>
+            <input
+              value={form.name}
+              onChange={(e) => handleFormChange('name', e.target.value)}
+              placeholder="Ex.: Residencial Parque das Flores"
+            />
+          </div>
+
+          {/* Empresa responsável */}
+          <div className="ao-fg">
+            <label>Empresa responsável</label>
+            <input
+              value={form.company}
+              onChange={(e) => handleFormChange('company', e.target.value)}
+              placeholder="Ex.: Construtora ABC Ltda."
+            />
+          </div>
+
+          {/* Endereço completo — full width */}
+          <div className="ao-fg" style={{ gridColumn: 'span 2' }}>
+            <label>Endereço completo</label>
+            <input
+              value={form.address}
+              onChange={(e) => handleFormChange('address', e.target.value)}
+              placeholder="Rua, número, bairro, cidade - UF"
+            />
+          </div>
+
+          {/* Número de torres / blocos */}
+          <div className="ao-fg">
+            <label>Número de torres / blocos</label>
+            <input
+              type="number"
+              min="1"
+              value={form.towers}
+              onChange={(e) => handleFormChange('towers', e.target.value)}
+              placeholder="Ex.: 2"
+            />
+          </div>
+
+          {/* Número de pavimentos por torre */}
+          <div className="ao-fg">
+            <label>Número de pavimentos por torre</label>
+            <input
+              type="number"
+              min="1"
+              value={form.floorsPerTower}
+              onChange={(e) => handleFormChange('floorsPerTower', e.target.value)}
+              placeholder="Ex.: 10"
+            />
+          </div>
+
+          {/* Unidades por pavimento */}
+          <div className="ao-fg">
+            <label>Unidades por pavimento</label>
+            <input
+              type="number"
+              min="1"
+              value={form.unitsPerFloor}
+              onChange={(e) => handleFormChange('unitsPerFloor', e.target.value)}
+              placeholder="Ex.: 4"
+            />
+          </div>
+
+          {/* Área total construída */}
+          <div className="ao-fg">
+            <label>Área total construída (m²)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.totalArea}
+              onChange={(e) => handleFormChange('totalArea', e.target.value)}
+              placeholder="0,00"
+            />
+          </div>
+
+          {/* Data de início */}
+          <div className="ao-fg">
+            <label>Data de início</label>
+            <input
+              type="date"
+              value={form.startDate}
+              onChange={(e) => handleFormChange('startDate', e.target.value)}
+            />
+          </div>
+
+          {/* Data prevista de término */}
+          <div className="ao-fg">
+            <label>Data prevista de término</label>
+            <input
+              type="date"
+              value={form.endDate}
+              onChange={(e) => handleFormChange('endDate', e.target.value)}
+            />
+          </div>
+
+          {/* Custo total orçado */}
+          <div className="ao-fg">
+            <label>Custo total orçado (R$)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.estimatedCost}
+              onChange={(e) => handleFormChange('estimatedCost', e.target.value)}
+              placeholder="0,00"
+            />
+          </div>
+
+          {/* Engenheiro responsável */}
+          <div className="ao-fg">
+            <label>Engenheiro responsável</label>
+            <input
+              value={form.engineer}
+              onChange={(e) => handleFormChange('engineer', e.target.value)}
+              placeholder="Nome do engenheiro"
+            />
+          </div>
+
+          {/* Contato / Telefone */}
+          <div className="ao-fg">
+            <label>Contato / Telefone</label>
+            <input
+              value={form.contact}
+              onChange={(e) => handleFormChange('contact', e.target.value)}
+              placeholder="(11) 99999-9999"
+            />
+          </div>
+
+        </div>
       </div>
 
-      {/* ── Tab: Empreendimento ─────────────────────────────────────── */}
-      {activeTab === 'empreendimento' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Dados Gerais</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {/* Row: Name + Company */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="name">Nome do Empreendimento *</Label>
-                <Input
-                  id="name"
-                  placeholder="Ex.: Residencial Parque das Flores"
-                  value={form.name}
-                  onChange={(e) => handleFormChange('name', e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="company">Empresa / Construtora</Label>
-                <Input
-                  id="company"
-                  placeholder="Ex.: Construtora ABC Ltda."
-                  value={form.company}
-                  onChange={(e) => handleFormChange('company', e.target.value)}
-                />
-              </div>
-            </div>
+      {/* ── Section 2: Two-column grid ──────────────────────────────── */}
+      <div className="ao-g2">
 
-            {/* Address */}
-            <div className="space-y-1.5">
-              <Label htmlFor="address">Endereço da Obra</Label>
-              <Input
-                id="address"
-                placeholder="Rua, número, bairro, cidade - UF"
-                value={form.address}
-                onChange={(e) => handleFormChange('address', e.target.value)}
-              />
-            </div>
+        {/* Card: Plantas (PDF) */}
+        <div className="ao-card" style={{ margin: 0 }}>
+          <div className="ao-card-hdr">
+            <p className="ao-card-title">Plantas (PDF)</p>
+            <button className="ao-btn ao-btn-sm">
+              <Bot size={11} />
+              Processar com IA
+            </button>
+          </div>
 
-            {/* Status + Currency */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="status">Status</Label>
-                <select
-                  id="status"
-                  value={form.status}
-                  onChange={(e) => handleFormChange('status', e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {STATUS_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="currency">Moeda</Label>
-                <select
-                  id="currency"
-                  value={form.currency}
-                  onChange={(e) => handleFormChange('currency', e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {CURRENCY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="timezone">Fuso Horário</Label>
-                <select
-                  id="timezone"
-                  value={form.timezone}
-                  onChange={(e) => handleFormChange('timezone', e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="America/Sao_Paulo">América/São Paulo (BRT)</option>
-                  <option value="America/Manaus">América/Manaus (AMT)</option>
-                  <option value="America/Fortaleza">América/Fortaleza (BRT)</option>
-                  <option value="America/Belem">América/Belém (BRT)</option>
-                  <option value="America/Noronha">América/Noronha (FNT)</option>
-                  <option value="America/New_York">América/New York (EST)</option>
-                  <option value="UTC">UTC</option>
-                </select>
-              </div>
-            </div>
+          <div
+            style={{
+              border: '1px dashed var(--bd2)',
+              borderRadius: 'var(--r-md)',
+              padding: '1.25rem',
+              textAlign: 'center',
+            }}
+          >
+            <FileText
+              size={32}
+              style={{ color: 'var(--t2)', margin: '0 auto 8px' }}
+            />
+            <p style={{ fontSize: '12px', color: 'var(--t2)' }}>
+              Plantas baixas, cortes e fachadas
+            </p>
+            <p style={{ fontSize: '11px', color: 'var(--t3)', marginTop: '3px' }}>
+              A IA extrai pavimentos, unidades e áreas e sugere EAP
+            </p>
 
-            {/* Dates */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="startDate">Data de Início</Label>
-                <Input
-                  id="startDate"
-                  type="date"
-                  value={form.startDate}
-                  onChange={(e) => handleFormChange('startDate', e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="endDate">Data de Término Prevista</Label>
-                <Input
-                  id="endDate"
-                  type="date"
-                  value={form.endDate}
-                  onChange={(e) => handleFormChange('endDate', e.target.value)}
-                />
-              </div>
-            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => handleFileUpload(e.target.files)}
+            />
 
-            {/* Costs + Area */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="estimatedCost">Custo Estimado ({form.currency})</Label>
-                <Input
-                  id="estimatedCost"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0,00"
-                  value={form.estimatedCost}
-                  onChange={(e) => handleFormChange('estimatedCost', e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="totalArea">
-                  Área Total (m²)
-                </Label>
-                <Input
-                  id="totalArea"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0,00"
-                  value={form.totalArea}
-                  onChange={(e) => handleFormChange('totalArea', e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Work calendar */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="workdaysPerWeek">Dias Úteis / Semana</Label>
-                <Input
-                  id="workdaysPerWeek"
-                  type="number"
-                  min="1"
-                  max="7"
-                  value={form.workdaysPerWeek}
-                  onChange={(e) => handleFormChange('workdaysPerWeek', e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="hoursPerDay">Horas de Trabalho / Dia</Label>
-                <Input
-                  id="hoursPerDay"
-                  type="number"
-                  min="1"
-                  max="24"
-                  value={form.hoursPerDay}
-                  onChange={(e) => handleFormChange('hoursPerDay', e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-3 pt-2">
-              <Button onClick={handleSaveProject} disabled={saving} className="gap-2">
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {saving ? 'Salvando…' : currentProject ? 'Salvar Alterações' : 'Criar Empreendimento'}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (currentProject) {
-                    setForm({
-                      name: currentProject.name ?? '',
-                      company: currentProject.company ?? '',
-                      address: currentProject.address ?? '',
-                      status: currentProject.status ?? 'PLANNING',
-                      startDate: currentProject.startDate?.slice(0, 10) ?? '',
-                      endDate: currentProject.endDate?.slice(0, 10) ?? '',
-                      estimatedCost: currentProject.estimatedCost?.toString() ?? '',
-                      currency: currentProject.currency ?? 'BRL',
-                      totalArea: currentProject.totalArea?.toString() ?? '',
-                      workdaysPerWeek: currentProject.workdaysPerWeek?.toString() ?? '5',
-                      hoursPerDay: currentProject.hoursPerDay?.toString() ?? '8',
-                      timezone: currentProject.timezone ?? 'America/Sao_Paulo',
-                    });
-                  } else {
-                    setForm(DEFAULT_FORM);
-                  }
-                }}
-                className="gap-2"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Restaurar
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Tab: Plantas ───────────────────────────────────────────── */}
-      {activeTab === 'plantas' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Plantas e Documentos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!currentProject && (
-              <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                Salve o empreendimento antes de enviar arquivos.
-              </p>
-            )}
-
-            {/* Drop zone */}
-            <div
-              className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-colors ${
-                dragging
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:border-primary/50 hover:bg-accent/50'
-              } ${!currentProject ? 'pointer-events-none opacity-50' : ''}`}
+            <button
+              className="ao-btn ao-btn-sm"
+              style={{ marginTop: '10px' }}
               onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                handleFileUpload(e.dataTransfer.files);
-              }}
+              disabled={uploading || !currentProject}
             >
-              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                {uploading ? (
-                  <Loader2 className="h-6 w-6 text-primary animate-spin" />
-                ) : (
-                  <Upload className="h-6 w-6 text-primary" />
-                )}
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-foreground">
-                  {uploading ? 'Enviando…' : 'Arraste PDFs ou clique para selecionar'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Somente arquivos PDF são aceitos
-                </p>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                multiple
-                className="hidden"
-                onChange={(e) => handleFileUpload(e.target.files)}
-              />
-            </div>
+              {uploading ? (
+                <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <Upload size={11} />
+              )}
+              {uploading ? 'Enviando…' : 'Selecionar PDFs'}
+            </button>
 
             {/* File list */}
-            {loadingUploads ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse h-12 rounded-md bg-muted" />
-                ))}
+            {loadingUploads && (
+              <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--t3)' }}>
+                Carregando…
               </div>
-            ) : uploads.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground text-sm">
-                Nenhum arquivo enviado ainda.
-              </div>
-            ) : (
-              <div className="space-y-2">
+            )}
+
+            {!loadingUploads && uploads.length > 0 && (
+              <div style={{ marginTop: '10px', textAlign: 'left' }}>
                 {uploads.map((file) => (
                   <div
                     key={file.id}
-                    className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/30"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '5px 6px',
+                      borderRadius: 'var(--r-md)',
+                      background: 'var(--bg2)',
+                      marginBottom: '4px',
+                    }}
                   >
-                    <FileText className="h-5 w-5 text-red-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {file.fileName}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatBytes(file.fileSize)} — enviado em{' '}
-                        {new Date(file.createdAt).toLocaleDateString('pt-BR')}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    <FileText size={12} style={{ color: '#A32D2D', flexShrink: 0 }} />
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        color: 'var(--t1)',
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {file.fileName}
+                    </span>
+                    <span style={{ fontSize: '10px', color: 'var(--t3)', flexShrink: 0 }}>
+                      {formatBytes(file.fileSize)}
+                    </span>
+                    <button
+                      className="ao-btn ao-btn-sm"
+                      style={{ padding: '2px 5px', border: 'none', background: 'transparent', color: 'var(--t3)' }}
                       onClick={() => handleDeleteUpload(file.id)}
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      <Trash2 size={11} />
+                    </button>
                   </div>
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
 
-      {/* ── Tab: Modelo 3D ─────────────────────────────────────────── */}
-      {activeTab === 'modelo3d' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Modelo 3D</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* URL input */}
-            <div className="space-y-1.5">
-              <Label htmlFor="modelUrl">URL do Modelo Sketchfab</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="modelUrl"
-                  placeholder="https://sketchfab.com/3d-models/..."
-                  value={modelUrlInput}
-                  onChange={(e) => setModelUrlInput(e.target.value)}
-                />
-                <Button
-                  variant="outline"
-                  onClick={handleApplyModelUrl}
-                  className="gap-2 shrink-0"
-                >
-                  <Link2 className="h-4 w-4" />
-                  Carregar
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Cole o link da página do modelo no Sketchfab. O embed será gerado automaticamente.
+            {!currentProject && (
+              <p style={{ fontSize: '11px', color: 'var(--amber)', marginTop: '8px' }}>
+                Salve o empreendimento antes de enviar arquivos.
               </p>
-            </div>
+            )}
+          </div>
+        </div>
 
-            {/* IFC/OBJ upload */}
-            <div className="space-y-1.5">
-              <Label>Upload de Arquivo (IFC / OBJ)</Label>
-              <div
-                className="border-2 border-dashed rounded-xl p-6 flex flex-col items-center gap-2 cursor-pointer hover:bg-accent/50 transition-colors"
+        {/* Card: Modelo 3D */}
+        <div className="ao-card" style={{ margin: 0 }}>
+          <div className="ao-card-hdr">
+            <p className="ao-card-title">Modelo 3D</p>
+            <span className="ao-badge ao-bb">Navegação visual</span>
+          </div>
+
+          <div
+            style={{
+              border: '1px dashed var(--bd2)',
+              borderRadius: 'var(--r-md)',
+              padding: '1.25rem',
+              textAlign: 'center',
+            }}
+          >
+            <Box
+              size={32}
+              style={{ color: 'var(--t2)', margin: '0 auto 8px' }}
+            />
+            <p style={{ fontSize: '12px', color: 'var(--t2)' }}>
+              Modelo 3D do empreendimento
+            </p>
+            <p style={{ fontSize: '11px', color: 'var(--t3)', marginTop: '3px' }}>
+              IFC, OBJ, FBX ou embed Sketchfab/BIM 360
+            </p>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: '6px',
+                justifyContent: 'center',
+                flexWrap: 'wrap',
+                marginTop: '10px',
+              }}
+            >
+              <button
+                className="ao-btn ao-btn-sm"
                 onClick={() => {
                   const input = document.createElement('input');
                   input.type = 'file';
-                  input.accept = '.ifc,.obj,.glb,.gltf';
+                  input.accept = '.ifc,.obj,.fbx,.glb,.gltf';
                   input.click();
                 }}
               >
-                <Boxes className="h-8 w-8 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground text-center">
-                  Arraste ou clique para enviar um arquivo IFC, OBJ, GLB ou GLTF
+                <Upload size={11} />
+                Arquivo
+              </button>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={handleSetSketchfab}
+              >
+                <Link size={11} />
+                URL Sketchfab
+              </button>
+            </div>
+
+            {sketchfabUrl && (
+              <div style={{ marginTop: '10px' }}>
+                <iframe
+                  src={sketchfabUrl}
+                  width="100%"
+                  height="180"
+                  frameBorder="0"
+                  allowFullScreen
+                  title="Modelo 3D Sketchfab"
+                  style={{ borderRadius: 'var(--r-md)' }}
+                />
+                <p style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '4px' }}>
+                  Após vincular, navegue pelo modelo no módulo Medição
                 </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Formatos suportados: .ifc, .obj, .glb, .gltf
-              </p>
-            </div>
-
-            {/* Embed preview */}
-            {modelUrl && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Pré-visualização</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setModelUrl('');
-                      setModelUrlInput('');
-                    }}
-                    className="gap-1 text-destructive hover:text-destructive"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Remover
-                  </Button>
-                </div>
-                <div className="rounded-lg overflow-hidden border border-border aspect-video bg-muted">
-                  <iframe
-                    title="Modelo 3D"
-                    className="w-full h-full"
-                    src={sketchfabEmbedUrl(modelUrl)}
-                    frameBorder="0"
-                    allow="autoplay; fullscreen; xr-spatial-tracking"
-                    allowFullScreen
-                  />
-                </div>
-              </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        </div>
 
-      {/* ── Tab: Equipe ────────────────────────────────────────────── */}
-      {activeTab === 'equipe' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center justify-between">
-              <span>Membros da Equipe</span>
-              <Badge variant="outline">{members.length} membros</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Add member form */}
-            <div className="rounded-md border border-border bg-muted/30 p-4 space-y-3">
-              <p className="text-sm font-medium text-foreground">Adicionar Membro</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="memberName" className="text-xs">Nome</Label>
-                  <Input
-                    id="memberName"
-                    placeholder="Nome completo"
-                    value={newMember.name}
-                    onChange={(e) => setNewMember((p) => ({ ...p, name: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="memberEmail" className="text-xs">E-mail</Label>
-                  <Input
-                    id="memberEmail"
-                    type="email"
-                    placeholder="email@empresa.com.br"
-                    value={newMember.email}
-                    onChange={(e) => setNewMember((p) => ({ ...p, email: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="memberRole" className="text-xs">Função</Label>
-                  <select
-                    id="memberRole"
-                    value={newMember.role}
-                    onChange={(e) =>
-                      setNewMember((p) => ({ ...p, role: e.target.value as UserRole }))
-                    }
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    {ROLE_OPTIONS.map((r) => (
-                      <option key={r} value={r}>
-                        {ROLE_LABELS[r]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <Button
-                onClick={handleAddMember}
-                disabled={addingMember}
-                size="sm"
-                className="gap-2"
-              >
-                {addingMember ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Plus className="h-3.5 w-3.5" />
-                )}
-                Adicionar Membro
-              </Button>
-            </div>
+      </div>
 
-            {/* Members list */}
-            {members.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">
-                Nenhum membro adicionado ainda.
-              </div>
+      {/* ── Section 3: Equipe ────────────────────────────────────────── */}
+      <div className="ao-card">
+        <div className="ao-card-hdr">
+          <p className="ao-card-title">Equipe</p>
+          <span className="ao-badge ao-bk">{members.length} membros</span>
+        </div>
+
+        {/* Add member form */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr auto',
+            gap: '8px',
+            alignItems: 'flex-end',
+            marginBottom: '12px',
+          }}
+        >
+          <div className="ao-fg">
+            <label>Nome</label>
+            <input
+              placeholder="Nome completo"
+              value={newMember.name}
+              onChange={(e) => setNewMember((p) => ({ ...p, name: e.target.value }))}
+            />
+          </div>
+          <div className="ao-fg">
+            <label>E-mail</label>
+            <input
+              type="email"
+              placeholder="email@empresa.com.br"
+              value={newMember.email}
+              onChange={(e) => setNewMember((p) => ({ ...p, email: e.target.value }))}
+            />
+          </div>
+          <div className="ao-fg">
+            <label>Função</label>
+            <select
+              value={newMember.role}
+              onChange={(e) => setNewMember((p) => ({ ...p, role: e.target.value as UserRole }))}
+            >
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            className="ao-btn ao-btn-sm ao-btn-primary"
+            onClick={handleAddMember}
+            disabled={addingMember}
+          >
+            {addingMember ? (
+              <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
             ) : (
-              <div className="space-y-2">
-                {members.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center gap-3 p-3 rounded-md border border-border"
-                  >
-                    <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                      <span className="text-xs font-bold text-primary">
-                        {member.name
-                          .split(' ')
-                          .slice(0, 2)
-                          .map((n) => n[0])
-                          .join('')
-                          .toUpperCase() || '?'}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {member.name || '—'}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                    </div>
-                    <Badge variant="secondary" className="shrink-0">
-                      {ROLE_LABELS[member.role]}
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                      onClick={() => handleRemoveMember(member.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+              <Plus size={11} />
             )}
-          </CardContent>
-        </Card>
-      )}
+            Adicionar
+          </button>
+        </div>
+
+        {/* Members list */}
+        {members.length === 0 ? (
+          <p style={{ fontSize: '12px', color: 'var(--t3)', textAlign: 'center', padding: '1rem 0' }}>
+            Nenhum membro adicionado ainda.
+          </p>
+        ) : (
+          <div>
+            {members.map((member) => (
+              <div
+                key={member.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '7px 8px',
+                  borderRadius: 'var(--r-md)',
+                  background: 'var(--bg2)',
+                  marginBottom: '4px',
+                }}
+              >
+                <div
+                  style={{
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '50%',
+                    background: 'var(--amb-bg)',
+                    color: 'var(--amber)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    flexShrink: 0,
+                  }}
+                >
+                  {member.name
+                    .split(' ')
+                    .slice(0, 2)
+                    .map((n) => n[0])
+                    .join('')
+                    .toUpperCase() || '?'}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '12px', color: 'var(--t1)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {member.name || '—'}
+                  </p>
+                  <p style={{ fontSize: '11px', color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {member.email}
+                  </p>
+                </div>
+                <span className="ao-badge ao-bk" style={{ flexShrink: 0 }}>
+                  {ROLE_LABELS[member.role]}
+                </span>
+                <button
+                  className="ao-btn ao-btn-sm"
+                  style={{ border: 'none', background: 'transparent', color: 'var(--t3)', padding: '3px 5px', flexShrink: 0 }}
+                  onClick={() => handleRemoveMember(member.id)}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }

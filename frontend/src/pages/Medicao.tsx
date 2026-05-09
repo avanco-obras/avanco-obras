@@ -1,10 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Check, Save, Loader2, ChevronRight } from 'lucide-react';
 import { useStore } from '@/store';
 import { towersApi, measurementsApi, activityTypesApi } from '@/services/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import type { Tower, Floor, Unit, ActivityType, Measurement } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -15,35 +11,15 @@ interface ActivityEntry {
   measurementMethod: 'PERCENT' | 'METRIC' | 'COUNT';
   unit: string;
   defaultQuantity: number;
-  // edit state
   mode: 'PERCENT' | 'METRIC';
-  percentValue: number; // 0-100
+  percentValue: number;
   executedQty: number;
   totalQty: number;
-  // computed
-  computed: number; // final 0-100
+  computed: number;
   isDirty: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function progressColor(p: number): string {
-  if (p === 0) return '#94a3b8'; // slate-400
-  if (p < 100) return '#f59e0b'; // amber-400
-  return '#22c55e'; // green-500
-}
-
-function unitBgClass(p: number): string {
-  if (p === 0) return 'bg-slate-100 border-slate-200';
-  if (p < 100) return 'bg-amber-50 border-amber-300';
-  return 'bg-green-50 border-green-400';
-}
-
-function floorBandColor(avg: number): string {
-  if (avg === 0) return '#cbd5e1'; // slate-300
-  if (avg < 100) return '#fbbf24'; // amber-400
-  return '#22c55e'; // green-500
-}
 
 function calcFromMetric(executed: number, total: number): number {
   if (total <= 0) return 0;
@@ -62,253 +38,129 @@ function methodLabel(method: 'PERCENT' | 'METRIC' | 'COUNT'): string {
   return 'un';
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-
-function SkeletonCard() {
-  return (
-    <div className="rounded-lg border border-slate-200 p-3 animate-pulse space-y-2">
-      <div className="h-3 bg-slate-200 rounded w-3/4" />
-      <div className="h-2 bg-slate-100 rounded w-1/2" />
-      <div className="h-1.5 bg-slate-100 rounded w-full mt-2" />
-    </div>
-  );
+function windowColor(pct: number): string {
+  if (pct === 0) return '#ddd';
+  if (pct >= 100) return '#9ed67b';
+  if (pct > 50) return '#FAC775';
+  return '#f0a040';
 }
 
-// ── Building SVG Panel ────────────────────────────────────────────────────────
+function unitState(p: number): 'ni' | 'ea' | 'co' {
+  if (p === 0) return 'ni';
+  if (p >= 100) return 'co';
+  return 'ea';
+}
 
-interface BuildingPanelProps {
+function statusBadgeClass(p: number): string {
+  if (p === 0) return 'ao-badge ao-bk';
+  if (p >= 100) return 'ao-badge ao-bg';
+  return 'ao-badge ao-ba';
+}
+
+function statusLabel(p: number): string {
+  if (p === 0) return 'Não iniciado';
+  if (p >= 100) return 'Concluído';
+  return 'Em andamento';
+}
+
+// ── Isometric Building SVG ────────────────────────────────────────────────────
+
+interface BuildingSVGProps {
   floors: Floor[];
-  units: Record<string, Unit[]>; // floorId → units
+  unitsCache: Record<string, Unit[]>;
   selectedFloorId: string | null;
   onSelectFloor: (floorId: string) => void;
 }
 
-function BuildingPanel({ floors, units, selectedFloorId, onSelectFloor }: BuildingPanelProps) {
-  const BAND_HEIGHT = 28;
-  const UNIT_W = 18;
-  const UNIT_H = 20;
-  const UNIT_GAP = 3;
-  const LEFT_LABEL_W = 36;
-  const SVG_W = 240;
-
-  const sorted = [...floors].sort((a, b) => b.level - a.level); // top = highest level
+function BuildingSVG({ floors, unitsCache, selectedFloorId, onSelectFloor }: BuildingSVGProps) {
+  // Sort descending by level (top floor first)
+  const sorted = [...floors].sort((a, b) => b.level - a.level);
+  // Use up to 7 floors for the isometric building
+  const displayFloors = sorted.slice(0, 7);
+  const count = displayFloors.length;
 
   function avgProgress(floorId: string): number {
-    const us = units[floorId] ?? [];
+    const us = unitsCache[floorId] ?? [];
     if (us.length === 0) return 0;
-    const sum = us.reduce((acc, u) => acc + (u.progressPercent ?? 0), 0);
-    return sum / us.length;
+    return us.reduce((acc, u) => acc + (u.progressPercent ?? 0), 0) / us.length;
   }
 
-  const svgHeight = Math.max(80, sorted.length * (BAND_HEIGHT + 4) + 20);
+  // Each floor is 42px tall; térreo (last) gets 54px but we simplify to 42 for all
+  const FLOOR_H = 42;
+  const TOP_Y = 22;
+  const SVG_H = 340;
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <p className="text-xs font-semibold text-slate-500 self-start mb-1">Vista do Edifício</p>
-      <svg
-        width={SVG_W}
-        height={svgHeight}
-        className="rounded border border-slate-200 bg-slate-50"
-        viewBox={`0 0 ${SVG_W} ${svgHeight}`}
-      >
-        {sorted.map((floor, idx) => {
-          const y = 10 + idx * (BAND_HEIGHT + 4);
-          const floorUnits = units[floor.id] ?? [];
-          const avg = avgProgress(floor.id);
-          const isSelected = floor.id === selectedFloorId;
+    <svg viewBox="0 0 220 340" width="210" height="323" style={{ display: 'block', margin: '0 auto' }}>
+      {/* Shadow */}
+      <ellipse cx="130" cy="334" rx="75" ry="7" fill="rgba(0,0,0,.08)" />
+      {/* Side face (right) */}
+      <polygon points="178,22 218,8 218,314 178,328" fill="var(--bg4)" stroke="var(--bd2)" strokeWidth=".5" />
+      {/* Roof */}
+      <polygon points="22,22 62,8 218,8 178,22" fill="var(--bg3)" stroke="var(--bd2)" strokeWidth=".5" />
+      {/* Main facade */}
+      <rect x="22" y="22" width="156" height="306" fill="var(--bg2)" stroke="var(--bd2)" strokeWidth=".5" />
 
-          return (
-            <g
-              key={floor.id}
-              onClick={() => onSelectFloor(floor.id)}
-              style={{ cursor: 'pointer' }}
-            >
-              {/* Band background */}
+      {/* Floor labels on side */}
+      {displayFloors.map((floor, idx) => {
+        const y = TOP_Y + idx * FLOOR_H;
+        return (
+          <text key={floor.id} x="186" y={y + 30} fontSize="8" fill="var(--t3)" fontFamily="sans-serif">
+            {floor.name}
+          </text>
+        );
+      })}
+
+      {/* Clickable floor groups */}
+      {displayFloors.map((floor, idx) => {
+        const y = TOP_Y + idx * FLOOR_H;
+        const h = idx === count - 1 ? SVG_H - 22 - idx * FLOOR_H - 14 : FLOOR_H;
+        const avg = avgProgress(floor.id);
+        const isSelected = floor.id === selectedFloorId;
+
+        // 4 window columns, evenly spaced
+        const winW = 26;
+        const winH = 16;
+        const winY = y + 10;
+        const winXs = [28, 62, 96, 130];
+
+        return (
+          <g key={floor.id} onClick={() => onSelectFloor(floor.id)} style={{ cursor: 'pointer' }}>
+            {/* Floor face */}
+            <rect
+              className="fface"
+              x="22"
+              y={y}
+              width="156"
+              height={h}
+              fill="transparent"
+              stroke={isSelected ? 'var(--amber)' : 'var(--bd)'}
+              strokeWidth={isSelected ? 2.5 : 0.5}
+            />
+            {/* Windows colored by progress */}
+            {winXs.map((wx, wi) => (
               <rect
-                x={LEFT_LABEL_W}
-                y={y}
-                width={SVG_W - LEFT_LABEL_W - 8}
-                height={BAND_HEIGHT}
-                rx={4}
-                fill={isSelected ? '#e0e7ff' : '#f1f5f9'}
-                stroke={isSelected ? '#6366f1' : '#cbd5e1'}
-                strokeWidth={isSelected ? 2 : 1}
+                key={wi}
+                x={wx}
+                y={winY}
+                width={winW}
+                height={winH}
+                rx="2"
+                fill={windowColor(avg)}
+                opacity={0.85}
               />
-              {/* Floor label */}
-              <text
-                x={LEFT_LABEL_W - 4}
-                y={y + BAND_HEIGHT / 2 + 4}
-                textAnchor="end"
-                fontSize={9}
-                fill="#64748b"
-                fontFamily="monospace"
-              >
-                {floor.name}
-              </text>
-              {/* Unit rects */}
-              {floorUnits.slice(0, Math.floor((SVG_W - LEFT_LABEL_W - 16) / (UNIT_W + UNIT_GAP))).map((unit, ui) => {
-                const ux = LEFT_LABEL_W + 6 + ui * (UNIT_W + UNIT_GAP);
-                const uy = y + (BAND_HEIGHT - UNIT_H) / 2;
-                const p = unit.progressPercent ?? 0;
-                return (
-                  <rect
-                    key={unit.id}
-                    x={ux}
-                    y={uy}
-                    width={UNIT_W}
-                    height={UNIT_H}
-                    rx={2}
-                    fill={progressColor(p)}
-                    opacity={0.75}
-                  />
-                );
-              })}
-              {/* If no units, show avg color band */}
-              {floorUnits.length === 0 && (
-                <rect
-                  x={LEFT_LABEL_W + 6}
-                  y={y + 6}
-                  width={SVG_W - LEFT_LABEL_W - 20}
-                  height={BAND_HEIGHT - 12}
-                  rx={3}
-                  fill={floorBandColor(avg)}
-                  opacity={0.5}
-                />
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      {/* Legend */}
-      <div className="flex items-center gap-3 text-[10px] text-slate-500 mt-1">
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-300" /> 0%</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-400" /> Em andamento</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" /> 100%</span>
-      </div>
-    </div>
-  );
-}
+            ))}
+          </g>
+        );
+      })}
 
-// ── Activity Row ──────────────────────────────────────────────────────────────
-
-interface ActivityRowProps {
-  entry: ActivityEntry;
-  onChange: (updated: Partial<ActivityEntry>) => void;
-  onMarkDone: () => void;
-}
-
-function ActivityRow({ entry, onChange, onMarkDone }: ActivityRowProps) {
-  const isMetric = entry.mode === 'METRIC' && entry.measurementMethod !== 'PERCENT';
-  const computed = entry.computed;
-
-  function handlePercentChange(val: string) {
-    const n = Math.min(100, Math.max(0, parseFloat(val) || 0));
-    onChange({ percentValue: n, computed: n, isDirty: true });
-  }
-
-  function handleExecutedChange(val: string) {
-    const executed = parseFloat(val) || 0;
-    const computed = calcFromMetric(executed, entry.totalQty);
-    onChange({ executedQty: executed, computed, isDirty: true });
-  }
-
-  function handleTotalChange(val: string) {
-    const total = parseFloat(val) || 0;
-    const computed = calcFromMetric(entry.executedQty, total);
-    onChange({ totalQty: total, computed, isDirty: true });
-  }
-
-  return (
-    <div className={`rounded-md border p-3 space-y-2 transition-colors ${entry.isDirty ? 'border-blue-300 bg-blue-50/40' : 'border-border bg-background'}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-sm font-medium text-foreground truncate">{entry.name}</span>
-          <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0">
-            {methodLabel(entry.measurementMethod)}
-          </Badge>
-        </div>
-
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Mode toggle — only show if metric is possible */}
-          {entry.measurementMethod !== 'PERCENT' && (
-            <div className="flex rounded-md border border-input overflow-hidden text-[10px]">
-              <button
-                onClick={() => onChange({ mode: 'PERCENT', isDirty: true })}
-                className={`px-2 py-0.5 transition-colors ${!isMetric ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-              >
-                % Manual
-              </button>
-              <button
-                onClick={() => onChange({ mode: 'METRIC', isDirty: true })}
-                className={`px-2 py-0.5 transition-colors ${isMetric ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-              >
-                Métrica
-              </button>
-            </div>
-          )}
-
-          {/* Mark 100% */}
-          <button
-            onClick={onMarkDone}
-            title="Marcar 100%"
-            className="w-6 h-6 rounded-full border border-green-400 text-green-600 flex items-center justify-center hover:bg-green-50 transition-colors"
-          >
-            <Check className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Inputs */}
-      {isMetric ? (
-        <div className="flex items-center gap-2 text-xs">
-          <Input
-            type="number"
-            min={0}
-            value={entry.executedQty}
-            onChange={(e) => handleExecutedChange(e.target.value)}
-            className="h-7 w-20 text-xs px-2"
-            placeholder="Exec."
-          />
-          <span className="text-muted-foreground">/</span>
-          <Input
-            type="number"
-            min={0}
-            value={entry.totalQty}
-            onChange={(e) => handleTotalChange(e.target.value)}
-            className="h-7 w-20 text-xs px-2"
-            placeholder="Total"
-          />
-          <span className="text-muted-foreground">{entry.unit}</span>
-          <span className="ml-auto font-semibold text-sm" style={{ color: progressColor(computed) }}>
-            {computed.toFixed(1)}%
-          </span>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            max={100}
-            value={entry.percentValue}
-            onChange={(e) => handlePercentChange(e.target.value)}
-            className="h-7 w-24 text-xs px-2"
-            placeholder="0–100"
-          />
-          <span className="text-xs text-muted-foreground">%</span>
-          <span className="ml-auto font-semibold text-sm" style={{ color: progressColor(computed) }}>
-            {computed.toFixed(1)}%
-          </span>
-        </div>
+      {/* Empty state if no floors */}
+      {count === 0 && (
+        <text x="100" y="170" textAnchor="middle" fontSize="10" fill="var(--t3)" fontFamily="sans-serif">
+          Nenhum andar
+        </text>
       )}
-
-      {/* Progress bar */}
-      <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${computed}%`, backgroundColor: progressColor(computed) }}
-        />
-      </div>
-    </div>
+    </svg>
   );
 }
 
@@ -318,29 +170,24 @@ export default function Medicao() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
 
-  // Data
   const [towers, setTowers] = useState<Tower[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
 
-  // Selection
   const [selectedTowerId, setSelectedTowerId] = useState<string | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
 
-  // Unit progress cache (floorId → units with progressPercent)
   const [floorUnitsCache, setFloorUnitsCache] = useState<Record<string, Unit[]>>({});
 
-  // Loading states
   const [loadingTowers, setLoadingTowers] = useState(false);
   const [loadingFloors, setLoadingFloors] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [loadingMeasurements, setLoadingMeasurements] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Activity entries (editable state for right panel)
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
 
   // ── Load towers + activity types ─────────────────────────────────────────
@@ -406,8 +253,7 @@ export default function Medicao() {
         const execQty = existing?.executedQty ?? 0;
         const totalQty = existing?.totalQty ?? at.defaultQuantity;
         const mode: 'PERCENT' | 'METRIC' = at.measurementMethod !== 'PERCENT' && totalQty > 0 ? 'METRIC' : 'PERCENT';
-        const computed =
-          mode === 'METRIC' ? calcFromMetric(execQty, totalQty) : percent;
+        const computed = mode === 'METRIC' ? calcFromMetric(execQty, totalQty) : percent;
         return {
           activityTypeId: at.id,
           name: at.name,
@@ -470,9 +316,7 @@ export default function Medicao() {
   }
 
   function handleAllDone() {
-    setEntries((prev) =>
-      prev.map((e) => ({ ...e, computed: 100, percentValue: 100, isDirty: true })),
-    );
+    setEntries((prev) => prev.map((e) => ({ ...e, computed: 100, percentValue: 100, isDirty: true })));
   }
 
   async function handleSave() {
@@ -492,7 +336,6 @@ export default function Medicao() {
         ),
       );
       setEntries((prev) => prev.map((e) => ({ ...e, isDirty: false })));
-      // Update unit progress in cache
       setFloorUnitsCache((prev) => {
         if (!selectedFloorId) return prev;
         const floorUnits = (prev[selectedFloorId] ?? []).map((u) =>
@@ -500,7 +343,7 @@ export default function Medicao() {
         );
         return { ...prev, [selectedFloorId]: floorUnits };
       });
-      addToast({ type: 'success', title: 'Salvo com sucesso', description: `Medição da unidade salva.` });
+      addToast({ type: 'success', title: 'Salvo com sucesso', description: 'Medição da unidade salva.' });
     } catch {
       addToast({ type: 'error', title: 'Erro ao salvar', description: 'Tente novamente.' });
     } finally {
@@ -512,13 +355,10 @@ export default function Medicao() {
 
   if (!currentProject) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-        <AlertTriangle className="h-14 w-14 text-muted-foreground/40" />
-        <div>
-          <h2 className="text-xl font-semibold text-foreground mb-1">Selecione um projeto</h2>
-          <p className="text-muted-foreground text-sm">
-            Escolha um projeto no seletor acima para registrar medições.
-          </p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
+        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
+          <p>Escolha um projeto no seletor acima para registrar medições.</p>
         </div>
       </div>
     );
@@ -527,112 +367,137 @@ export default function Medicao() {
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-56px)] overflow-hidden">
-      {/* ── Panel 1: Building SVG ── */}
-      <div className="w-[260px] shrink-0 flex flex-col border-r border-border bg-background overflow-y-auto p-4 gap-4">
-        <h2 className="text-base font-bold text-foreground">Medição</h2>
+    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
 
-        {/* Tower selector */}
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Torre</label>
-          {loadingTowers ? (
-            <div className="h-9 bg-muted animate-pulse rounded-md" />
+      {/* ── Left: building SVG card ── */}
+      <div style={{ flexShrink: 0 }}>
+        <div className="ao-card" style={{ padding: '.875rem', width: 230 }}>
+          <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>Modelo do empreendimento</p>
+
+          {/* Tower select */}
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4 }}>Torre</label>
+            {loadingTowers ? (
+              <div style={{ height: 32, background: 'var(--bg3)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
+            ) : (
+              <select
+                value={selectedTowerId ?? ''}
+                onChange={(e) => setSelectedTowerId(e.target.value || null)}
+                style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+              >
+                <option value="">Selecione a torre</option>
+                {towers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Building SVG */}
+          {loadingFloors ? (
+            <div style={{ height: 200, background: 'var(--bg3)', borderRadius: 8, marginBottom: 10 }} />
           ) : (
+            <BuildingSVG
+              floors={floors}
+              unitsCache={floorUnitsCache}
+              selectedFloorId={selectedFloorId}
+              onSelectFloor={setSelectedFloorId}
+            />
+          )}
+
+          {/* Floor select */}
+          <div style={{ marginTop: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4 }}>Andar</label>
             <select
-              value={selectedTowerId ?? ''}
-              onChange={(e) => setSelectedTowerId(e.target.value || null)}
-              className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              value={selectedFloorId ?? ''}
+              onChange={(e) => setSelectedFloorId(e.target.value || null)}
+              disabled={floors.length === 0}
+              style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
             >
-              <option value="">Selecione a torre</option>
-              {towers.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
+              <option value="">Selecione o andar</option>
+              {floors.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
               ))}
             </select>
+          </div>
+
+          {/* Floor summary */}
+          {selectedFloor && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '0.5px solid var(--bd)', fontSize: 11, color: 'var(--t2)' }}>
+              <p style={{ fontWeight: 500, color: 'var(--t1)', marginBottom: 3 }}>{selectedFloor.name}</p>
+              <p>{units.length} unidades</p>
+              <p>{units.filter((u) => (u.progressPercent ?? 0) >= 100).length} concluídas</p>
+            </div>
           )}
         </div>
-
-        {/* Building SVG */}
-        {loadingFloors ? (
-          <div className="h-48 bg-muted animate-pulse rounded-md" />
-        ) : floors.length > 0 ? (
-          <BuildingPanel
-            floors={floors}
-            units={floorUnitsCache}
-            selectedFloorId={selectedFloorId}
-            onSelectFloor={setSelectedFloorId}
-          />
-        ) : (
-          <div className="h-32 flex items-center justify-center text-sm text-muted-foreground border border-dashed border-border rounded-md">
-            Nenhum andar
-          </div>
-        )}
-
-        {/* Floor selector */}
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Andar</label>
-          <select
-            value={selectedFloorId ?? ''}
-            onChange={(e) => setSelectedFloorId(e.target.value || null)}
-            className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            disabled={floors.length === 0}
-          >
-            <option value="">Selecione o andar</option>
-            {floors.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Progress summary */}
-        {selectedFloor && (
-          <div className="text-xs text-muted-foreground border-t pt-3 space-y-1">
-            <p className="font-medium text-foreground">{selectedFloor.name}</p>
-            <p>{units.length} unidades</p>
-            <p>
-              {units.filter((u) => (u.progressPercent ?? 0) === 100).length} concluídas
-            </p>
-          </div>
-        )}
       </div>
 
-      {/* ── Panel 2: Unit Grid ── */}
-      <div className="w-[260px] shrink-0 flex flex-col border-r border-border bg-slate-50 overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-background shrink-0">
-          <p className="text-sm font-semibold text-foreground">Unidades</p>
-          {selectedFloor && (
-            <p className="text-xs text-muted-foreground">{selectedFloor.name}</p>
-          )}
-        </div>
+      {/* ── Right: units + activities ── */}
+      <div style={{ flex: 1, minWidth: 0 }}>
 
-        <div className="flex-1 overflow-y-auto p-3">
+        {/* Units card */}
+        <div className="ao-card">
+          <div className="ao-card-hdr" style={{ marginBottom: 10 }}>
+            <span className="ao-card-title">
+              Unidades {selectedFloor ? `— ${selectedFloor.name}` : ''}
+            </span>
+            {selectedUnit && (
+              <span className={statusBadgeClass(overallProgress)}>
+                {overallProgress}% {statusLabel(overallProgress)}
+              </span>
+            )}
+          </div>
+
           {loadingUnits ? (
-            <div className="grid grid-cols-2 gap-2">
-              {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} style={{ height: 60, background: 'var(--bg3)', borderRadius: 8 }} />
+              ))}
             </div>
           ) : units.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 text-sm text-muted-foreground">
-              <ChevronRight className="h-8 w-8 opacity-30" />
-              <p>Selecione um andar</p>
+            <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+              Selecione um andar para ver as unidades
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
               {units.map((unit) => {
                 const p = unit.progressPercent ?? 0;
+                const state = unitState(p);
                 const isSelected = unit.id === selectedUnitId;
+
+                const bgColor = state === 'ni' ? 'var(--bg2)' : state === 'co' ? 'var(--grn-bg)' : 'var(--amb-bg)';
+                const textColor = state === 'ni' ? 'var(--t2)' : state === 'co' ? 'var(--grn-t)' : 'var(--amb-t)';
+
                 return (
                   <button
                     key={unit.id}
                     onClick={() => setSelectedUnitId(unit.id)}
-                    className={`rounded-lg border p-3 text-left transition-all hover:shadow-sm ${unitBgClass(p)} ${isSelected ? 'ring-2 ring-primary ring-offset-1' : ''}`}
+                    style={{
+                      padding: 7,
+                      borderRadius: 8,
+                      fontSize: 10,
+                      textAlign: 'center',
+                      cursor: 'pointer',
+                      border: isSelected ? '1.5px solid var(--amber)' : '0.5px solid var(--bd)',
+                      background: bgColor,
+                      color: textColor,
+                      transition: 'all .15s',
+                      boxShadow: isSelected ? '0 0 0 2px rgba(186,117,23,.25)' : 'none',
+                      fontFamily: 'var(--font)',
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.04)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
                   >
-                    <p className="text-xs font-semibold text-foreground truncate">{unit.name}</p>
-                    <p className="text-lg font-bold mt-0.5" style={{ color: progressColor(p) }}>
-                      {p.toFixed(0)}%
-                    </p>
-                    <div className="w-full bg-white/60 rounded-full h-1 mt-1.5 overflow-hidden">
+                    <div style={{ fontWeight: 500, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{unit.name}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{p.toFixed(0)}%</div>
+                    {/* Mini progress bar */}
+                    <div className="ao-pbar" style={{ marginTop: 4 }}>
                       <div
-                        className="h-full rounded-full transition-all"
-                        style={{ width: `${p}%`, backgroundColor: progressColor(p) }}
+                        className="ao-pfill"
+                        style={{
+                          width: `${p}%`,
+                          background: state === 'co' ? 'var(--green)' : state === 'ea' ? 'var(--amber)' : 'var(--bg3)',
+                        }}
                       />
                     </div>
                   </button>
@@ -641,119 +506,201 @@ export default function Medicao() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* ── Panel 3: Activity Details ── */}
-      <div className="flex-1 flex flex-col bg-background overflow-hidden">
-        {/* Header */}
-        <div className="px-5 py-3 border-b border-border shrink-0 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-base font-bold text-foreground">
-              {selectedUnit ? selectedUnit.name : 'Selecione uma unidade'}
-            </p>
+        {/* Activities card */}
+        <div className="ao-card" id="activities">
+          <div className="ao-card-hdr" style={{ marginBottom: 4 }}>
+            <span className="ao-card-title">
+              {selectedUnit ? `Atividades — ${selectedUnit.name}` : 'Atividades'}
+            </span>
             {selectedUnit && (
-              <div className="flex items-center gap-2 mt-0.5">
-                <div
-                  className="text-sm font-semibold"
-                  style={{ color: progressColor(overallProgress) }}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="ao-btn ao-btn-sm ao-btn-ok"
+                  onClick={handleAllDone}
+                  disabled={saving}
                 >
-                  {overallProgress}% concluído
-                </div>
-                <div className="flex-1 max-w-[160px] bg-muted rounded-full h-2 overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${overallProgress}%`, backgroundColor: progressColor(overallProgress) }}
-                  />
-                </div>
+                  Tudo concluído
+                </button>
+                <button
+                  className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
+                  onClick={handleSave}
+                  disabled={saving || entries.every((e) => !e.isDirty)}
+                >
+                  {saving ? 'Salvando…' : 'Salvar'}
+                </button>
               </div>
             )}
           </div>
 
-          {selectedUnit && (
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleAllDone}
-                className="gap-1"
-                disabled={saving}
-              >
-                <Check className="h-3.5 w-3.5" />
-                Tudo Concluído
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || entries.every((e) => !e.isDirty)}
-                className="gap-1"
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                Salvar
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5">
           {!selectedUnitId ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                <ChevronRight className="h-8 w-8 text-muted-foreground/40" />
-              </div>
-              <p className="text-muted-foreground text-sm">
-                Selecione uma unidade para registrar medições
-              </p>
+            <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+              Selecione uma unidade para registrar medições
             </div>
           ) : loadingMeasurements ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />
+            <div>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} style={{ height: 44, background: 'var(--bg3)', borderRadius: 8, marginBottom: 6 }} />
               ))}
             </div>
           ) : entries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 text-center text-sm text-muted-foreground">
-              <AlertTriangle className="h-8 w-8 opacity-30" />
-              <p>Nenhum tipo de atividade cadastrado para este projeto.</p>
+            <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+              Nenhum tipo de atividade cadastrado para este projeto.
             </div>
           ) : (
-            <div className="space-y-3 max-w-2xl">
-              {entries.map((entry, idx) => (
-                <ActivityRow
-                  key={entry.activityTypeId}
-                  entry={entry}
-                  onChange={(updated) => handleEntryChange(idx, updated)}
-                  onMarkDone={() => handleMarkDone(idx)}
-                />
-              ))}
+            <div>
+              {entries.map((entry, idx) => {
+                const isMetric = entry.mode === 'METRIC' && entry.measurementMethod !== 'PERCENT';
+                const p = entry.computed;
 
-              {/* Footer save button for convenience */}
-              <div className="pt-4 flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleAllDone}
-                  disabled={saving}
-                  className="gap-1"
-                >
-                  <Check className="h-4 w-4" />
-                  Tudo Concluído
-                </Button>
-                <Button
+                function handlePercentChange(val: string) {
+                  const n = Math.min(100, Math.max(0, parseFloat(val) || 0));
+                  handleEntryChange(idx, { percentValue: n, computed: n, isDirty: true });
+                }
+
+                function handleExecutedChange(val: string) {
+                  const executed = parseFloat(val) || 0;
+                  const computed = calcFromMetric(executed, entry.totalQty);
+                  handleEntryChange(idx, { executedQty: executed, computed, isDirty: true });
+                }
+
+                function handleTotalChange(val: string) {
+                  const total = parseFloat(val) || 0;
+                  const computed = calcFromMetric(entry.executedQty, total);
+                  handleEntryChange(idx, { totalQty: total, computed, isDirty: true });
+                }
+
+                return (
+                  <div
+                    key={entry.activityTypeId}
+                    className="mrow"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '7px 0',
+                      borderBottom: '0.5px solid var(--bd)',
+                      background: entry.isDirty ? 'rgba(186,117,23,.04)' : undefined,
+                    }}
+                  >
+                    {/* Name + method badge */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {entry.name}
+                        </span>
+                        <span className="ao-badge ao-bk" style={{ flexShrink: 0 }}>{methodLabel(entry.measurementMethod)}</span>
+                      </div>
+                    </div>
+
+                    {/* Mode toggle */}
+                    {entry.measurementMethod !== 'PERCENT' && (
+                      <div style={{ display: 'flex', borderRadius: 6, border: '0.5px solid var(--bd2)', overflow: 'hidden', flexShrink: 0 }}>
+                        <button
+                          onClick={() => handleEntryChange(idx, { mode: 'PERCENT', isDirty: true })}
+                          style={{
+                            padding: '3px 8px',
+                            fontSize: 10,
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font)',
+                            background: !isMetric ? 'var(--amber)' : 'var(--bg2)',
+                            color: !isMetric ? '#fff' : 'var(--t2)',
+                            transition: 'all .15s',
+                          }}
+                        >
+                          % Manual
+                        </button>
+                        <button
+                          onClick={() => handleEntryChange(idx, { mode: 'METRIC', isDirty: true })}
+                          style={{
+                            padding: '3px 8px',
+                            fontSize: 10,
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font)',
+                            background: isMetric ? 'var(--amber)' : 'var(--bg2)',
+                            color: isMetric ? '#fff' : 'var(--t2)',
+                            transition: 'all .15s',
+                          }}
+                        >
+                          Métrica
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Input(s) */}
+                    {isMetric ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        <input
+                          type="number"
+                          min={0}
+                          value={entry.executedQty}
+                          onChange={(e) => handleExecutedChange(e.target.value)}
+                          placeholder="Exec."
+                          style={{ width: 60, padding: '4px 6px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                        />
+                        <span style={{ fontSize: 10, color: 'var(--t3)' }}>/</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={entry.totalQty}
+                          onChange={(e) => handleTotalChange(e.target.value)}
+                          placeholder="Total"
+                          style={{ width: 60, padding: '4px 6px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                        />
+                        <span style={{ fontSize: 10, color: 'var(--t3)' }}>{entry.unit}</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={entry.percentValue}
+                          onChange={(e) => handlePercentChange(e.target.value)}
+                          placeholder="0–100"
+                          style={{ width: 64, padding: '4px 6px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                        />
+                        <span style={{ fontSize: 10, color: 'var(--t3)' }}>%</span>
+                      </div>
+                    )}
+
+                    {/* Pct display */}
+                    <span style={{ fontSize: 14, fontWeight: 500, minWidth: 38, textAlign: 'right', color: p >= 100 ? 'var(--green)' : p > 0 ? 'var(--amber)' : 'var(--t3)', flexShrink: 0 }}>
+                      {p.toFixed(1)}%
+                    </span>
+
+                    {/* Status badge */}
+                    <span className={statusBadgeClass(p)} style={{ flexShrink: 0, minWidth: 74, justifyContent: 'center' }}>
+                      {statusLabel(p)}
+                    </span>
+
+                    {/* Mark done button */}
+                    <button
+                      onClick={() => handleMarkDone(idx)}
+                      title="Marcar 100%"
+                      className="ao-btn ao-btn-sm ao-btn-ok"
+                      style={{ flexShrink: 0, borderRadius: '50%', width: 24, height: 24, padding: 0, justifyContent: 'center' }}
+                    >
+                      ✓
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Footer save */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 12 }}>
+                <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
+                  Tudo concluído
+                </button>
+                <button
+                  className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
                   onClick={handleSave}
                   disabled={saving || entries.every((e) => !e.isDirty)}
-                  className="gap-1"
                 >
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Salvar Medição
-                </Button>
+                  {saving ? 'Salvando…' : 'Salvar Medição'}
+                </button>
               </div>
             </div>
           )}
