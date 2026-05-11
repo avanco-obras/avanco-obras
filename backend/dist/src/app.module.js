@@ -22,6 +22,7 @@ const measurements_module_1 = require("./measurements/measurements.module");
 const weekly_planning_module_1 = require("./weekly-planning/weekly-planning.module");
 const dashboard_module_1 = require("./dashboard/dashboard.module");
 const uploads_module_1 = require("./uploads/uploads.module");
+const ai_import_module_1 = require("./ai-import/ai-import.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -48,6 +49,7 @@ exports.AppModule = AppModule = __decorate([
             weekly_planning_module_1.WeeklyPlanningModule,
             dashboard_module_1.DashboardModule,
             uploads_module_1.UploadsModule,
+            ai_import_module_1.AiImportModule,
         ],
         providers: [prisma_service_1.PrismaService],
         exports: [prisma_service_1.PrismaService],

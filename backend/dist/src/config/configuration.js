@@ -30,5 +30,9 @@ exports.default = () => ({
         ttl: parseInt(process.env.THROTTLE_TTL || '60', 10),
         limit: parseInt(process.env.THROTTLE_LIMIT || '100', 10),
     },
+    mistral: {
+        apiKey: process.env.MISTRAL_API_KEY || '',
+        model: process.env.MISTRAL_MODEL || 'mistral-small-latest',
+    },
 });
 //# sourceMappingURL=configuration.js.map

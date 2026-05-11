@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store';
-import { projectsApi, uploadsApi } from '@/services/api';
+import { projectsApi, uploadsApi, aiImportApi } from '@/services/api';
 import {
   FileText,
   Box,
@@ -11,8 +11,50 @@ import {
   Trash2,
   Plus,
   Loader2,
+  CheckCircle,
+  AlertCircle,
+  X,
+  ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 import type { Project, Upload as UploadType, UserRole } from '@/types';
+
+// ── AI Import types ────────────────────────────────────────────────
+
+interface AiActivityType {
+  name: string;
+  unit: string;
+  measurementMethod: 'PERCENT' | 'METRIC' | 'COUNT';
+  weight: number;
+}
+
+interface AiScheduleItem {
+  code: string;
+  name: string;
+  level: number;
+  durationDays: number;
+  weight: number;
+  isCriticalPath: boolean;
+  children?: AiScheduleItem[];
+}
+
+interface AiProjectInfo {
+  name?: string;
+  totalArea?: number;
+  towers: number;
+  floorsPerTower: number;
+  unitsPerFloor: number;
+  estimatedDurationMonths?: number;
+  buildingType?: string;
+}
+
+interface AiImportResult {
+  projectInfo: AiProjectInfo;
+  activityTypes: AiActivityType[];
+  schedule: AiScheduleItem[];
+  rawAnalysis: string;
+  confidence: 'high' | 'medium' | 'low';
+}
 
 // ── Form types ────────────────────────────────────────────────────────────────
 
@@ -96,6 +138,12 @@ export default function Cadastro() {
   const [uploading, setUploading] = useState(false);
   const [loadingUploads, setLoadingUploads] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // AI Import state
+  const [aiProcessing, setAiProcessing] = useState(false);
+  const [aiResult, setAiResult] = useState<AiImportResult | null>(null);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const aiFileInputRef = useRef<HTMLInputElement>(null);
 
   // Modelo 3D state
   const [sketchfabUrl, setSketchfabUrl] = useState('');
@@ -239,6 +287,76 @@ export default function Cadastro() {
     }
   }
 
+  async function handleAiFileSelected(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!currentProject) {
+      addToast({ type: 'warning', title: 'Salve o empreendimento antes de processar com IA' });
+      return;
+    }
+
+    setAiProcessing(true);
+    try {
+      const result = await aiImportApi.analyzePdf(currentProject.id, file) as AiImportResult;
+      setAiResult(result);
+      setAiModalOpen(true);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({
+        type: 'error',
+        title: 'Erro ao processar PDF',
+        description: msg || 'Verifique se a GEMINI_API_KEY está configurada no servidor.',
+      });
+    } finally {
+      setAiProcessing(false);
+      if (aiFileInputRef.current) aiFileInputRef.current.value = '';
+    }
+  }
+
+  function handleApplyAiResult() {
+    if (!aiResult) return;
+    const info = aiResult.projectInfo;
+    setForm((prev) => ({
+      ...prev,
+      ...(info.name ? { name: info.name } : {}),
+      ...(info.totalArea ? { totalArea: String(info.totalArea) } : {}),
+      ...(info.towers ? { towers: String(info.towers) } : {}),
+      ...(info.floorsPerTower ? { floorsPerTower: String(info.floorsPerTower) } : {}),
+      ...(info.unitsPerFloor ? { unitsPerFloor: String(info.unitsPerFloor) } : {}),
+    }));
+    setAiModalOpen(false);
+    addToast({
+      type: 'success',
+      title: 'Dados aplicados!',
+      description: 'Campos preenchidos com base na análise do PDF. Revise e salve.',
+    });
+  }
+
+  function renderScheduleTree(items: AiScheduleItem[], depth = 0): React.ReactNode {
+    return items.map((item) => (
+      <div key={item.code}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '3px 0',
+            paddingLeft: `${depth * 16}px`,
+            fontSize: '11px',
+            color: depth === 0 ? 'var(--t1)' : depth === 1 ? 'var(--t2)' : 'var(--t3)',
+            fontWeight: depth < 2 ? 500 : 400,
+          }}
+        >
+          <ChevronRight size={10} style={{ flexShrink: 0, opacity: 0.5 }} />
+          <span style={{ fontFamily: 'var(--mono)', color: 'var(--amber)', minWidth: '40px' }}>{item.code}</span>
+          <span style={{ flex: 1 }}>{item.name}</span>
+          <span style={{ color: 'var(--t3)', whiteSpace: 'nowrap' }}>{item.durationDays}d</span>
+        </div>
+        {item.children && renderScheduleTree(item.children, depth + 1)}
+      </div>
+    ));
+  }
+
   function handleSetSketchfab() {
     const url = window.prompt('Cole a URL do modelo Sketchfab ou embed:');
     if (url && url.trim()) {
@@ -258,7 +376,7 @@ export default function Cadastro() {
     setAddingMember(true);
     try {
       await projectsApi.addMember(currentProject.id, {
-        userId: newMember.email,
+        email: newMember.email,
         role: newMember.role,
       });
       setMembers((prev) => [
@@ -443,9 +561,25 @@ export default function Cadastro() {
         <div className="ao-card" style={{ margin: 0 }}>
           <div className="ao-card-hdr">
             <p className="ao-card-title">Plantas (PDF)</p>
-            <button className="ao-btn ao-btn-sm">
-              <Bot size={11} />
-              Processar com IA
+            <input
+              ref={aiFileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              style={{ display: 'none' }}
+              onChange={(e) => handleAiFileSelected(e.target.files)}
+            />
+            <button
+              className="ao-btn ao-btn-sm ao-btn-primary"
+              onClick={() => aiFileInputRef.current?.click()}
+              disabled={aiProcessing || !currentProject}
+              title={!currentProject ? 'Salve o empreendimento primeiro' : 'Enviar PDF para análise com IA'}
+            >
+              {aiProcessing ? (
+                <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <Sparkles size={11} />
+              )}
+              {aiProcessing ? 'Analisando…' : 'Processar com IA'}
             </button>
           </div>
 
@@ -752,6 +886,182 @@ export default function Cadastro() {
           </div>
         )}
       </div>
+
+      {/* ── AI Import Modal ──────────────────────────────────────────── */}
+      {aiModalOpen && aiResult && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAiModalOpen(false); }}
+        >
+          <div
+            style={{
+              background: 'var(--bg1)',
+              borderRadius: 'var(--r-lg)',
+              border: '0.5px solid var(--bd)',
+              width: '100%',
+              maxWidth: '680px',
+              maxHeight: '90vh',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {/* Modal header */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 16px',
+                borderBottom: '0.5px solid var(--bd)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Bot size={16} style={{ color: 'var(--amber)' }} />
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--t1)' }}>
+                  Resultado da Análise com IA
+                </span>
+                <span
+                  className={`ao-badge ${aiResult.confidence === 'high' ? 'ao-bg' : aiResult.confidence === 'medium' ? 'ao-ba' : 'ao-br'}`}
+                  style={{ marginLeft: '4px' }}
+                >
+                  {aiResult.confidence === 'high' ? 'Alta confiança' : aiResult.confidence === 'medium' ? 'Média confiança' : 'Baixa confiança'}
+                </span>
+              </div>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ border: 'none', background: 'transparent', color: 'var(--t3)' }}
+                onClick={() => setAiModalOpen(false)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Modal body */}
+            <div style={{ overflow: 'auto', flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+
+              {/* Resumo da análise */}
+              <div style={{ background: 'var(--bg2)', borderRadius: 'var(--r-md)', padding: '10px 12px' }}>
+                <p style={{ fontSize: '11px', color: 'var(--t2)', lineHeight: '1.5' }}>{aiResult.rawAnalysis}</p>
+              </div>
+
+              {/* Info do projeto */}
+              <div>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                  Dados identificados
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  {[
+                    { label: 'Torres / Blocos', value: aiResult.projectInfo.towers },
+                    { label: 'Pavimentos / Torre', value: aiResult.projectInfo.floorsPerTower },
+                    { label: 'Unidades / Pavimento', value: aiResult.projectInfo.unitsPerFloor },
+                    ...(aiResult.projectInfo.totalArea ? [{ label: 'Área total (m²)', value: aiResult.projectInfo.totalArea }] : []),
+                    ...(aiResult.projectInfo.estimatedDurationMonths ? [{ label: 'Duração estimada', value: `${aiResult.projectInfo.estimatedDurationMonths} meses` }] : []),
+                    ...(aiResult.projectInfo.buildingType ? [{ label: 'Tipo', value: aiResult.projectInfo.buildingType }] : []),
+                  ].map((item) => (
+                    <div key={item.label} style={{ background: 'var(--bg2)', borderRadius: 'var(--r-md)', padding: '8px 10px' }}>
+                      <p style={{ fontSize: '10px', color: 'var(--t3)' }}>{item.label}</p>
+                      <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--t1)' }}>{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tipos de atividade */}
+              <div>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                  Tipos de atividade sugeridos ({aiResult.activityTypes.length})
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {aiResult.activityTypes.map((at, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '3px 8px',
+                        borderRadius: '20px',
+                        background: 'var(--amb-bg)',
+                        fontSize: '11px',
+                        color: 'var(--amb-t)',
+                      }}
+                    >
+                      <CheckCircle size={9} />
+                      {at.name} <span style={{ opacity: 0.7 }}>({at.unit})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* EAP */}
+              <div>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                  Cronograma (EAP) sugerido
+                </p>
+                <div
+                  style={{
+                    background: 'var(--bg2)',
+                    borderRadius: 'var(--r-md)',
+                    padding: '10px 12px',
+                    maxHeight: '200px',
+                    overflow: 'auto',
+                  }}
+                >
+                  {renderScheduleTree(aiResult.schedule)}
+                </div>
+              </div>
+
+              {/* Warning if low confidence */}
+              {aiResult.confidence === 'low' && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
+                    padding: '10px 12px',
+                    background: 'var(--red-bg)',
+                    borderRadius: 'var(--r-md)',
+                  }}
+                >
+                  <AlertCircle size={14} style={{ color: 'var(--red)', flexShrink: 0, marginTop: '1px' }} />
+                  <p style={{ fontSize: '11px', color: 'var(--red-t)' }}>
+                    Confiança baixa: o documento pode não conter plantas claras. Os dados sugeridos são valores padrão para obras residenciais. Revise antes de aplicar.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal footer */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+                padding: '12px 16px',
+                borderTop: '0.5px solid var(--bd)',
+              }}
+            >
+              <button className="ao-btn ao-btn-sm" onClick={() => setAiModalOpen(false)}>
+                Cancelar
+              </button>
+              <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handleApplyAiResult}>
+                <CheckCircle size={11} />
+                Aplicar ao formulário
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

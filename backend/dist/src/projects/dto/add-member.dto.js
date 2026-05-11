@@ -18,9 +18,9 @@ class AddMemberDto {
 exports.AddMemberDto = AddMemberDto;
 __decorate([
     (0, swagger_1.ApiProperty)(),
-    (0, class_validator_1.IsUUID)(),
+    (0, class_validator_1.IsEmail)(),
     __metadata("design:type", String)
-], AddMemberDto.prototype, "userId", void 0);
+], AddMemberDto.prototype, "email", void 0);
 __decorate([
     (0, swagger_1.ApiProperty)({ enum: client_1.UserRole }),
     (0, class_validator_1.IsEnum)(client_1.UserRole),

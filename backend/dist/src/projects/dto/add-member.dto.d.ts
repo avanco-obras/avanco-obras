@@ -1,5 +1,5 @@
 import { UserRole } from '@prisma/client';
 export declare class AddMemberDto {
-    userId: string;
+    email: string;
     role: UserRole;
 }

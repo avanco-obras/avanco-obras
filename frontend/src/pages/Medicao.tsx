@@ -134,7 +134,7 @@ function BuildingSVG({ floors, unitsCache, selectedFloorId, onSelectFloor }: Bui
               width="156"
               height={h}
               fill="transparent"
-              stroke={isSelected ? 'var(--amber)' : 'var(--bd)'}
+              stroke={isSelected ? 'var(--blue)' : 'var(--bd)'}
               strokeWidth={isSelected ? 2.5 : 0.5}
             />
             {/* Windows colored by progress */}
@@ -478,11 +478,11 @@ export default function Medicao() {
                       fontSize: 10,
                       textAlign: 'center',
                       cursor: 'pointer',
-                      border: isSelected ? '1.5px solid var(--amber)' : '0.5px solid var(--bd)',
+                      border: isSelected ? '1.5px solid var(--blue)' : '1px solid var(--bd)',
                       background: bgColor,
                       color: textColor,
                       transition: 'all .15s',
-                      boxShadow: isSelected ? '0 0 0 2px rgba(186,117,23,.25)' : 'none',
+                      boxShadow: isSelected ? '0 0 0 2px rgba(27,111,232,.18)' : 'none',
                       fontFamily: 'var(--font)',
                     }}
                     onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.04)'; }}
@@ -604,7 +604,7 @@ export default function Medicao() {
                             border: 'none',
                             cursor: 'pointer',
                             fontFamily: 'var(--font)',
-                            background: !isMetric ? 'var(--amber)' : 'var(--bg2)',
+                            background: !isMetric ? 'var(--blue)' : 'var(--s1)',
                             color: !isMetric ? '#fff' : 'var(--t2)',
                             transition: 'all .15s',
                           }}
@@ -619,7 +619,7 @@ export default function Medicao() {
                             border: 'none',
                             cursor: 'pointer',
                             fontFamily: 'var(--font)',
-                            background: isMetric ? 'var(--amber)' : 'var(--bg2)',
+                            background: isMetric ? 'var(--blue)' : 'var(--s1)',
                             color: isMetric ? '#fff' : 'var(--t2)',
                             transition: 'all .15s',
                           }}

@@ -46,7 +46,7 @@ function daysBetween(a: Date, b: Date) {
 }
 
 function parseDate(s: string) {
-  return new Date(s + 'T00:00:00');
+  return new Date(s.slice(0, 10) + 'T00:00:00');
 }
 
 function monthsInRange(minDate: Date, maxDate: Date): { label: string; left: number; width: number }[] {
@@ -69,9 +69,9 @@ function monthsInRange(minDate: Date, maxDate: Date): { label: string; left: num
 
 // Same thresholds and colors as HTML reference
 function barColor(actual: number, planned: number): string {
-  if (actual >= planned) return '#3B6D11';
-  if (actual >= planned - 15) return '#BA7517';
-  return '#E24B4A';
+  if (actual >= planned) return '#16803C';
+  if (actual >= planned - 15) return '#C47D0F';
+  return '#C9312F';
 }
 
 function badgeClass(actual: number, planned: number): string {
@@ -113,6 +113,7 @@ export default function Cronograma() {
   // Synchronized scroll refs
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
+  const hdrRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
 
   // Debounce search
@@ -224,6 +225,7 @@ export default function Cronograma() {
     if (syncingRef.current) return;
     syncingRef.current = true;
     if (leftRef.current && rightRef.current) leftRef.current.scrollTop = rightRef.current.scrollTop;
+    if (hdrRef.current && rightRef.current) hdrRef.current.scrollLeft = rightRef.current.scrollLeft;
     syncingRef.current = false;
   }
 
@@ -308,7 +310,7 @@ export default function Cronograma() {
           No prazo
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 10, height: 5, background: '#BA7517', borderRadius: 2, display: 'inline-block' }} />
+          <span style={{ width: 10, height: 5, background: '#C47D0F', borderRadius: 2, display: 'inline-block' }} />
           Leve atraso
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -418,120 +420,123 @@ export default function Cronograma() {
         </div>
 
         {/* ── Right Gantt panel ── */}
-        {/* Single overflow:auto container — month header is sticky inside */}
-        <div
-          ref={rightRef}
-          onScroll={onRightScroll}
-          style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}
-        >
-          {/* Sticky month header */}
-          <div style={{
-            position: 'sticky',
-            top: 0,
-            zIndex: 3,
-            background: 'var(--bg2)',
-            borderBottom: '0.5px solid var(--bd)',
-            height: HDR_H,
-            width: totalWidth,
-          }}>
-            {months.map((mon, i) => (
-              <div
-                key={i}
-                style={{
-                  position: 'absolute',
-                  left: mon.left,
-                  top: 0,
-                  width: mon.width,
-                  height: HDR_H,
-                  borderLeft: '0.5px solid var(--bd)',
-                  padding: '0 4px',
-                  fontSize: 9,
-                  color: 'var(--t2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {mon.label}
-              </div>
-            ))}
-            {/* Today line in header */}
-            <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: HDR_H, zIndex: 2 }} />
-          </div>
+        {/* Separate fixed header + scrollable body to guarantee bars always render */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-          {/* Bar rows container */}
-          <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
-            {/* Today line through all rows */}
-            <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
-
-            {/* Bars per visible row */}
-            {!loading && visibleTasks.map((task, rowIdx) => {
-              const left = barLeft(task);
-              const width = barWidth(task);
-              const barH = task.level <= 1 ? 12 : 8;
-              const barTop = Math.round((ROW_H - barH) / 2);
-              const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
-              const color = barColor(task.actualProgress, task.plannedProgress);
-              const opacity = task.level <= 1 ? 0.9 : 0.7;
-              const top = rowIdx * ROW_H;
-              const bg = rowBg(task.level);
-
-              return (
+          {/* Month header — horizontally hidden, synced via hdrRef.scrollLeft */}
+          <div
+            ref={hdrRef}
+            style={{
+              height: HDR_H,
+              flexShrink: 0,
+              overflow: 'hidden',
+              background: 'var(--bg2)',
+              borderBottom: '0.5px solid var(--bd)',
+              position: 'relative',
+            }}
+          >
+            <div style={{ position: 'relative', width: totalWidth, height: HDR_H }}>
+              {months.map((mon, i) => (
                 <div
-                  key={task.id}
+                  key={i}
                   style={{
                     position: 'absolute',
-                    top,
-                    left: 0,
-                    width: totalWidth,
-                    height: ROW_H,
-                    background: bg,
-                    borderBottom: '0.5px solid var(--bd)',
+                    left: mon.left,
+                    top: 0,
+                    width: mon.width,
+                    height: HDR_H,
+                    borderLeft: '0.5px solid var(--bd)',
+                    padding: '0 4px',
+                    fontSize: 9,
+                    color: 'var(--t2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    whiteSpace: 'nowrap',
                   }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg2)'; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = bg; }}
                 >
-                  {/* Planned bar */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left,
-                      width,
-                      height: barH,
-                      top: barTop,
-                      background: 'rgba(55,138,221,.2)',
-                      borderRadius: 3,
-                    }}
-                  />
-                  {/* Actual bar (overlaid on planned) */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left,
-                      width: actualW,
-                      height: barH,
-                      top: barTop,
-                      background: color,
-                      borderRadius: 3,
-                      opacity,
-                    }}
-                  />
-                  {/* % label to the right of actual bar */}
-                  {task.level <= 2 && actualW > 20 && (
-                    <span style={{
-                      position: 'absolute',
-                      left: left + actualW + 3,
-                      top: barTop - 1,
-                      fontSize: 9,
-                      color,
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {task.actualProgress}%
-                    </span>
-                  )}
+                  {mon.label}
                 </div>
-              );
-            })}
+              ))}
+              <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: HDR_H, zIndex: 2 }} />
+            </div>
+          </div>
+
+          {/* Scrollable bar body */}
+          <div
+            ref={rightRef}
+            onScroll={onRightScroll}
+            style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}
+          >
+            <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
+              {/* Today line through all rows */}
+              <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
+
+              {!loading && visibleTasks.map((task, rowIdx) => {
+                const left = barLeft(task);
+                const width = barWidth(task);
+                const barH = task.level <= 1 ? 12 : 8;
+                const barTop = Math.round((ROW_H - barH) / 2);
+                const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
+                const color = barColor(task.actualProgress, task.plannedProgress);
+                const top = rowIdx * ROW_H;
+                const bg = rowBg(task.level);
+
+                return (
+                  <div
+                    key={task.id}
+                    style={{
+                      position: 'absolute',
+                      top,
+                      left: 0,
+                      width: totalWidth,
+                      height: ROW_H,
+                      background: bg,
+                      borderBottom: '0.5px solid var(--bd)',
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg2)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = bg; }}
+                  >
+                    {/* Planned bar */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left,
+                        width,
+                        height: barH,
+                        top: barTop,
+                        background: 'rgba(55,138,221,.35)',
+                        borderRadius: 3,
+                      }}
+                    />
+                    {/* Actual bar */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left,
+                        width: actualW,
+                        height: barH,
+                        top: barTop,
+                        background: color,
+                        borderRadius: 3,
+                        opacity: task.level <= 1 ? 1 : 0.85,
+                      }}
+                    />
+                    {task.level <= 2 && actualW > 20 && (
+                      <span style={{
+                        position: 'absolute',
+                        left: left + actualW + 3,
+                        top: barTop - 1,
+                        fontSize: 9,
+                        color,
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {task.actualProgress}%
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

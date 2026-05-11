@@ -28,5 +28,9 @@ declare const _default: () => {
         ttl: number;
         limit: number;
     };
+    mistral: {
+        apiKey: string;
+        model: string;
+    };
 };
 export default _default;
