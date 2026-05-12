@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store';
-import { projectsApi, uploadsApi, aiImportApi } from '@/services/api';
+import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
 import {
   FileText,
   Box,
@@ -143,6 +143,8 @@ export default function Cadastro() {
   const [aiProcessing, setAiProcessing] = useState(false);
   const [aiResult, setAiResult] = useState<AiImportResult | null>(null);
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [eapImporting, setEapImporting] = useState(false);
+  const [eapImportProgress, setEapImportProgress] = useState('');
   const aiFileInputRef = useRef<HTMLInputElement>(null);
 
   // Modelo 3D state
@@ -316,20 +318,139 @@ export default function Cadastro() {
   function handleApplyAiResult() {
     if (!aiResult) return;
     const info = aiResult.projectInfo;
+
+    // Calcula data de término a partir da data de início + duração estimada
+    let computedEndDate = '';
+    if (info.estimatedDurationMonths) {
+      const base = form.startDate ? new Date(form.startDate) : new Date();
+      base.setMonth(base.getMonth() + info.estimatedDurationMonths);
+      computedEndDate = base.toISOString().slice(0, 10);
+    }
+
     setForm((prev) => ({
       ...prev,
+      // Dados de identificação
       ...(info.name ? { name: info.name } : {}),
+      // Tipo de edificação → campo company pode receber contexto se vazio
+      ...(info.buildingType && !prev.company ? { company: `Obra ${info.buildingType.charAt(0) + info.buildingType.slice(1).toLowerCase()}` } : {}),
+      // Dimensões
       ...(info.totalArea ? { totalArea: String(info.totalArea) } : {}),
       ...(info.towers ? { towers: String(info.towers) } : {}),
       ...(info.floorsPerTower ? { floorsPerTower: String(info.floorsPerTower) } : {}),
       ...(info.unitsPerFloor ? { unitsPerFloor: String(info.unitsPerFloor) } : {}),
+      // Datas — preenche apenas se ainda não definidas
+      ...(!prev.startDate ? { startDate: new Date().toISOString().slice(0, 10) } : {}),
+      ...(!prev.endDate && computedEndDate ? { endDate: computedEndDate } : {}),
     }));
-    setAiModalOpen(false);
+
+    const appliedFields: string[] = [];
+    if (info.name) appliedFields.push('nome');
+    if (info.totalArea) appliedFields.push('área');
+    if (info.towers) appliedFields.push('torres');
+    if (info.floorsPerTower) appliedFields.push('pavimentos');
+    if (info.unitsPerFloor) appliedFields.push('unidades/pav.');
+    if (computedEndDate) appliedFields.push('prazo estimado');
+
     addToast({
       type: 'success',
-      title: 'Dados aplicados!',
-      description: 'Campos preenchidos com base na análise do PDF. Revise e salve.',
+      title: 'Dados do cadastro aplicados!',
+      description: `Campos preenchidos: ${appliedFields.join(', ')}. Revise e salve.`,
     });
+  }
+
+  async function handleImportEap() {
+    if (!aiResult || !currentProject) {
+      addToast({ type: 'warning', title: 'Salve o empreendimento antes de importar o EAP' });
+      return;
+    }
+
+    setEapImporting(true);
+    setEapImportProgress('Criando tipos de atividade…');
+
+    const projectId = currentProject.id; // captura antes do try para preservar narrowing
+
+    try {
+      // 1. Criar tipos de atividade sugeridos
+      const createdTypes: Record<string, string> = {}; // name → id
+
+      for (const at of aiResult.activityTypes) {
+        try {
+          const created = await activityTypesApi.create(projectId, {
+            name: at.name,
+            unit: at.unit,
+            measurementMethod: at.measurementMethod,
+            weight: at.weight,
+          });
+          createdTypes[at.name] = created.id;
+        } catch {
+          // Ignora se já existir
+        }
+      }
+
+      // 2. Importar EAP recursivamente
+      const projectStartDate = form.startDate || new Date().toISOString().slice(0, 10);
+      let order = 0;
+
+      async function importItem(
+        item: AiScheduleItem,
+        parentId: string | undefined,
+        startOffset: number,
+      ): Promise<number> {
+        const startDate = new Date(projectStartDate);
+        startDate.setDate(startDate.getDate() + startOffset);
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + item.durationDays);
+
+        setEapImportProgress(`Importando: ${item.code} — ${item.name}`);
+
+        const created = await scheduleApi.create(projectId, {
+          code: item.code,
+          name: item.name,
+          level: item.level,
+          durationDays: item.durationDays,
+          plannedProgress: 0,
+          actualProgress: 0,
+          weight: item.weight,
+          isCriticalPath: item.isCriticalPath,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          order: order++,
+          ...(parentId ? { parentId } : {}),
+        });
+
+        if (item.children?.length) {
+          let childOffset = startOffset;
+          for (const child of item.children) {
+            childOffset = await importItem(child, created.id, childOffset);
+          }
+          return childOffset;
+        }
+
+        return startOffset + item.durationDays;
+      }
+
+      setEapImportProgress('Importando EAP…');
+      for (const rootItem of aiResult.schedule) {
+        await importItem(rootItem, undefined, 0);
+      }
+
+      setAiModalOpen(false);
+      addToast({
+        type: 'success',
+        title: 'EAP importado com sucesso!',
+        description: `${aiResult.activityTypes.length} tipos de atividade e ${aiResult.schedule.length} grupos do cronograma criados. Acesse a aba Cronograma para visualizar.`,
+      });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({
+        type: 'error',
+        title: 'Erro ao importar EAP',
+        description: msg || 'Verifique se o projeto foi salvo e tente novamente.',
+      });
+    } finally {
+      setEapImporting(false);
+      setEapImportProgress('');
+    }
   }
 
   function renderScheduleTree(items: AiScheduleItem[], depth = 0): React.ReactNode {
@@ -1044,20 +1165,62 @@ export default function Cadastro() {
             {/* Modal footer */}
             <div
               style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: '8px',
-                padding: '12px 16px',
                 borderTop: '0.5px solid var(--bd)',
+                padding: '12px 16px',
               }}
             >
-              <button className="ao-btn ao-btn-sm" onClick={() => setAiModalOpen(false)}>
-                Cancelar
-              </button>
-              <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handleApplyAiResult}>
-                <CheckCircle size={11} />
-                Aplicar ao formulário
-              </button>
+              {/* Progress feedback */}
+              {eapImporting && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 10px',
+                    background: 'var(--amb-bg)',
+                    borderRadius: 'var(--r-md)',
+                    marginBottom: '10px',
+                    fontSize: '11px',
+                    color: 'var(--amb-t)',
+                  }}
+                >
+                  <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                  <span>{eapImportProgress || 'Importando EAP…'}</span>
+                </div>
+              )}
+
+              {/* Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <button className="ao-btn ao-btn-sm" onClick={() => setAiModalOpen(false)} disabled={eapImporting}>
+                  Fechar
+                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {/* Aplica apenas os dados do cadastro */}
+                  <button
+                    className="ao-btn ao-btn-sm"
+                    onClick={handleApplyAiResult}
+                    disabled={eapImporting}
+                    title="Preenche os campos de cadastro com os dados identificados pela IA"
+                  >
+                    <CheckCircle size={11} />
+                    Aplicar dados do cadastro
+                  </button>
+                  {/* Importa EAP e tipos de atividade no banco */}
+                  <button
+                    className="ao-btn ao-btn-sm ao-btn-primary"
+                    onClick={handleImportEap}
+                    disabled={eapImporting || !currentProject}
+                    title={!currentProject ? 'Salve o empreendimento antes de importar o EAP' : 'Cria os tipos de atividade e o cronograma (EAP) completo no banco de dados'}
+                  >
+                    {eapImporting ? (
+                      <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+                    ) : (
+                      <Sparkles size={11} />
+                    )}
+                    {eapImporting ? 'Importando…' : 'Importar EAP + Atividades'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
