@@ -32,9 +32,11 @@ interface AiScheduleItem {
   code: string;
   name: string;
   level: number;
+  startDayOffset?: number;
   durationDays: number;
   weight: number;
   isCriticalPath: boolean;
+  activityTypeName?: string | null;
   children?: AiScheduleItem[];
 }
 
@@ -387,17 +389,33 @@ export default function Cadastro() {
         }
       }
 
-      // 2. Importar EAP recursivamente
+      // 2. Importar EAP usando startDayOffset por item (permite paralelismo real)
       const projectStartDate = form.startDate || new Date().toISOString().slice(0, 10);
       let order = 0;
+
+      // Resolve activityTypeId by name from the types we just created
+      function resolveActivityTypeId(activityTypeName?: string | null): string | undefined {
+        if (!activityTypeName) return undefined;
+        const id = createdTypes[activityTypeName];
+        if (id) return id;
+        // Fuzzy match: find a key that contains the name or vice versa
+        const lower = activityTypeName.toLowerCase();
+        const match = Object.keys(createdTypes).find(
+          k => k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase()),
+        );
+        return match ? createdTypes[match] : undefined;
+      }
 
       async function importItem(
         item: AiScheduleItem,
         parentId: string | undefined,
-        startOffset: number,
-      ): Promise<number> {
+        parentStartOffset: number,
+      ): Promise<void> {
+        // Use item's own startDayOffset if provided, otherwise fall back to sequential (legacy)
+        const itemOffset = item.startDayOffset ?? parentStartOffset;
+
         const startDate = new Date(projectStartDate);
-        startDate.setDate(startDate.getDate() + startOffset);
+        startDate.setDate(startDate.getDate() + itemOffset);
         const endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + item.durationDays);
 
@@ -415,18 +433,15 @@ export default function Cadastro() {
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           order: order++,
+          activityTypeId: resolveActivityTypeId(item.activityTypeName),
           ...(parentId ? { parentId } : {}),
         });
 
         if (item.children?.length) {
-          let childOffset = startOffset;
           for (const child of item.children) {
-            childOffset = await importItem(child, created.id, childOffset);
+            await importItem(child, created.id, itemOffset);
           }
-          return childOffset;
         }
-
-        return startOffset + item.durationDays;
       }
 
       setEapImportProgress('Importando EAP…');

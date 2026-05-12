@@ -9,9 +9,11 @@ export interface AiScheduleItem {
   code: string;
   name: string;
   level: number;
+  startDayOffset?: number;
   durationDays: number;
   weight: number;
   isCriticalPath: boolean;
+  activityTypeName?: string | null;
   children?: AiScheduleItem[];
 }
 
