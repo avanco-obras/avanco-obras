@@ -1,6 +1,7 @@
 import { ScheduleService } from './schedule.service';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+import { CreateDependencyDto } from './dto/create-dependency.dto';
 export declare class ScheduleController {
     private readonly scheduleService;
     constructor(scheduleService: ScheduleService);
@@ -94,6 +95,45 @@ export declare class ScheduleController {
         parentId: string | null;
         activityTypeId: string | null;
     }>;
+    addDependency(successorId: string, dto: CreateDependencyDto): Promise<{
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        lagDays: number;
+        predecessorId: string;
+        successorId: string;
+    }>;
+    removeDependency(depId: string): Promise<{
+        message: string;
+    }>;
+    getItemDependencies(itemId: string): Promise<({
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        lagDays: number;
+        predecessorId: string;
+        successorId: string;
+    })[]>;
     remove(id: string): Promise<{
         message: string;
     }>;

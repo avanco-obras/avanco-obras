@@ -15,6 +15,7 @@ export interface GanttRow {
     isCriticalPath: boolean;
     hasChildren: boolean;
     order: number;
+    weight: number;
 }
 export interface CurvaSPoint {
     label: string;
@@ -120,4 +121,43 @@ export declare class ScheduleService {
     }>;
     getGanttData(projectId: string): Promise<GanttRow[]>;
     getCurvaS(projectId: string): Promise<CurvaSPoint[]>;
+    addDependency(successorId: string, predecessorId: string, lagDays?: number, type?: string): Promise<{
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        lagDays: number;
+        predecessorId: string;
+        successorId: string;
+    }>;
+    removeDependency(depId: string): Promise<{
+        message: string;
+    }>;
+    getItemDependencies(itemId: string): Promise<({
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        lagDays: number;
+        predecessorId: string;
+        successorId: string;
+    })[]>;
 }

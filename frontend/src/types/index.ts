@@ -135,6 +135,18 @@ export interface GanttTask {
   isExpanded?: boolean;
   hasChildren?: boolean;
   parentId?: string;
+  durationDays?: number;
+  weight?: number;
+}
+
+export interface ScheduleDependencyItem {
+  id: string;
+  predecessorId: string;
+  successorId: string;
+  lagDays: number;
+  type: string;
+  predecessor?: { id: string; code: string; name: string };
+  successor?: { id: string; code: string; name: string };
 }
 
 export interface CurvaSPoint {

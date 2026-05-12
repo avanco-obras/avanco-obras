@@ -21,6 +21,7 @@ export interface GanttRow {
   isCriticalPath: boolean;
   hasChildren: boolean;
   order: number;
+  weight: number;
 }
 
 export interface CurvaSPoint {
@@ -188,6 +189,7 @@ export class ScheduleService {
         actualProgress: true,
         isCriticalPath: true,
         order: true,
+        weight: true,
         _count: {
           select: { children: true },
         },
@@ -209,6 +211,7 @@ export class ScheduleService {
       isCriticalPath: item.isCriticalPath,
       hasChildren: item._count.children > 0,
       order: item.order,
+      weight: Number(item.weight),
     }));
   }
 
@@ -330,5 +333,45 @@ export class ScheduleService {
     }
 
     return points;
+  }
+
+  async addDependency(successorId: string, predecessorId: string, lagDays = 0, type = 'FS') {
+    if (successorId === predecessorId) {
+      throw new ConflictException('Um item não pode depender de si mesmo');
+    }
+    const [successor, predecessor] = await Promise.all([
+      this.prisma.scheduleItem.findUnique({ where: { id: successorId }, select: { id: true } }),
+      this.prisma.scheduleItem.findUnique({ where: { id: predecessorId }, select: { id: true } }),
+    ]);
+    if (!successor) throw new NotFoundException(`Item ${successorId} não encontrado`);
+    if (!predecessor) throw new NotFoundException(`Predecessora ${predecessorId} não encontrada`);
+
+    return this.prisma.scheduleDependency.create({
+      data: { predecessorId, successorId, lagDays, type },
+      include: {
+        predecessor: { select: { id: true, code: true, name: true } },
+        successor: { select: { id: true, code: true, name: true } },
+      },
+    });
+  }
+
+  async removeDependency(depId: string) {
+    const dep = await this.prisma.scheduleDependency.findUnique({ where: { id: depId } });
+    if (!dep) throw new NotFoundException(`Dependência ${depId} não encontrada`);
+    await this.prisma.scheduleDependency.delete({ where: { id: depId } });
+    return { message: 'Dependência removida com sucesso' };
+  }
+
+  async getItemDependencies(itemId: string) {
+    const item = await this.prisma.scheduleItem.findUnique({ where: { id: itemId }, select: { id: true } });
+    if (!item) throw new NotFoundException(`Item ${itemId} não encontrado`);
+
+    return this.prisma.scheduleDependency.findMany({
+      where: { OR: [{ predecessorId: itemId }, { successorId: itemId }] },
+      include: {
+        predecessor: { select: { id: true, code: true, name: true } },
+        successor: { select: { id: true, code: true, name: true } },
+      },
+    });
   }
 }

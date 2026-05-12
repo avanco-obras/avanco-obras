@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ScheduleService } from './schedule.service';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+import { CreateDependencyDto } from './dto/create-dependency.dto';
 
 @ApiTags('Schedule')
 @ApiBearerAuth()
@@ -58,6 +59,34 @@ export class ScheduleController {
     @Body() dto: UpdateScheduleItemDto,
   ) {
     return this.scheduleService.update(id, dto);
+  }
+
+  @Post('schedule/:id/predecessors')
+  @ApiOperation({ summary: 'Add a predecessor dependency to a schedule item' })
+  @ApiParam({ name: 'id', description: 'Successor schedule item ID' })
+  @ApiResponse({ status: 201, description: 'Dependency created' })
+  @HttpCode(HttpStatus.CREATED)
+  addDependency(
+    @Param('id') successorId: string,
+    @Body() dto: CreateDependencyDto,
+  ) {
+    return this.scheduleService.addDependency(successorId, dto.predecessorId, dto.lagDays, dto.type);
+  }
+
+  @Delete('schedule/dependencies/:depId')
+  @ApiOperation({ summary: 'Remove a schedule dependency' })
+  @ApiParam({ name: 'depId', description: 'Dependency ID' })
+  @ApiResponse({ status: 200, description: 'Dependency removed' })
+  removeDependency(@Param('depId') depId: string) {
+    return this.scheduleService.removeDependency(depId);
+  }
+
+  @Get('schedule/:id/dependencies')
+  @ApiOperation({ summary: 'Get all dependencies for a schedule item' })
+  @ApiParam({ name: 'id', description: 'Schedule item ID' })
+  @ApiResponse({ status: 200, description: 'Returns predecessors and successors' })
+  getItemDependencies(@Param('id') itemId: string) {
+    return this.scheduleService.getItemDependencies(itemId);
   }
 
   @Delete('schedule/:id')

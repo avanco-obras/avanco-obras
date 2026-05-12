@@ -153,6 +153,7 @@ let ScheduleService = class ScheduleService {
                 actualProgress: true,
                 isCriticalPath: true,
                 order: true,
+                weight: true,
                 _count: {
                     select: { children: true },
                 },
@@ -173,6 +174,7 @@ let ScheduleService = class ScheduleService {
             isCriticalPath: item.isCriticalPath,
             hasChildren: item._count.children > 0,
             order: item.order,
+            weight: Number(item.weight),
         }));
     }
     async getCurvaS(projectId) {
@@ -259,6 +261,45 @@ let ScheduleService = class ScheduleService {
             cursor.setMonth(cursor.getMonth() + 1);
         }
         return points;
+    }
+    async addDependency(successorId, predecessorId, lagDays = 0, type = 'FS') {
+        if (successorId === predecessorId) {
+            throw new common_1.ConflictException('Um item não pode depender de si mesmo');
+        }
+        const [successor, predecessor] = await Promise.all([
+            this.prisma.scheduleItem.findUnique({ where: { id: successorId }, select: { id: true } }),
+            this.prisma.scheduleItem.findUnique({ where: { id: predecessorId }, select: { id: true } }),
+        ]);
+        if (!successor)
+            throw new common_1.NotFoundException(`Item ${successorId} não encontrado`);
+        if (!predecessor)
+            throw new common_1.NotFoundException(`Predecessora ${predecessorId} não encontrada`);
+        return this.prisma.scheduleDependency.create({
+            data: { predecessorId, successorId, lagDays, type },
+            include: {
+                predecessor: { select: { id: true, code: true, name: true } },
+                successor: { select: { id: true, code: true, name: true } },
+            },
+        });
+    }
+    async removeDependency(depId) {
+        const dep = await this.prisma.scheduleDependency.findUnique({ where: { id: depId } });
+        if (!dep)
+            throw new common_1.NotFoundException(`Dependência ${depId} não encontrada`);
+        await this.prisma.scheduleDependency.delete({ where: { id: depId } });
+        return { message: 'Dependência removida com sucesso' };
+    }
+    async getItemDependencies(itemId) {
+        const item = await this.prisma.scheduleItem.findUnique({ where: { id: itemId }, select: { id: true } });
+        if (!item)
+            throw new common_1.NotFoundException(`Item ${itemId} não encontrado`);
+        return this.prisma.scheduleDependency.findMany({
+            where: { OR: [{ predecessorId: itemId }, { successorId: itemId }] },
+            include: {
+                predecessor: { select: { id: true, code: true, name: true } },
+                successor: { select: { id: true, code: true, name: true } },
+            },
+        });
     }
 };
 exports.ScheduleService = ScheduleService;

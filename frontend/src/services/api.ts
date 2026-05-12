@@ -3,7 +3,7 @@ import type {
   AuthResponse, User, Project, ProjectMember, Tower, Floor, Unit,
   ActivityType, ScheduleItem, GanttTask, CurvaSPoint, Measurement,
   WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
-  PPCHistoryPoint, BuildingData, Upload,
+  PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
 } from '../types';
 import { useStore } from '../store';
 
@@ -119,6 +119,12 @@ export const scheduleApi = {
     api.get<GanttTask[]>(`/projects/${projectId}/schedule/gantt-data`).then((r) => r.data),
   curvaS: (projectId: string) =>
     api.get<CurvaSPoint[]>(`/projects/${projectId}/schedule/curva-s`).then((r) => r.data),
+  addDependency: (successorId: string, data: { predecessorId: string; lagDays?: number; type?: string }) =>
+    api.post<ScheduleDependencyItem>(`/schedule/${successorId}/predecessors`, data).then((r) => r.data),
+  removeDependency: (depId: string) =>
+    api.delete(`/schedule/dependencies/${depId}`).then((r) => r.data),
+  getDependencies: (itemId: string) =>
+    api.get<ScheduleDependencyItem[]>(`/schedule/${itemId}/dependencies`).then((r) => r.data),
 };
 
 // ── Measurements ──────────────────────────────────────────────────
