@@ -237,6 +237,10 @@ export default function Configuracoes() {
   const [currency, setCurrency] = useState(currentProject?.currency ?? 'BRL');
   const [savingProjeto, setSavingProjeto] = useState(false);
 
+  // ── Delete empreendimento state ────────────────────────────────────────
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingEmpreendimento, setDeletingEmpreendimento] = useState(false);
+
   const handleSaveProjeto = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentProject) return;
@@ -254,6 +258,29 @@ export default function Configuracoes() {
       addToast({ type: 'error', title: 'Erro ao salvar configurações do projeto.' });
     } finally {
       setSavingProjeto(false);
+    }
+  };
+
+  const handleDeleteEmpreendimento = async () => {
+    if (!currentProject) return;
+    setDeletingEmpreendimento(true);
+    try {
+      await projectsApi.delete(currentProject.id);
+      setCurrentProject(null);
+      setShowDeleteConfirm(false);
+      addToast({
+        type: 'success',
+        title: 'Empreendimento deletado',
+        description: 'Todos os dados foram removidos. Você voltou ao estado inicial.',
+      });
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao deletar',
+        description: 'Não foi possível deletar o empreendimento.',
+      });
+    } finally {
+      setDeletingEmpreendimento(false);
     }
   };
 
@@ -493,7 +520,7 @@ export default function Configuracoes() {
           </div>
 
           {/* Card: Configurações do projeto */}
-          <div className="ao-card" style={{ margin: 0 }}>
+          <div className="ao-card">
             <div className="ao-sec-title">Configurações do projeto</div>
             {!currentProject ? (
               <p style={{ fontSize: 12, color: 'var(--t2)' }}>Selecione um projeto para configurar.</p>
@@ -546,6 +573,93 @@ export default function Configuracoes() {
                   {savingProjeto ? 'Salvando...' : '💾 Salvar projeto'}
                 </button>
               </form>
+            )}
+          </div>
+
+          {/* Card: Deletar empreendimento */}
+          <div className="ao-card" style={{ margin: 0, borderColor: 'var(--red)', borderWidth: '1px' }}>
+            <div className="ao-sec-title" style={{ color: 'var(--red)' }}>⚠️ Deletar empreendimento</div>
+            {!currentProject ? (
+              <p style={{ fontSize: 12, color: 'var(--t2)' }}>Nenhum empreendimento selecionado.</p>
+            ) : (
+              <>
+                <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: '1rem' }}>
+                  Ao deletar este empreendimento, todos os dados serão removidos permanentemente:
+                  torres, pavimentos, unidades, atividades, medições, cronograma e restrições.
+                  Você voltará ao estado inicial como um novo usuário.
+                </p>
+
+                {showDeleteConfirm ? (
+                  <div style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid var(--red)',
+                    borderRadius: 'var(--r-md)',
+                    padding: '.875rem',
+                    marginBottom: '1rem',
+                  }}>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: 'var(--red)', marginBottom: '0.75rem' }}>
+                      ⚠️ Esta ação é irreversível!
+                    </p>
+                    <p style={{ fontSize: 11, color: 'var(--t1)', marginBottom: '1rem' }}>
+                      Você tem certeza que deseja deletar "{currentProject.name}" e todos os seus dados?
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={handleDeleteEmpreendimento}
+                        disabled={deletingEmpreendimento}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: 11,
+                          fontWeight: 500,
+                          borderRadius: 'var(--r-md)',
+                          border: 'none',
+                          background: 'var(--red)',
+                          color: '#fff',
+                          cursor: deletingEmpreendimento ? 'not-allowed' : 'pointer',
+                          opacity: deletingEmpreendimento ? 0.7 : 1,
+                          fontFamily: 'var(--font)',
+                        }}
+                      >
+                        {deletingEmpreendimento ? 'Deletando...' : '🗑️ Deletar agora'}
+                      </button>
+                      <button
+                        onClick={() => setShowDeleteConfirm(false)}
+                        disabled={deletingEmpreendimento}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: 11,
+                          fontWeight: 500,
+                          borderRadius: 'var(--r-md)',
+                          border: '1px solid var(--bd)',
+                          background: 'var(--bg1)',
+                          color: 'var(--t1)',
+                          cursor: 'pointer',
+                          fontFamily: 'var(--font)',
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: 11,
+                      fontWeight: 500,
+                      borderRadius: 'var(--r-md)',
+                      border: 'none',
+                      background: 'var(--red)',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font)',
+                    }}
+                  >
+                    🗑️ Deletar empreendimento
+                  </button>
+                )}
+              </>
             )}
           </div>
 
