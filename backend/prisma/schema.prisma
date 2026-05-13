@@ -219,7 +219,7 @@ model Measurement {
   createdAt       DateTime @default(now()) @map("created_at")
 
   unit         Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  activityType ActivityType @relation(fields: [activityTypeId], references: [id])
+  activityType ActivityType @relation(fields: [activityTypeId], references: [id], onDelete: Cascade)
   measuredBy   User         @relation(fields: [measuredById], references: [id])
 
   @@index([unitId, activityTypeId])

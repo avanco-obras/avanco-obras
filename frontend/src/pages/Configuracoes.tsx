@@ -265,19 +265,27 @@ export default function Configuracoes() {
     if (!currentProject) return;
     setDeletingEmpreendimento(true);
     try {
+      console.log(`Deletando empreendimento: ${currentProject.id}`);
       await projectsApi.delete(currentProject.id);
       setCurrentProject(null);
       setShowDeleteConfirm(false);
       addToast({
         type: 'success',
-        title: 'Empreendimento deletado',
-        description: 'Todos os dados foram removidos. Você voltou ao estado inicial.',
+        title: 'Empreendimento deletado com sucesso! 🎉',
+        description: 'Todos os dados (torres, pavimentos, medições, cronograma e restrições) foram removidos permanentemente.',
       });
-    } catch {
+    } catch (error: unknown) {
+      console.error('Erro ao deletar empreendimento:', error);
+      const errorMsg =
+        error instanceof Error
+          ? error.message
+          : (error && typeof error === 'object' && 'message' in error
+              ? String((error as any).message)
+              : 'Não foi possível deletar o empreendimento. Tente novamente.');
       addToast({
         type: 'error',
-        title: 'Erro ao deletar',
-        description: 'Não foi possível deletar o empreendimento.',
+        title: 'Erro ao deletar empreendimento',
+        description: errorMsg,
       });
     } finally {
       setDeletingEmpreendimento(false);
