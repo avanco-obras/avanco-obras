@@ -11,6 +11,22 @@ const ROW_H = 28;
 const HDR_H = 30;
 const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
+// ── Column definitions ────────────────────────────────────────────────────────
+interface ColDef {
+  key: string;
+  label: string;
+  width: number;
+  fixed: boolean;
+}
+const COL_DEFS: ColDef[] = [
+  { key: 'code', label: 'Código WBS', width: 80, fixed: false },
+  { key: 'name', label: 'Atividade', width: 220, fixed: true },
+  { key: 'startDate', label: 'Início', width: 78, fixed: false },
+  { key: 'endDate', label: 'Término', width: 78, fixed: false },
+  { key: 'duration', label: 'Dur.(d)', width: 62, fixed: false },
+  { key: 'progress', label: '% Real', width: 62, fixed: false },
+];
+
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
 function buildMockTasks(): GanttTask[] {
@@ -855,6 +871,14 @@ export default function Cronograma() {
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
+  // Column visibility state
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set(COL_DEFS.map(c => c.key));
+    const saved = localStorage.getItem('cronograma_cols');
+    return saved ? new Set(JSON.parse(saved)) : new Set(COL_DEFS.map(c => c.key));
+  });
+  const [showColPicker, setShowColPicker] = useState(false);
+
   // Scroll refs
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -989,6 +1013,21 @@ export default function Cronograma() {
     addToast({ type: 'success', title: 'Exportado', description: 'CSV gerado com sucesso.' });
   }
 
+  // Column toggle handler
+  function toggleCol(key: string) {
+    const col = COL_DEFS.find(c => c.key === key);
+    if (col?.fixed) return;
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      localStorage.setItem('cronograma_cols', JSON.stringify(Array.from(next)));
+      return next;
+    });
+  }
+
+  const visibleColDefs = COL_DEFS.filter(c => visibleCols.has(c.key));
+  const leftPanelWidth = visibleColDefs.reduce((sum, c) => sum + c.width, 0);
+
   // Modal handlers
   function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
   function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
@@ -1044,6 +1083,26 @@ export default function Cronograma() {
             />
             <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
             <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
+              {showColPicker && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  {COL_DEFS.map(col => (
+                    <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
+                      <input
+                        type="checkbox"
+                        checked={visibleCols.has(col.key)}
+                        disabled={col.fixed}
+                        onChange={() => toggleCol(col.key)}
+                        style={{ cursor: col.fixed ? 'not-allowed' : 'pointer' }}
+                      />
+                      <span>{col.label}</span>
+                      {col.fixed && <span style={{ fontSize: 9, color: 'var(--t3)', marginLeft: 'auto' }}>obrigatória</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
             <button
@@ -1077,24 +1136,48 @@ export default function Cronograma() {
         </div>
 
         {/* Gantt wrap */}
-        <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 520 }}>
+        <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
 
-          {/* ── Left panel ── */}
-          <div style={{ width: 290, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', fontSize: 11, fontWeight: 500, color: 'var(--t2)', padding: '0 8px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-              Atividade
+          {/* ── Left panel: Multi-column ── */}
+          <div style={{ width: leftPanelWidth, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
+            {/* Header row */}
+            <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
+              {visibleColDefs.map((col) => (
+                <div
+                  key={col.key}
+                  style={{
+                    width: col.width,
+                    flexShrink: 0,
+                    padding: '0 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--t2)',
+                    borderRight: '0.5px solid var(--bd)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {col.label}
+                </div>
+              ))}
             </div>
 
+            {/* Rows */}
             <div ref={leftRef} onScroll={onLeftScroll} style={{ overflowY: 'scroll', overflowX: 'hidden', flex: 1 }}>
               {loading
                 ? Array.from({ length: 12 }).map((_, i) => (
-                    <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex', alignItems: 'center', padding: '0 8px', gap: 6 }}>
-                      <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '75%' }} />
+                    <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
+                      {visibleColDefs.map((col) => (
+                        <div key={col.key} style={{ width: col.width, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
+                          <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '60%' }} />
+                        </div>
+                      ))}
                     </div>
                   ))
                 : visibleTasks.map((task) => {
                     const lvStyle = levelStyle(task.level);
-                    const basePad = task.level === 0 || task.level === 1 ? 8 : 0;
                     const isExpanded = expanded.has(task.id) || !!search;
                     const isHov = hoveredRow === task.id;
                     return (
@@ -1102,46 +1185,84 @@ export default function Cronograma() {
                         key={task.id}
                         onMouseEnter={() => setHoveredRow(task.id)}
                         onMouseLeave={() => setHoveredRow(null)}
-                        onClick={(e) => openEdit(task, e)}
-                        title="Clique para editar"
                         style={{
-                          height: ROW_H, display: 'flex', alignItems: 'center', gap: 4,
-                          paddingLeft: basePad, paddingRight: 4,
+                          height: ROW_H,
+                          display: 'flex',
                           borderBottom: '0.5px solid var(--bd)',
-                          userSelect: 'none', cursor: 'pointer',
-                          whiteSpace: 'nowrap', overflow: 'hidden',
                           background: isHov ? 'var(--bg2)' : (lvStyle.background as string ?? ''),
-                          ...lvStyle,
+                          userSelect: 'none',
                         }}
                       >
-                        {/* Expand toggle */}
-                        {task.hasChildren ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                            style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                          >▶</button>
-                        ) : (
-                          <span style={{ width: 16, flexShrink: 0 }} />
-                        )}
-
-                        {/* Code */}
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, flexShrink: 0 }}>{task.code}</span>
-
-                        {/* Name */}
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.name}>{task.name}</span>
-
-                        {/* Hover actions OR progress badge */}
-                        {isHov ? (
-                          <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                            <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
-                            <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
-                            <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
-                          </div>
-                        ) : (
-                          <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ flexShrink: 0, minWidth: 32, justifyContent: 'center', fontSize: 9, marginLeft: 4 }}>
-                            {task.actualProgress}%
-                          </span>
-                        )}
+                        {visibleColDefs.map((col, colIdx) => {
+                          const isNameCol = col.key === 'name';
+                          return (
+                            <div
+                              key={col.key}
+                              onClick={isNameCol ? (e) => openEdit(task, e) : undefined}
+                              title={isNameCol ? 'Clique para editar' : ''}
+                              style={{
+                                width: col.width,
+                                flexShrink: 0,
+                                padding: '0 8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: isNameCol ? 4 : 0,
+                                borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
+                                cursor: isNameCol ? 'pointer' : 'default',
+                                overflow: 'hidden',
+                                ...(isNameCol ? lvStyle : { fontSize: 11 }),
+                              }}
+                            >
+                              {col.key === 'code' && (
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, whiteSpace: 'nowrap' }}>
+                                  {task.code}
+                                </span>
+                              )}
+                              {col.key === 'name' && (
+                                <>
+                                  {task.hasChildren ? (
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                      style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                    >▶</button>
+                                  ) : (
+                                    <span style={{ width: 16, flexShrink: 0 }} />
+                                  )}
+                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: (task.level - 1) * 12 }} title={task.name}>
+                                    {task.name}
+                                  </span>
+                                  {isHov && (
+                                    <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
+                                      <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
+                                      <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
+                                      <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              {col.key === 'startDate' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                  {task.startDate.slice(8, 10)}/{task.startDate.slice(5, 7)}
+                                </span>
+                              )}
+                              {col.key === 'endDate' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                  {task.endDate.slice(8, 10)}/{task.endDate.slice(5, 7)}
+                                </span>
+                              )}
+                              {col.key === 'duration' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                  {task.durationDays ?? '—'}
+                                </span>
+                              )}
+                              {col.key === 'progress' && (
+                                <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
+                                  {task.actualProgress}%
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
