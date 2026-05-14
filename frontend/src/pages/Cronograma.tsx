@@ -21,10 +21,13 @@ interface ColDef {
 const COL_DEFS: ColDef[] = [
   { key: 'code', label: 'Código WBS', width: 80, fixed: false },
   { key: 'name', label: 'Atividade', width: 220, fixed: true },
-  { key: 'startDate', label: 'Início', width: 78, fixed: false },
-  { key: 'endDate', label: 'Término', width: 78, fixed: false },
-  { key: 'duration', label: 'Dur.(d)', width: 62, fixed: false },
+  { key: 'duration', label: 'Duração', width: 72, fixed: false },
+  { key: 'startDate', label: 'Início', width: 86, fixed: false },
+  { key: 'endDate', label: 'Término', width: 86, fixed: false },
   { key: 'progress', label: '% Real', width: 62, fixed: false },
+  { key: 'predecessors', label: 'Predecessora', width: 90, fixed: false },
+  { key: 'successors', label: 'Sucessora', width: 90, fixed: false },
+  { key: 'critical', label: 'C. Crítico', width: 72, fixed: false },
 ];
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -53,6 +56,20 @@ function buildMockTasks(): GanttTask[] {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function compareWbs(a: string, b: string): number {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function fmtDate(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}`;
+}
+
 function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
@@ -65,15 +82,15 @@ function addDays(date: Date, days: number): string {
   return new Date(date.getTime() + days * 86_400_000).toISOString().split('T')[0];
 }
 
-function monthsInRange(minDate: Date, maxDate: Date): { label: string; left: number; width: number }[] {
+function monthsInRange(minDate: Date, maxDate: Date, pxPerDay: number): { label: string; left: number; width: number }[] {
   const months: { label: string; left: number; width: number }[] = [];
   const cur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
   while (cur <= maxDate) {
     const start = cur < minDate ? minDate : new Date(cur);
     const endOfMonth = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
     const end = endOfMonth > maxDate ? maxDate : endOfMonth;
-    const left = daysBetween(minDate, start) * PX_PER_DAY;
-    const width = (daysBetween(start, end) + 1) * PX_PER_DAY;
+    const left = daysBetween(minDate, start) * pxPerDay;
+    const width = (daysBetween(start, end) + 1) * pxPerDay;
     const mi = cur.getMonth();
     const label = mi === 0 ? `${cur.getFullYear()} ${MONTHS_PT[0]}` : MONTHS_PT[mi];
     months.push({ label, left, width });
@@ -886,12 +903,33 @@ export default function Cronograma() {
     return saved ? JSON.parse(saved) : {};
   });
 
+  // Zoom state
+  type ZoomLevel = 'year' | 'semester' | 'month' | 'week' | 'day';
+  const PX_PER_DAY_MAP: Record<ZoomLevel, number> = {
+    year: 0.3,
+    semester: 0.6,
+    month: 4,
+    week: 14,
+    day: 40,
+  };
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('month');
+  const pxPerDay = PX_PER_DAY_MAP[zoomLevel];
+
+  // Splitter state
+  const [splitterWidth, setSplitterWidth] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const saved = localStorage.getItem('cronograma_splitter');
+    return saved ? Number(saved) : null;
+  });
+  const finalLeftWidth = splitterWidth ?? leftPanelWidth;
+
   // Scroll refs
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   const hdrRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
   const dragRef = useRef<{ colKey: string; startX: number; startWidth: number } | null>(null);
+  const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -904,12 +942,13 @@ export default function Cronograma() {
     setLoading(true);
     scheduleApi.ganttData(projectId)
       .then((data) => {
-        setTasks(data);
-        const ids = data.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code));
+        setTasks(sorted);
+        const ids = sorted.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .catch(() => {
-        const mock = buildMockTasks();
+        const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code));
         setTasks(mock);
         const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
@@ -920,7 +959,7 @@ export default function Cronograma() {
   useEffect(() => {
     if (projectId) loadData();
     else {
-      const mock = buildMockTasks();
+      const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code));
       setTasks(mock);
       const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
       setExpanded(new Set(ids));
@@ -967,18 +1006,18 @@ export default function Cronograma() {
       const now = new Date();
       const min = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const max = new Date(now.getFullYear(), now.getMonth() + 6, 1);
-      return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * PX_PER_DAY };
+      return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * pxPerDay };
     }
     const dates = tasks.flatMap((t) => [parseDate(t.startDate), parseDate(t.endDate)]);
     const min = new Date(Math.min(...dates.map((d) => d.getTime())));
     const max = new Date(Math.max(...dates.map((d) => d.getTime())));
     min.setMonth(min.getMonth() - 1);
     max.setMonth(max.getMonth() + 1);
-    return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * PX_PER_DAY };
-  }, [tasks]);
+    return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * pxPerDay };
+  }, [tasks, pxPerDay]);
 
-  const months = useMemo(() => monthsInRange(minDate, maxDate), [minDate, maxDate]);
-  const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * PX_PER_DAY, [minDate]);
+  const months = useMemo(() => monthsInRange(minDate, maxDate, pxPerDay), [minDate, maxDate, pxPerDay]);
+  const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * pxPerDay, [minDate, pxPerDay]);
 
   // Scroll sync
   function onLeftScroll() {
@@ -993,6 +1032,45 @@ export default function Cronograma() {
     if (leftRef.current && rightRef.current) leftRef.current.scrollTop = rightRef.current.scrollTop;
     if (hdrRef.current && rightRef.current) hdrRef.current.scrollLeft = rightRef.current.scrollLeft;
     syncingRef.current = false;
+  }
+
+  function onGanttWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    const levels: ZoomLevel[] = ['year', 'semester', 'month', 'week', 'day'];
+    setZoomLevel(prev => {
+      const idx = levels.indexOf(prev);
+      if (e.deltaY < 0) return levels[Math.min(idx + 1, levels.length - 1)];
+      return levels[Math.max(idx - 1, 0)];
+    });
+  }
+
+  function startSplitterResize(e: React.MouseEvent) {
+    e.preventDefault();
+    splitterDragRef.current = { startX: e.clientX, startWidth: finalLeftWidth };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onSplitterResizeMove);
+    document.addEventListener('mouseup', onSplitterResizeEnd);
+  }
+
+  function onSplitterResizeMove(e: MouseEvent) {
+    if (!splitterDragRef.current) return;
+    const delta = e.clientX - splitterDragRef.current.startX;
+    const newWidth = Math.max(100, splitterDragRef.current.startWidth + delta);
+    setSplitterWidth(newWidth);
+  }
+
+  function onSplitterResizeEnd() {
+    if (!splitterDragRef.current) return;
+    setSplitterWidth(prev => {
+      localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      return prev;
+    });
+    splitterDragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onSplitterResizeMove);
+    document.removeEventListener('mouseup', onSplitterResizeEnd);
   }
 
   function toggleExpand(id: string) {
@@ -1090,8 +1168,8 @@ export default function Cronograma() {
     }
   }
 
-  function barLeft(task: GanttTask) { return daysBetween(minDate, parseDate(task.startDate)) * PX_PER_DAY; }
-  function barWidth(task: GanttTask) { return Math.max(4, daysBetween(parseDate(task.startDate), parseDate(task.endDate)) * PX_PER_DAY); }
+  function barLeft(task: GanttTask) { return daysBetween(minDate, parseDate(task.startDate)) * pxPerDay; }
+  function barWidth(task: GanttTask) { return Math.max(4, daysBetween(parseDate(task.startDate), parseDate(task.endDate)) * pxPerDay); }
 
   // ── No project selected ──────────────────────────────────────────────────────
 
@@ -1180,7 +1258,7 @@ export default function Cronograma() {
         <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
 
           {/* ── Left panel: Multi-column ── */}
-          <div style={{ width: leftPanelWidth, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
+          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
             {/* Header row */}
             <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
               {visibleColDefs.map((col, colIdx) => (
@@ -1299,12 +1377,12 @@ export default function Cronograma() {
                               )}
                               {col.key === 'startDate' && (
                                 <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {task.startDate.slice(8, 10)}/{task.startDate.slice(5, 7)}
+                                  {fmtDate(task.startDate)}
                                 </span>
                               )}
                               {col.key === 'endDate' && (
                                 <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {task.endDate.slice(8, 10)}/{task.endDate.slice(5, 7)}
+                                  {fmtDate(task.endDate)}
                                 </span>
                               )}
                               {col.key === 'duration' && (
@@ -1317,6 +1395,21 @@ export default function Cronograma() {
                                   {task.actualProgress}%
                                 </span>
                               )}
+                              {col.key === 'predecessors' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap', color: 'var(--t2)' }}>
+                                  —
+                                </span>
+                              )}
+                              {col.key === 'successors' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap', color: 'var(--t2)' }}>
+                                  —
+                                </span>
+                              )}
+                              {col.key === 'critical' && (
+                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                  {task.isCriticalPath ? 'Sim' : 'Não'}
+                                </span>
+                              )}
                             </div>
                           );
                         })}
@@ -1326,8 +1419,25 @@ export default function Cronograma() {
             </div>
           </div>
 
+          {/* Splitter */}
+          <div
+            onMouseDown={startSplitterResize}
+            style={{
+              width: 6,
+              flexShrink: 0,
+              cursor: 'col-resize',
+              background: '0.5px solid var(--bd)',
+              borderLeft: '0.5px solid var(--bd)',
+              borderRight: '0.5px solid var(--bd)',
+              userSelect: 'none',
+              transition: 'background-color 0.15s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '')}
+          />
+
           {/* ── Right Gantt panel ── */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }} onWheel={onGanttWheel}>
 
             {/* Month header */}
             <div
