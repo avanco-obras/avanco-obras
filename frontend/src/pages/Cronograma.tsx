@@ -879,11 +879,19 @@ export default function Cronograma() {
   });
   const [showColPicker, setShowColPicker] = useState(false);
 
+  // Column widths state
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {};
+    const saved = localStorage.getItem('cronograma_col_widths');
+    return saved ? JSON.parse(saved) : {};
+  });
+
   // Scroll refs
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   const hdrRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
+  const dragRef = useRef<{ colKey: string; startX: number; startWidth: number } | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -1013,6 +1021,39 @@ export default function Cronograma() {
     addToast({ type: 'success', title: 'Exportado', description: 'CSV gerado com sucesso.' });
   }
 
+  // Column resize handlers
+  const effectiveWidth = (col: ColDef) => colWidths[col.key] ?? col.width;
+
+  function startResize(e: React.MouseEvent, colKey: string) {
+    e.preventDefault();
+    const currentWidth = effectiveWidth(COL_DEFS.find(c => c.key === colKey)!);
+    dragRef.current = { colKey, startX: e.clientX, startWidth: currentWidth };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeEnd);
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!dragRef.current) return;
+    const delta = e.clientX - dragRef.current.startX;
+    const newWidth = Math.max(40, dragRef.current.startWidth + delta);
+    setColWidths(prev => ({ ...prev, [dragRef.current!.colKey]: newWidth }));
+  }
+
+  function onResizeEnd() {
+    if (!dragRef.current) return;
+    setColWidths(prev => {
+      localStorage.setItem('cronograma_col_widths', JSON.stringify(prev));
+      return prev;
+    });
+    dragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeEnd);
+  }
+
   // Column toggle handler
   function toggleCol(key: string) {
     const col = COL_DEFS.find(c => c.key === key);
@@ -1026,7 +1067,7 @@ export default function Cronograma() {
   }
 
   const visibleColDefs = COL_DEFS.filter(c => visibleCols.has(c.key));
-  const leftPanelWidth = visibleColDefs.reduce((sum, c) => sum + c.width, 0);
+  const leftPanelWidth = visibleColDefs.reduce((sum, c) => sum + effectiveWidth(c), 0);
 
   // Modal handlers
   function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
@@ -1142,11 +1183,11 @@ export default function Cronograma() {
           <div style={{ width: leftPanelWidth, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
             {/* Header row */}
             <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
-              {visibleColDefs.map((col) => (
+              {visibleColDefs.map((col, colIdx) => (
                 <div
                   key={col.key}
                   style={{
-                    width: col.width,
+                    width: effectiveWidth(col),
                     flexShrink: 0,
                     padding: '0 8px',
                     display: 'flex',
@@ -1154,12 +1195,28 @@ export default function Cronograma() {
                     fontSize: 11,
                     fontWeight: 500,
                     color: 'var(--t2)',
-                    borderRight: '0.5px solid var(--bd)',
+                    borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
+                    position: 'relative',
                   }}
                 >
                   {col.label}
+                  {colIdx < visibleColDefs.length - 1 && (
+                    <div
+                      onMouseDown={(e) => startResize(e, col.key)}
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        width: 6,
+                        height: '100%',
+                        cursor: 'col-resize',
+                        zIndex: 2,
+                        userSelect: 'none',
+                      }}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -1169,8 +1226,8 @@ export default function Cronograma() {
               {loading
                 ? Array.from({ length: 12 }).map((_, i) => (
                     <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
-                      {visibleColDefs.map((col) => (
-                        <div key={col.key} style={{ width: col.width, flexShrink: 0, borderRight: '0.5px solid var(--bd)', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
+                      {visibleColDefs.map((col, colIdx) => (
+                        <div key={col.key} style={{ width: effectiveWidth(col), flexShrink: 0, borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
                           <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '60%' }} />
                         </div>
                       ))}
@@ -1201,7 +1258,7 @@ export default function Cronograma() {
                               onClick={isNameCol ? (e) => openEdit(task, e) : undefined}
                               title={isNameCol ? 'Clique para editar' : ''}
                               style={{
-                                width: col.width,
+                                width: effectiveWidth(col),
                                 flexShrink: 0,
                                 padding: '0 8px',
                                 display: 'flex',
