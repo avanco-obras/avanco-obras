@@ -9,7 +9,12 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
+  ParseUUIDPipe,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -111,5 +116,21 @@ export class ScheduleController {
   @ApiResponse({ status: 200, description: 'Returns monthly cumulative planned vs actual progress' })
   getCurvaS(@Param('id') projectId: string) {
     return this.scheduleService.getCurvaS(projectId);
+  }
+
+  @Post('projects/:id/schedule/import')
+  @UseInterceptors(FileInterceptor('file'))
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Import schedule items from CSV or XLSX file' })
+  @ApiParam({ name: 'id', description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Import completed with summary' })
+  importSchedule(
+    @Param('id', ParseUUIDPipe) projectId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Nenhum arquivo fornecido');
+    }
+    return this.scheduleService.importBatch(projectId, file.buffer, file.mimetype);
   }
 }

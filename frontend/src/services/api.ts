@@ -125,6 +125,15 @@ export const scheduleApi = {
     api.delete(`/schedule/dependencies/${depId}`).then((r) => r.data),
   getDependencies: (itemId: string) =>
     api.get<ScheduleDependencyItem[]>(`/schedule/${itemId}/dependencies`).then((r) => r.data),
+  import: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<{ imported: number; skipped: number; errors: string[] }>(
+      `/projects/${projectId}/schedule/import`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    ).then((r) => r.data);
+  },
 };
 
 // ── Measurements ──────────────────────────────────────────────────

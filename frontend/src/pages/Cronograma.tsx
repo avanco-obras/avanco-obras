@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '@/store';
 import { scheduleApi } from '@/services/api';
+import * as xlsx from 'xlsx';
 import type { GanttTask, ScheduleDependencyItem } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -510,6 +511,320 @@ function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteC
   );
 }
 
+// ── Import Modal ──────────────────────────────────────────────────────────────
+
+interface ImportModalProps {
+  open: boolean;
+  step: 1 | 2 | 3;
+  file: File | null;
+  preview: Record<string, unknown>[];
+  importing: boolean;
+  projectId: string;
+  onClose: () => void;
+  setStep: (s: 1 | 2 | 3) => void;
+  setFile: (f: File | null) => void;
+  setPreview: (p: Record<string, unknown>[]) => void;
+  setImporting: (b: boolean) => void;
+  addToast: (t: any) => void;
+  onImportSuccess: () => void;
+}
+
+function ImportModal({ open, step, file, preview, importing, projectId, onClose, setStep, setFile, setPreview, setImporting, addToast, onImportSuccess }: ImportModalProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!open) return null;
+
+  const generateTemplate = () => {
+    const templateData = [
+      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Real', 'Caminho Crítico', 'Peso'],
+      ['1', 'OBRA - Projeto Exemplo', '0', '2026-01-15', '2027-01-15', '365', '0', '0', 'N', '1'],
+      ['1.1', 'ESTRUTURA', '1', '2026-01-15', '2026-07-15', '180', '10', '5', 'Y', '0.4'],
+      ['1.1.1', 'Fundação', '2', '2026-01-15', '2026-03-15', '60', '100', '100', 'Y', '0.2'],
+      ['1.1.1.1', 'Estacas', '3', '2026-01-15', '2026-02-28', '45', '100', '100', 'Y', '0.1'],
+      ['1.1.1.2', 'Blocos', '3', '2026-03-01', '2026-03-15', '15', '100', '90', 'Y', '0.1'],
+      ['1.1.2', 'Pilares e Lajes', '2', '2026-03-16', '2026-07-15', '120', '5', '0', 'Y', '0.2'],
+      ['1.2', 'ALVENARIA', '1', '2026-05-15', '2026-09-15', '120', '0', '0', 'N', '0.3'],
+      ['1.2.1', 'Vedação interna', '2', '2026-05-15', '2026-08-15', '90', '0', '0', 'N', '0.15'],
+      ['1.2.2', 'Vedação externa', '2', '2026-07-15', '2026-09-15', '60', '0', '0', 'N', '0.15'],
+      ['1.3', 'ACABAMENTO', '1', '2026-09-16', '2027-01-15', '120', '0', '0', 'N', '0.3'],
+      ['1.3.1', 'Revestimento', '2', '2026-09-16', '2026-12-15', '90', '0', '0', 'N', '0.15'],
+      ['1.3.2', 'Pintura', '2', '2026-12-01', '2027-01-15', '45', '0', '0', 'N', '0.15'],
+    ];
+
+    const ws = xlsx.utils.aoa_to_sheet(templateData);
+    ws['!cols'] = [
+      { wch: 12 }, // Código
+      { wch: 25 }, // Nome
+      { wch: 8 },  // Nível
+      { wch: 12 }, // Início
+      { wch: 12 }, // Término
+      { wch: 10 }, // Duração
+      { wch: 8 },  // % Plan
+      { wch: 8 },  // % Real
+      { wch: 16 }, // Caminho Crítico
+      { wch: 8 },  // Peso
+    ];
+
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Cronograma');
+    xlsx.writeFile(wb, 'template-cronograma.xlsx');
+
+    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo e adapte aos seus dados.' });
+  };
+
+  const handleFileInput = (f: File | null) => {
+    if (!f) return;
+    if (!/\.(csv|xlsx|xls)$/i.test(f.name)) {
+      addToast({ type: 'error', title: 'Arquivo inválido', description: 'Selecione um arquivo CSV, XLSX ou XLS.' });
+      return;
+    }
+    setFile(f);
+    handlePreview(f);
+  };
+
+  const handlePreview = (f: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = xlsx.read(data, { type: 'array', cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+        setPreview(rows.slice(0, 5));
+      } catch (err) {
+        addToast({ type: 'error', title: 'Erro ao ler arquivo', description: 'Não foi possível processar o arquivo.' });
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const handleImport = async () => {
+    if (!file || !projectId) return;
+    setImporting(true);
+    try {
+      const result = await scheduleApi.import(projectId, file);
+      addToast({
+        type: result.imported > 0 ? 'success' : 'warning',
+        title: `Importação completa`,
+        description: `${result.imported} atividades importadas.${result.skipped > 0 ? ` ${result.skipped} linhas puladas.` : ''}`,
+      });
+      if (result.errors.length > 0) {
+        console.log('Erros na importação:', result.errors);
+      }
+      onImportSuccess();
+      onClose();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({
+        type: 'error',
+        title: 'Erro ao importar',
+        description: msg ?? 'Tente novamente com outro arquivo.',
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1002, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
+
+        {/* Step 1: File selection */}
+        {step === 1 && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Importar CSV/XLSX</span>
+              <button
+                onClick={generateTemplate}
+                style={{
+                  fontSize: 11,
+                  padding: '5px 10px',
+                  border: '0.5px solid #3B82F6',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  color: '#3B82F6',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                }}
+              >
+                📥 Baixar template
+              </button>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
+              Selecione um arquivo CSV ou XLSX com o formato correto. Clique em "Baixar template" para um exemplo de estrutura. O cronograma existente será substituído.
+            </p>
+
+            {/* Colunas esperadas */}
+            <div style={{ background: 'var(--bg2)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+                <div><strong>Código</strong></div>
+                <div>WBS: 1, 1.1, 1.1.1 (obrigatório)</div>
+
+                <div><strong>Nome</strong></div>
+                <div>Descrição da atividade (obrigatório)</div>
+
+                <div><strong>Nível</strong></div>
+                <div>0-9 (opcional, derivado do código)</div>
+
+                <div><strong>Início</strong></div>
+                <div>YYYY-MM-DD (obrigatório)</div>
+
+                <div><strong>Término</strong></div>
+                <div>YYYY-MM-DD (obrigatório)</div>
+
+                <div><strong>Duração</strong></div>
+                <div>Dias (opcional, calculado se omitido)</div>
+
+                <div><strong>% Plan</strong></div>
+                <div>0-100 (opcional)</div>
+
+                <div><strong>% Real</strong></div>
+                <div>0-100 (opcional)</div>
+
+                <div><strong>Caminho Crítico</strong></div>
+                <div>Y/N (opcional)</div>
+
+                <div><strong>Peso</strong></div>
+                <div>Número (opcional, padrão 1)</div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: '2px dashed var(--bd)',
+                borderRadius: 8,
+                padding: '2rem',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: 'var(--bg2)',
+                marginBottom: 12,
+                transition: 'all 0.2s',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.background = 'var(--bg3)';
+                e.currentTarget.style.borderColor = '#2563EB';
+              }}
+              onDragLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.borderColor = 'var(--bd)';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.borderColor = 'var(--bd)';
+                const f = e.dataTransfer.files[0];
+                handleFileInput(f);
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--t1)', marginBottom: 6 }}>
+                {file ? `📁 ${file.name}` : '📤 Arraste um arquivo aqui'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>
+                ou clique para selecionar
+              </div>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={(e) => handleFileInput(e.target.files?.[0] ?? null)}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
+                disabled={!file || preview.length === 0}
+                onClick={() => setStep(2)}
+              >
+                {preview.length > 0 ? 'Avançar →' : 'Carregando...'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 2: Preview */}
+        {step === 2 && (
+          <>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 12 }}>Pré-visualização</div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 12 }}>
+              {file?.name} — {preview.length > 0 ? `Primeiras ${preview.length} linhas` : 'Nenhuma linha'}
+            </p>
+            {preview.length > 0 ? (
+              <div style={{ overflowX: 'auto', marginBottom: 16, border: '0.5px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)' }}>
+                <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      {Object.keys(preview[0]).map((key) => (
+                        <th key={key} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500, color: 'var(--t2)', borderRight: '0.5px solid var(--bd)' }}>
+                          {key}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row, idx) => (
+                      <tr key={idx} style={{ borderTop: '0.5px solid var(--bd)' }}>
+                        {Object.values(row).map((val, colIdx) => (
+                          <td key={colIdx} style={{ padding: '6px 8px', color: 'var(--t1)', borderRight: '0.5px solid var(--bd)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(val)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
+              <button className="ao-btn ao-btn-sm" onClick={() => setStep(1)}>← Voltar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+                onClick={() => setStep(3)}
+              >
+                Avançar →
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Confirmation */}
+        {step === 3 && (
+          <>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 12 }}>Confirmar importação</div>
+            <div style={{ padding: '12px', background: '#FEF3C7', border: '0.5px solid #F59E0B', borderRadius: 6, marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: '#92400E', margin: 0 }}>
+                ⚠ <strong>Atenção:</strong> Isso substituirá <strong>todas as atividades</strong> do cronograma atual. Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
+              {file?.name}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose} disabled={importing}>Cancelar</button>
+              <button className="ao-btn ao-btn-sm" onClick={() => setStep(2)} disabled={importing}>← Voltar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
+                onClick={handleImport}
+                disabled={importing}
+              >
+                {importing ? 'Importando...' : 'Importar cronograma'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Cronograma() {
@@ -531,6 +846,14 @@ export default function Cronograma() {
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<GanttTask | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Import modal state
+  const [showImport, setShowImport] = useState(false);
+  const [importStep, setImportStep] = useState<1 | 2 | 3>(1);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<Record<string, unknown>[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
 
   // Scroll refs
   const leftRef = useRef<HTMLDivElement>(null);
@@ -722,6 +1045,7 @@ export default function Cronograma() {
             <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
             <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
+            <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
             <button
               className="ao-btn ao-btn-sm"
               style={{ background: '#2563EB', color: '#fff', border: 'none' }}
@@ -892,9 +1216,26 @@ export default function Cronograma() {
         parentTask={parentTask}
         allTasks={tasks}
         projectId={projectId!}
-        addToast={addToast}
+        addToast={addToast as any}
         onClose={() => setModalOpen(false)}
         onSaved={loadData}
+      />
+
+      {/* Import modal */}
+      <ImportModal
+        open={showImport}
+        step={importStep}
+        file={importFile}
+        preview={importPreview}
+        importing={importing}
+        projectId={projectId!}
+        onClose={() => setShowImport(false)}
+        setStep={setImportStep}
+        setFile={setImportFile}
+        setPreview={setImportPreview}
+        setImporting={setImporting}
+        addToast={addToast as any}
+        onImportSuccess={loadData}
       />
 
       {/* Delete confirmation */}
