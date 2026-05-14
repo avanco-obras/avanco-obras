@@ -1,4 +1,5 @@
 import { PrismaService } from '../common/prisma.service';
+import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
 export interface GanttRow {
@@ -33,8 +34,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -45,13 +46,13 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
         parentId: string | null;
         activityTypeId: string | null;
@@ -63,8 +64,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -75,13 +76,13 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
         parentId: string | null;
         activityTypeId: string | null;
@@ -93,8 +94,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -105,13 +106,13 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
         parentId: string | null;
         activityTypeId: string | null;
@@ -160,4 +161,13 @@ export declare class ScheduleService {
         predecessorId: string;
         successorId: string;
     })[]>;
+    private normalizeColumnName;
+    private mapColumnName;
+    private deriveLevelFromCode;
+    private deriveParentCode;
+    importBatch(projectId: string, buffer: Buffer, mimetype: string): Promise<{
+        imported: number;
+        skipped: number;
+        errors: string[];
+    }>;
 }

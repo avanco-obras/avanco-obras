@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleController = void 0;
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
 const swagger_1 = require("@nestjs/swagger");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const schedule_service_1 = require("./schedule.service");
@@ -50,6 +51,12 @@ let ScheduleController = class ScheduleController {
     }
     getCurvaS(projectId) {
         return this.scheduleService.getCurvaS(projectId);
+    }
+    importSchedule(projectId, file) {
+        if (!file) {
+            throw new common_1.BadRequestException('Nenhum arquivo fornecido');
+        }
+        return this.scheduleService.importBatch(projectId, file.buffer, file.mimetype);
     }
 };
 exports.ScheduleController = ScheduleController;
@@ -148,6 +155,19 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], ScheduleController.prototype, "getCurvaS", null);
+__decorate([
+    (0, common_1.Post)('projects/:id/schedule/import'),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    (0, swagger_1.ApiOperation)({ summary: 'Import schedule items from CSV or XLSX file' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Project ID' }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Import completed with summary' }),
+    __param(0, (0, common_1.Param)('id', common_1.ParseUUIDPipe)),
+    __param(1, (0, common_1.UploadedFile)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], ScheduleController.prototype, "importSchedule", null);
 exports.ScheduleController = ScheduleController = __decorate([
     (0, swagger_1.ApiTags)('Schedule'),
     (0, swagger_1.ApiBearerAuth)(),

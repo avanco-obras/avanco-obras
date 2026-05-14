@@ -139,4 +139,9 @@ export declare class ScheduleController {
     }>;
     getGanttData(projectId: string): Promise<import("./schedule.service").GanttRow[]>;
     getCurvaS(projectId: string): Promise<import("./schedule.service").CurvaSPoint[]>;
+    importSchedule(projectId: string, file: Express.Multer.File): Promise<{
+        imported: number;
+        skipped: number;
+        errors: string[];
+    }>;
 }

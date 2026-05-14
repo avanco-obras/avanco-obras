@@ -921,6 +921,11 @@ export default function Cronograma() {
     const saved = localStorage.getItem('cronograma_splitter');
     return saved ? Number(saved) : null;
   });
+
+  // Calculate visible column widths early
+  const visibleColDefs = useMemo(() => COL_DEFS.filter(c => visibleCols.has(c.key)), [visibleCols]);
+  const effectiveWidth = (col: ColDef) => colWidths[col.key] ?? col.width;
+  const leftPanelWidth = useMemo(() => visibleColDefs.reduce((sum, c) => sum + effectiveWidth(c), 0), [visibleColDefs, colWidths]);
   const finalLeftWidth = splitterWidth ?? leftPanelWidth;
 
   // Scroll refs
@@ -1100,8 +1105,6 @@ export default function Cronograma() {
   }
 
   // Column resize handlers
-  const effectiveWidth = (col: ColDef) => colWidths[col.key] ?? col.width;
-
   function startResize(e: React.MouseEvent, colKey: string) {
     e.preventDefault();
     const currentWidth = effectiveWidth(COL_DEFS.find(c => c.key === colKey)!);
@@ -1143,9 +1146,6 @@ export default function Cronograma() {
       return next;
     });
   }
-
-  const visibleColDefs = COL_DEFS.filter(c => visibleCols.has(c.key));
-  const leftPanelWidth = visibleColDefs.reduce((sum, c) => sum + effectiveWidth(c), 0);
 
   // Modal handlers
   function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
