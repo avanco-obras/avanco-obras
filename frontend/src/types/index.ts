@@ -137,6 +137,10 @@ export interface GanttTask {
   parentId?: string;
   durationDays?: number;
   weight?: number;
+  responsible?: string;
+  rowId?: number;
+  predecessorDeps?: TaskDep[];
+  successorDeps?: TaskDep[];
 }
 
 export interface ScheduleDependencyItem {
@@ -147,6 +151,14 @@ export interface ScheduleDependencyItem {
   type: string;
   predecessor?: { id: string; code: string; name: string };
   successor?: { id: string; code: string; name: string };
+}
+
+export interface TaskDep {
+  id: string;
+  predecessorId: string;
+  successorId: string;
+  lagDays: number;
+  type: string;
 }
 
 export interface CurvaSPoint {

@@ -9,25 +9,29 @@ export interface FloorSummary {
     avgProgress: number;
 }
 export interface UnitBuildingData {
-    unitId: string;
-    unitName: string;
+    id: string;
+    name: string;
     activityProgress: {
         activityTypeId: string;
         activityTypeName: string;
         avgProgress: number;
     }[];
-    overallAvgProgress: number;
+    progressPercent: number;
 }
 export interface FloorBuildingData {
-    floorId: string;
-    floorName: string;
+    id: string;
+    name: string;
     level: number;
     units: UnitBuildingData[];
+    averageProgress: number;
 }
 export interface TowerBuildingData {
-    towerId: string;
-    towerName: string;
+    id: string;
+    name: string;
     floors: FloorBuildingData[];
+}
+export interface BuildingDataResponse {
+    towers: TowerBuildingData[];
 }
 export declare class MeasurementsService {
     private readonly prisma;
@@ -144,5 +148,5 @@ export declare class MeasurementsService {
         measuredById: string;
     })[]>;
     getSummary(projectId: string): Promise<FloorSummary[]>;
-    getBuildingData(projectId: string): Promise<TowerBuildingData[]>;
+    getBuildingData(projectId: string): Promise<BuildingDataResponse>;
 }

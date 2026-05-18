@@ -6,10 +6,29 @@ import type { GanttTask, ScheduleDependencyItem } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PX_PER_DAY = 4;
 const ROW_H = 28;
-const HDR_H = 30;
+const HDR_H = 56;
 const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const DAYS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+type TimeScale = 'day' | 'week' | 'month' | 'quarter' | 'semester' | 'year';
+const SCALE_ORDER: TimeScale[] = ['day', 'week', 'month', 'quarter', 'semester', 'year'];
+const SCALE_LABELS: Record<TimeScale, string> = {
+  day: 'Dias',
+  week: 'Semanas',
+  month: 'Meses',
+  quarter: 'Trimestres',
+  semester: 'Semestres',
+  year: 'Anos',
+};
+const PX_PER_DAY_BY_SCALE: Record<TimeScale, number> = {
+  day: 40,
+  week: 14,
+  month: 4,
+  quarter: 1.4,
+  semester: 0.7,
+  year: 0.3,
+};
 
 // ── Column definitions ────────────────────────────────────────────────────────
 interface ColDef {
@@ -19,12 +38,15 @@ interface ColDef {
   fixed: boolean;
 }
 const COL_DEFS: ColDef[] = [
+  { key: 'rowId', label: 'ID', width: 44, fixed: true },
   { key: 'code', label: 'Código WBS', width: 80, fixed: false },
   { key: 'name', label: 'Atividade', width: 220, fixed: true },
   { key: 'duration', label: 'Duração', width: 72, fixed: false },
   { key: 'startDate', label: 'Início', width: 86, fixed: false },
   { key: 'endDate', label: 'Término', width: 86, fixed: false },
   { key: 'progress', label: '% Real', width: 62, fixed: false },
+  { key: 'weight', label: 'Peso', width: 70, fixed: false },
+  { key: 'responsible', label: 'Responsável', width: 120, fixed: false },
   { key: 'predecessors', label: 'Predecessora', width: 90, fixed: false },
   { key: 'successors', label: 'Sucessora', width: 90, fixed: false },
   { key: 'critical', label: 'C. Crítico', width: 72, fixed: false },
@@ -66,6 +88,161 @@ function compareWbs(a: string, b: string): number {
   return 0;
 }
 
+// Dependency type mapping: PT (português) → DB
+const DEP_TYPE_PT_TO_DB: Record<string, string> = { 'TI':'FS', 'II':'SS', 'TT':'FF', 'IT':'SF' };
+const DEP_TYPE_DB_TO_PT: Record<string, string> = { 'FS':'TI', 'SS':'II', 'FF':'TT', 'SF':'IT' };
+
+interface ParsedDep { rowId: number; type: string; lag: number; }
+interface ParseResult { deps: ParsedDep[]; errors: string[]; }
+
+function parsePredecessorText(text: string, tasks: GanttTask[]): ParseResult {
+  if (!text.trim()) return { deps: [], errors: [] };
+  const parts = text.split(';').map(s => s.trim()).filter(Boolean);
+  const deps: ParsedDep[] = [];
+  const errors: string[] = [];
+  for (const part of parts) {
+    const m = part.match(/^(\d+)(TI|II|TT|IT|FS|SS|FF|SF)?([+-]\d+)?$/i);
+    if (!m) { errors.push(`Sintaxe inválida: "${part}"`); continue; }
+    const rowId = parseInt(m[1]);
+    const typeRaw = (m[2] ?? 'TI').toUpperCase();
+    const type = DEP_TYPE_PT_TO_DB[typeRaw] ?? typeRaw;
+    const lag = m[3] ? parseInt(m[3]) : 0;
+    if (!['FS','SS','FF','SF'].includes(type)) { errors.push(`Tipo inválido: "${typeRaw}"`); continue; }
+    const target = tasks.find(t => t.rowId === rowId);
+    if (!target) { errors.push(`Tarefa ID ${rowId} não encontrada`); continue; }
+    deps.push({ rowId, type, lag });
+  }
+  return { deps, errors };
+}
+
+function formatDepsAsText(task: GanttTask, tasks: GanttTask[]): string {
+  if (!task.predecessorDeps?.length) return '';
+  return task.predecessorDeps.map(dep => {
+    const pred = tasks.find(t => t.id === dep.predecessorId);
+    const rowId = pred?.rowId ?? '?';
+    const type = DEP_TYPE_DB_TO_PT[dep.type] ?? dep.type;
+    const lag = dep.lagDays > 0 ? `+${dep.lagDays}` : dep.lagDays < 0 ? `${dep.lagDays}` : '';
+    return type === 'TI' && lag === '' ? `${rowId}` : `${rowId}${type}${lag}`;
+  }).join(';');
+}
+
+function formatSuccessorsText(task: GanttTask, tasks: GanttTask[]): string {
+  if (!task.successorDeps?.length) return '';
+  return task.successorDeps.map(dep => {
+    const succ = tasks.find(t => t.id === dep.successorId);
+    return succ?.rowId ?? '?';
+  }).join(';');
+}
+
+function addWorkDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  if (days === 0) return result;
+  const step = days > 0 ? 1 : -1;
+  let remaining = Math.abs(days);
+  while (remaining > 0) {
+    result.setDate(result.getDate() + step);
+    const dow = result.getDay();
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  return result;
+}
+
+function calculateScheduledStart(task: GanttTask, tasks: GanttTask[]): { start: Date; end: Date } | null {
+  const deps = task.predecessorDeps ?? [];
+  if (!deps.length) return null;
+  const duration = task.durationDays ?? 1;
+  let forcedStart: Date | null = null;
+  let forcedEnd: Date | null = null;
+  for (const dep of deps) {
+    const pred = tasks.find(t => t.id === dep.predecessorId);
+    if (!pred) continue;
+    const predStart = parseDate(pred.startDate);
+    const predEnd = parseDate(pred.endDate);
+    switch (dep.type) {
+      case 'FS': {
+        const candidate = addWorkDays(predEnd, dep.lagDays);
+        if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
+        break;
+      }
+      case 'SS': {
+        const candidate = addWorkDays(predStart, dep.lagDays);
+        if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
+        break;
+      }
+      case 'FF': {
+        const endCandidate = addWorkDays(predEnd, dep.lagDays);
+        if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
+        break;
+      }
+      case 'SF': {
+        const endCandidate = addWorkDays(predStart, dep.lagDays);
+        if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
+        break;
+      }
+    }
+  }
+  if (forcedEnd && (!forcedStart || addWorkDays(forcedEnd, -duration) > forcedStart)) {
+    forcedStart = addWorkDays(forcedEnd, -duration);
+  }
+  if (!forcedStart) return null;
+  const start = forcedStart;
+  const end = addWorkDays(start, duration - 1);
+  return { start, end };
+}
+
+function propagateDates(tasks: GanttTask[]): GanttTask[] {
+  let current = [...tasks];
+  for (let iter = 0; iter < 10; iter++) {
+    let changed = false;
+    current = current.map(task => {
+      const scheduled = calculateScheduledStart(task, current);
+      if (!scheduled) return task;
+      const newStart = scheduled.start.toISOString().split('T')[0];
+      const newEnd = scheduled.end.toISOString().split('T')[0];
+      if (newStart !== task.startDate.slice(0,10) || newEnd !== task.endDate.slice(0,10)) {
+        changed = true;
+        return { ...task, startDate: newStart, endDate: newEnd };
+      }
+      return task;
+    });
+    if (!changed) break;
+  }
+  return current;
+}
+
+function wouldCreateLoop(taskId: string, newPredId: string, tasks: GanttTask[]): boolean {
+  const visited = new Set<string>();
+  const queue = [newPredId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (current === taskId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const t = tasks.find(x => x.id === current);
+    t?.predecessorDeps?.forEach(d => queue.push(d.predecessorId));
+  }
+  return false;
+}
+
+function getAllDescendants(taskId: string, tasks: GanttTask[]): GanttTask[] {
+  const children = tasks.filter(t => t.parentId === taskId);
+  return children.flatMap(c => [c, ...getAllDescendants(c.id, tasks)]);
+}
+
+function recalculateWbs(flatList: GanttTask[]): GanttTask[] {
+  const counters: Record<string, number> = {};
+  const idToCode: Record<string, string> = {};
+  return flatList.map(task => {
+    const parentKey = task.parentId ?? '__ROOT__';
+    counters[parentKey] = (counters[parentKey] ?? 0) + 1;
+    const n = counters[parentKey];
+    const parentCode = task.parentId ? idToCode[task.parentId] : null;
+    const newCode = parentCode ? `${parentCode}.${n}` : String(n);
+    idToCode[task.id] = newCode;
+    return { ...task, code: newCode };
+  });
+}
+
 function fmtDate(iso: string): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}`;
 }
@@ -82,21 +259,205 @@ function addDays(date: Date, days: number): string {
   return new Date(date.getTime() + days * 86_400_000).toISOString().split('T')[0];
 }
 
-function monthsInRange(minDate: Date, maxDate: Date, pxPerDay: number): { label: string; left: number; width: number }[] {
-  const months: { label: string; left: number; width: number }[] = [];
-  const cur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-  while (cur <= maxDate) {
-    const start = cur < minDate ? minDate : new Date(cur);
-    const endOfMonth = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
-    const end = endOfMonth > maxDate ? maxDate : endOfMonth;
-    const left = daysBetween(minDate, start) * pxPerDay;
-    const width = (daysBetween(start, end) + 1) * pxPerDay;
-    const mi = cur.getMonth();
-    const label = mi === 0 ? `${cur.getFullYear()} ${MONTHS_PT[0]}` : MONTHS_PT[mi];
-    months.push({ label, left, width });
-    cur.setMonth(cur.getMonth() + 1);
+interface HeaderCell { label: string; left: number; width: number; }
+
+function generateHeaderCells(scale: TimeScale, minDate: Date, maxDate: Date, pxPerDay: number): { upper: HeaderCell[]; lower: HeaderCell[] } {
+  if (scale === 'day') {
+    const lower: HeaderCell[] = [];
+    const cur = new Date(minDate);
+    while (cur <= maxDate) {
+      const left = daysBetween(minDate, cur) * pxPerDay;
+      const dayOfWeek = DAYS_PT[cur.getDay()];
+      lower.push({ label: dayOfWeek, left, width: pxPerDay });
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const upper: HeaderCell[] = [];
+    const weekStart = new Date(minDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const weekCur = new Date(weekStart);
+    while (weekCur <= maxDate) {
+      const weekEnd = new Date(weekCur);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const overlapStart = weekCur < minDate ? minDate : new Date(weekCur);
+      const overlapEnd = weekEnd > maxDate ? maxDate : weekEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        const weekNum = Math.ceil((daysBetween(new Date(weekCur.getFullYear(), 0, 1), weekCur) + 1) / 7);
+        const label = `${MONTHS_PT[overlapStart.getMonth()]} S${weekNum}`;
+        upper.push({ label, left, width });
+      }
+      weekCur.setDate(weekCur.getDate() + 7);
+    }
+    return { upper, lower };
   }
-  return months;
+
+  if (scale === 'week') {
+    const lower: HeaderCell[] = [];
+    const monthDays = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+    const cur = new Date(minDate);
+    cur.setDate(cur.getDate() - cur.getDay() + 1); // Segunda-feira
+    while (cur <= maxDate) {
+      const weekEnd = new Date(cur);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const overlapStart = cur < minDate ? minDate : new Date(cur);
+      const overlapEnd = weekEnd > maxDate ? maxDate : weekEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        const weekNum = Math.ceil((daysBetween(new Date(cur.getFullYear(), 0, 1), cur) + 1) / 7);
+        lower.push({ label: `S${String(weekNum).padStart(2, '0')}`, left, width });
+      }
+      cur.setDate(cur.getDate() + 7);
+    }
+
+    const upper: HeaderCell[] = [];
+    const monthCur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    while (monthCur <= maxDate) {
+      const monthStart = monthCur < minDate ? minDate : new Date(monthCur);
+      const monthEnd = new Date(monthCur.getFullYear(), monthCur.getMonth() + 1, 0);
+      const monthEndClamped = monthEnd > maxDate ? maxDate : monthEnd;
+      if (monthStart <= monthEndClamped) {
+        const left = daysBetween(minDate, monthStart) * pxPerDay;
+        const width = (daysBetween(monthStart, monthEndClamped) + 1) * pxPerDay;
+        upper.push({ label: `${MONTHS_PT[monthCur.getMonth()]} ${monthCur.getFullYear()}`, left, width });
+      }
+      monthCur.setMonth(monthCur.getMonth() + 1);
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'month') {
+    const lower: HeaderCell[] = [];
+    const cur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    while (cur <= maxDate) {
+      const monthStart = cur < minDate ? minDate : new Date(cur);
+      const monthEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+      const monthEndClamped = monthEnd > maxDate ? maxDate : monthEnd;
+      if (monthStart <= monthEndClamped) {
+        const left = daysBetween(minDate, monthStart) * pxPerDay;
+        const width = (daysBetween(monthStart, monthEndClamped) + 1) * pxPerDay;
+        lower.push({ label: MONTHS_PT[cur.getMonth()], left, width });
+      }
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    const upper: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'quarter') {
+    const quarters = [{ start: 0, end: 2, label: 'Q1' }, { start: 3, end: 5, label: 'Q2' }, { start: 6, end: 8, label: 'Q3' }, { start: 9, end: 11, label: 'Q4' }];
+    const lower: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      quarters.forEach(q => {
+        const qStart = new Date(y, q.start, 1);
+        const qEnd = new Date(y, q.end + 1, 0);
+        const overlapStart = qStart < minDate ? minDate : qStart;
+        const overlapEnd = qEnd > maxDate ? maxDate : qEnd;
+        if (overlapStart <= overlapEnd) {
+          const left = daysBetween(minDate, overlapStart) * pxPerDay;
+          const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+          lower.push({ label: q.label, left, width });
+        }
+      });
+    }
+
+    const upper: HeaderCell[] = [];
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'semester') {
+    const lower: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      [{ start: 0, end: 5, label: '1º Sem' }, { start: 6, end: 11, label: '2º Sem' }].forEach(s => {
+        const sStart = new Date(y, s.start, 1);
+        const sEnd = new Date(y, s.end + 1, 0);
+        const overlapStart = sStart < minDate ? minDate : sStart;
+        const overlapEnd = sEnd > maxDate ? maxDate : sEnd;
+        if (overlapStart <= overlapEnd) {
+          const left = daysBetween(minDate, overlapStart) * pxPerDay;
+          const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+          lower.push({ label: s.label, left, width });
+        }
+      });
+    }
+
+    const upper: HeaderCell[] = [];
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  // year
+  const lower: HeaderCell[] = [];
+  const yearCur = minDate.getFullYear();
+  const yearMax = maxDate.getFullYear();
+  for (let y = yearCur; y <= yearMax; y++) {
+    const yearStart = new Date(y, 0, 1);
+    const yearEnd = new Date(y, 11, 31);
+    const overlapStart = yearStart < minDate ? minDate : yearStart;
+    const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+    if (overlapStart <= overlapEnd) {
+      const left = daysBetween(minDate, overlapStart) * pxPerDay;
+      const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+      lower.push({ label: String(y), left, width });
+    }
+  }
+
+  const upper: HeaderCell[] = [];
+  const decadeCur = Math.floor(yearCur / 10) * 10;
+  const decadeMax = Math.floor(yearMax / 10) * 10 + 10;
+  for (let d = decadeCur; d < decadeMax; d += 10) {
+    const decadeStart = new Date(d, 0, 1);
+    const decadeEnd = new Date(d + 9, 11, 31);
+    const overlapStart = decadeStart < minDate ? minDate : decadeStart;
+    const overlapEnd = decadeEnd > maxDate ? maxDate : decadeEnd;
+    if (overlapStart <= overlapEnd) {
+      const left = daysBetween(minDate, overlapStart) * pxPerDay;
+      const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+      upper.push({ label: `${d}s`, left, width });
+    }
+  }
+  return { upper, lower };
 }
 
 function barColor(actual: number, planned: number): string {
@@ -111,14 +472,12 @@ function badgeClass(actual: number, planned: number): string {
   return 'ao-badge ao-br';
 }
 
-function levelStyle(level: number): React.CSSProperties {
-  switch (level) {
-    case 0: return { background: 'var(--bg3)', fontWeight: 600, fontSize: 12 };
-    case 1: return { background: 'var(--bg2)', fontWeight: 500, fontSize: 11 };
-    case 2: return { fontSize: 11, paddingLeft: 12 };
-    case 3: return { fontSize: 10, color: 'var(--t2)', paddingLeft: 20 };
-    default: return { fontSize: 10, color: 'var(--t3)', paddingLeft: 28 };
-  }
+function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
+  if (level === 0) return { background: 'var(--bg3)', fontWeight: 700, fontSize: 12 };
+  if (level === 1) return { background: hasChildren ? 'var(--bg2)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
+  if (level === 2) return { fontSize: 11, fontWeight: hasChildren ? 500 : 400 };
+  if (level === 3) return { fontSize: 10, color: 'var(--t2)' };
+  return { fontSize: 10, color: 'var(--t3)' };
 }
 
 function rowBg(level: number): string {
@@ -141,6 +500,7 @@ interface FormState {
   actualProgress: number;
   weight: number;
   isCriticalPath: boolean;
+  responsible: string;
 }
 
 function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
@@ -153,6 +513,7 @@ function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
       level: parent.level + 1, parentId: parent.id,
       startDate: today, endDate: in30, durationDays: 30,
       plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+      responsible: '',
     };
   }
   const roots = all.filter((t) => !t.parentId);
@@ -161,6 +522,7 @@ function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
     level: 0, parentId: '',
     startDate: today, endDate: in30, durationDays: 30,
     plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+    responsible: '',
   };
 }
 
@@ -179,7 +541,41 @@ function formFromTask(task: GanttTask): FormState {
     actualProgress: task.actualProgress,
     weight: task.weight ?? 1,
     isCriticalPath: task.isCriticalPath,
+    responsible: task.responsible ?? '',
   };
+}
+
+// ── Helper functions for keyboard navigation ─────────────────────────────────
+
+function getCellRawValue(task: GanttTask, colKey: string): string {
+  switch (colKey) {
+    case 'name': return task.name;
+    case 'code': return task.code;
+    case 'duration': return String(task.durationDays ?? '');
+    case 'startDate': return task.startDate.slice(0, 10);
+    case 'endDate': return task.endDate.slice(0, 10);
+    case 'progress': return String(task.actualProgress);
+    case 'weight': return String(task.weight ?? '');
+    case 'responsible': return task.responsible ?? '';
+    default: return '';
+  }
+}
+
+function formatCellForFilter(task: GanttTask, colKey: string): string {
+  switch (colKey) {
+    case 'code': return task.code;
+    case 'name': return task.name;
+    case 'responsible': return task.responsible ?? '';
+    case 'startDate': return task.startDate.slice(0, 10);
+    case 'endDate': return task.endDate.slice(0, 10);
+    case 'duration': return String(task.durationDays ?? '');
+    case 'progress': return String(task.actualProgress);
+    case 'weight': return String(task.weight ?? '');
+    case 'predecessors': return '';
+    case 'successors': return '';
+    case 'critical': return task.isCriticalPath ? 'Sim' : 'Não';
+    default: return '';
+  }
 }
 
 // ── Shared input style ────────────────────────────────────────────────────────
@@ -190,6 +586,372 @@ const inp: React.CSSProperties = {
   background: 'var(--bg1)', color: 'var(--t1)',
   width: '100%', boxSizing: 'border-box',
 };
+
+// ── ColFilterDropdown ────────────────────────────────────────────────────────
+
+interface ColFilterDropdownProps {
+  colKey: string;
+  label: string;
+  allValues: string[];
+  selected: string[];
+  sortDir: 'asc' | 'desc' | null;
+  onSortChange: (dir: 'asc' | 'desc' | null) => void;
+  onFilterChange: (values: string[]) => void;
+  onClose: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement>;
+}
+
+function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSortChange, onFilterChange, onClose, triggerRef }: ColFilterDropdownProps) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setCoords({ top: rect.bottom + 4, left: rect.left });
+    }
+  }, [triggerRef]);
+
+  const filtered = allValues.filter(v => v.toLowerCase().includes(searchTerm.toLowerCase()));
+  const allSelected = selected.length === allValues.length && allValues.length > 0;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: coords.top,
+        left: coords.left,
+        zIndex: 10000,
+        background: 'var(--bg1)',
+        border: '0.5px solid var(--bd)',
+        borderRadius: 6,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        width: 240,
+        maxHeight: 400,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: 8,
+        gap: 8,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Sort buttons */}
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button
+          onClick={() => onSortChange(sortDir === 'asc' ? null : 'asc')}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            fontSize: 11,
+            border: `0.5px solid ${sortDir === 'asc' ? '#2563EB' : 'var(--bd)'}`,
+            background: sortDir === 'asc' ? '#2563EB' : 'var(--bg2)',
+            color: sortDir === 'asc' ? '#fff' : 'var(--t1)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          ▲ A-Z
+        </button>
+        <button
+          onClick={() => onSortChange(sortDir === 'desc' ? null : 'desc')}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            fontSize: 11,
+            border: `0.5px solid ${sortDir === 'desc' ? '#2563EB' : 'var(--bd)'}`,
+            background: sortDir === 'desc' ? '#2563EB' : 'var(--bg2)',
+            color: sortDir === 'desc' ? '#fff' : 'var(--t1)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          ▼ Z-A
+        </button>
+      </div>
+
+      {/* Search */}
+      <input
+        type="text"
+        placeholder="Buscar..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        style={{
+          padding: '4px 6px',
+          fontSize: 11,
+          border: '0.5px solid var(--bd)',
+          borderRadius: 4,
+          background: 'var(--bg2)',
+          color: 'var(--t1)',
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      />
+
+      {/* Checkboxes */}
+      <div style={{ overflowY: 'auto', maxHeight: 250, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Select All */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', padding: '2px 4px', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={(e) => onFilterChange(e.target.checked ? allValues : [])}
+            style={{ cursor: 'pointer' }}
+          />
+          <span><strong>Selecionar todos</strong></span>
+        </label>
+
+        {filtered.map(val => (
+          <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', padding: '2px 4px', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={selected.includes(val)}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  onFilterChange([...selected, val]);
+                } else {
+                  onFilterChange(selected.filter(v => v !== val));
+                }
+              }}
+              style={{ cursor: 'pointer' }}
+            />
+            <span style={{ color: 'var(--t1)' }}>{val || '(vazio)'}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 4, fontSize: 10 }}>
+        <button
+          onClick={() => onFilterChange([])}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            border: '0.5px solid var(--bd)',
+            background: 'var(--bg2)',
+            color: 'var(--t2)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          Limpar
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            border: '0.5px solid #2563EB',
+            background: '#2563EB',
+            color: '#fff',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── AdvancedFiltersPanel ────────────────────────────────────────────────────
+
+interface AdvancedFiltersPanelProps {
+  filters: { dateStart: string; dateEnd: string; progressMin: string; progressMax: string; onlyLate: boolean; onlyCritical: boolean; onlyDone: boolean; responsibles: string[] };
+  allResponsibles: string[];
+  onChange: (filters: any) => void;
+  onClose: () => void;
+}
+
+function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: AdvancedFiltersPanelProps) {
+  const activeCount = [
+    filters.dateStart ? 1 : 0,
+    filters.dateEnd ? 1 : 0,
+    filters.progressMin ? 1 : 0,
+    filters.progressMax ? 1 : 0,
+    filters.onlyLate ? 1 : 0,
+    filters.onlyCritical ? 1 : 0,
+    filters.onlyDone ? 1 : 0,
+    filters.responsibles.length > 0 ? 1 : 0,
+  ].filter(Boolean).length;
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 1999,
+          background: 'rgba(0,0,0,0.3)',
+        }}
+      />
+
+      {/* Panel */}
+      <div
+        style={{
+          position: 'fixed',
+          right: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 2000,
+          width: 320,
+          background: 'var(--bg1)',
+          border: '0.5px solid var(--bd)',
+          borderLeft: '1px solid var(--bd)',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
+          animation: 'slideIn 0.2s ease-out',
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: 12, borderBottom: '0.5px solid var(--bd)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Filtros avançados</span>
+            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#2563EB', fontWeight: 500 }}>({activeCount})</span>}
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--t2)', padding: 0, lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 16, fontSize: 12 }}>
+          {/* Date range */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Data de início</label>
+            <input
+              type="date"
+              value={filters.dateStart}
+              onChange={(e) => onChange({ ...filters, dateStart: e.target.value })}
+              style={inp}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Data de término</label>
+            <input
+              type="date"
+              value={filters.dateEnd}
+              onChange={(e) => onChange({ ...filters, dateEnd: e.target.value })}
+              style={inp}
+            />
+          </div>
+
+          {/* Progress range */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real mínimo</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={filters.progressMin}
+              onChange={(e) => onChange({ ...filters, progressMin: e.target.value })}
+              placeholder="0"
+              style={inp}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real máximo</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={filters.progressMax}
+              onChange={(e) => onChange({ ...filters, progressMax: e.target.value })}
+              placeholder="100"
+              style={inp}
+            />
+          </div>
+
+          {/* Checkboxes */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyLate}
+              onChange={(e) => onChange({ ...filters, onlyLate: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas atrasadas</span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyCritical}
+              onChange={(e) => onChange({ ...filters, onlyCritical: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas críticas</span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyDone}
+              onChange={(e) => onChange({ ...filters, onlyDone: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas concluídas</span>
+          </label>
+
+          {/* Responsibles */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Responsáveis</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {allResponsibles.map(resp => (
+                <label key={resp} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none', fontSize: 11 }}>
+                  <input
+                    type="checkbox"
+                    checked={filters.responsibles.includes(resp)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onChange({ ...filters, responsibles: [...filters.responsibles, resp] });
+                      } else {
+                        onChange({ ...filters, responsibles: filters.responsibles.filter(r => r !== resp) });
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>{resp}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: 12, borderTop: '0.5px solid var(--bd)', display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => onChange({ dateStart: '', dateEnd: '', progressMin: '', progressMax: '', onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: [] })}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '0.5px solid var(--bd)', background: 'var(--bg2)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
+          >
+            Limpar tudo
+          </button>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#2563EB', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes slideIn {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+      `}</style>
+    </>
+  );
+}
 
 // ── TaskModal ─────────────────────────────────────────────────────────────────
 
@@ -262,6 +1024,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         durationDays: form.durationDays,
         plannedProgress: form.plannedProgress, actualProgress: form.actualProgress,
         weight: form.weight, isCriticalPath: form.isCriticalPath,
+        responsible: form.responsible.trim() || undefined,
       };
       if (editingTask) {
         await scheduleApi.update(editingTask.id, payload);
@@ -389,6 +1152,11 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Peso</label>
             <input style={inp} type="number" min={0} step={0.01} value={form.weight} onChange={(e) => change('weight', parseFloat(e.target.value) || 0)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Responsável</label>
+            <input style={inp} value={form.responsible} onChange={(e) => change('responsible', e.target.value)} placeholder="Nome do responsável" />
           </div>
 
           <div>
@@ -867,6 +1635,7 @@ export default function Cronograma() {
   const [tasks, setTasks] = useState<GanttTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [outlineLevel, setOutlineLevel] = useState<number | 'all'>('all');
   const [searchRaw, setSearchRaw] = useState('');
   const [search, setSearch] = useState('');
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
@@ -896,6 +1665,40 @@ export default function Cronograma() {
   });
   const [showColPicker, setShowColPicker] = useState(false);
 
+  // Inline edit state
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<{ taskId: string; colKey: string; value: string } | null>(null);
+  const inlineInputRef = useRef<HTMLInputElement | null>(null);
+  const inlineEditIdRef = useRef<string | null>(null);
+
+  // Keyboard navigation state
+  const [selectedColIdx, setSelectedColIdx] = useState<number>(0);
+  const [clipboard, setClipboard] = useState<{ colKey: string; value: string } | null>(null);
+  const afterCommitRef = useRef<'enter' | 'tab' | 'blur'>('blur');
+  const rowRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Filter state
+  const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  const [sortConfig, setSortConfig] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
+  const [filterDropdownCol, setFilterDropdownCol] = useState<string | null>(null);
+
+  // Advanced filters state
+  interface AdvancedFilters {
+    dateStart: string;
+    dateEnd: string;
+    progressMin: string;
+    progressMax: string;
+    onlyLate: boolean;
+    onlyCritical: boolean;
+    onlyDone: boolean;
+    responsibles: string[];
+  }
+  const [advFilters, setAdvFilters] = useState<AdvancedFilters>({
+    dateStart: '', dateEnd: '', progressMin: '', progressMax: '',
+    onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: []
+  });
+  const [showAdvFilters, setShowAdvFilters] = useState(false);
+
   // Column widths state
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {};
@@ -903,17 +1706,9 @@ export default function Cronograma() {
     return saved ? JSON.parse(saved) : {};
   });
 
-  // Zoom state
-  type ZoomLevel = 'year' | 'semester' | 'month' | 'week' | 'day';
-  const PX_PER_DAY_MAP: Record<ZoomLevel, number> = {
-    year: 0.3,
-    semester: 0.6,
-    month: 4,
-    week: 14,
-    day: 40,
-  };
-  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('month');
-  const pxPerDay = PX_PER_DAY_MAP[zoomLevel];
+  // Time scale state
+  const [timeScale, setTimeScale] = useState<TimeScale>('month');
+  const pxPerDay = PX_PER_DAY_BY_SCALE[timeScale];
 
   // Splitter state
   const [splitterWidth, setSplitterWidth] = useState<number | null>(() => {
@@ -947,13 +1742,15 @@ export default function Cronograma() {
     setLoading(true);
     scheduleApi.ganttData(projectId)
       .then((data) => {
-        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code));
+        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
         setTasks(sorted);
         const ids = sorted.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .catch(() => {
-        const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code));
+        const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
         setTasks(mock);
         const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
@@ -964,7 +1761,8 @@ export default function Cronograma() {
   useEffect(() => {
     if (projectId) loadData();
     else {
-      const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code));
+      const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
+        .map((t, i) => ({ ...t, rowId: i + 1 }));
       setTasks(mock);
       const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
       setExpanded(new Set(ids));
@@ -985,25 +1783,100 @@ export default function Cronograma() {
     return ancestors;
   }, [search, tasks]);
 
-  // Visible tasks
+  // Unique values per column (for filter dropdowns)
+  const colUniqueValues = useMemo<Record<string, string[]>>(() => {
+    const result: Record<string, string[]> = {};
+    COL_DEFS.forEach(col => {
+      const vals = new Set(tasks.map(t => formatCellForFilter(t, col.key)).filter(v => v !== ''));
+      result[col.key] = Array.from(vals).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    });
+    return result;
+  }, [tasks]);
+
+  // Unique responsibles (for advanced filters)
+  const uniqueResponsibles = useMemo(() => {
+    const set = new Set(tasks.map(t => t.responsible).filter(Boolean) as string[]);
+    return Array.from(set).sort();
+  }, [tasks]);
+
+  // Visible tasks (with filters and sorting)
   const visibleTasks = useMemo(() => {
+    // Step 1: Apply search and expand
+    let result: GanttTask[] = [];
     if (search) {
       const matchedIds = new Set(tasks.filter((t) => t.name.toLowerCase().includes(search)).map((t) => t.id));
-      return tasks.filter((t) => matchedIds.has(t.id) || ancestorIds.has(t.id));
+      result = tasks.filter((t) => matchedIds.has(t.id) || ancestorIds.has(t.id));
+    } else {
+      const hidden = new Set<string>();
+      tasks.forEach((t) => {
+        if (!t.parentId) return;
+        let pid: string | undefined = t.parentId;
+        while (pid) {
+          const parent = tasks.find((x) => x.id === pid);
+          if (!parent) break;
+          if (parent.hasChildren && !expanded.has(parent.id)) { hidden.add(t.id); break; }
+          pid = parent.parentId;
+        }
+      });
+      result = tasks.filter((t) => !hidden.has(t.id));
     }
-    const hidden = new Set<string>();
-    tasks.forEach((t) => {
-      if (!t.parentId) return;
-      let pid: string | undefined = t.parentId;
-      while (pid) {
-        const parent = tasks.find((x) => x.id === pid);
-        if (!parent) break;
-        if (parent.hasChildren && !expanded.has(parent.id)) { hidden.add(t.id); break; }
-        pid = parent.parentId;
-      }
+
+    // Step 2: Apply column filters
+    Object.entries(colFilters).forEach(([key, vals]) => {
+      if (!vals || vals.length === 0) return;
+      result = result.filter(t => vals.includes(formatCellForFilter(t, key)));
     });
-    return tasks.filter((t) => !hidden.has(t.id));
-  }, [tasks, expanded, search, ancestorIds]);
+
+    // Step 3: Apply advanced filters
+    if (advFilters.onlyLate) result = result.filter(t => t.actualProgress < t.plannedProgress);
+    if (advFilters.onlyCritical) result = result.filter(t => t.isCriticalPath);
+    if (advFilters.onlyDone) result = result.filter(t => t.actualProgress === 100);
+    if (advFilters.responsibles.length > 0) {
+      result = result.filter(t => advFilters.responsibles.includes(t.responsible ?? ''));
+    }
+    if (advFilters.progressMin !== '') {
+      result = result.filter(t => t.actualProgress >= parseFloat(advFilters.progressMin));
+    }
+    if (advFilters.progressMax !== '') {
+      result = result.filter(t => t.actualProgress <= parseFloat(advFilters.progressMax));
+    }
+    if (advFilters.dateStart) {
+      result = result.filter(t => t.startDate >= advFilters.dateStart);
+    }
+    if (advFilters.dateEnd) {
+      result = result.filter(t => t.endDate <= advFilters.dateEnd);
+    }
+
+    // Step 4: Apply sorting (respecting hierarchy)
+    if (sortConfig) {
+      const childrenMap = new Map<string | undefined, GanttTask[]>();
+      result.forEach(t => {
+        const pid = t.parentId as string | undefined;
+        if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+        childrenMap.get(pid)!.push(t);
+      });
+      const sortSiblings = (group: GanttTask[]) => {
+        return [...group].sort((a, b) => {
+          const va = getCellRawValue(a, sortConfig.key);
+          const vb = getCellRawValue(b, sortConfig.key);
+          const cmp = va.localeCompare(vb, undefined, { numeric: true });
+          return sortConfig.dir === 'asc' ? cmp : -cmp;
+        });
+      };
+      const sorted: GanttTask[] = [];
+      const dfs = (parentId: string | undefined) => {
+        const children = childrenMap.get(parentId) ?? [];
+        sortSiblings(children).forEach(t => {
+          sorted.push(t);
+          dfs(t.id);
+        });
+      };
+      dfs(undefined);
+      result = sorted;
+    }
+
+    return result;
+  }, [tasks, expanded, search, ancestorIds, colFilters, advFilters, sortConfig]);
 
   // Date range
   const { minDate, maxDate, totalWidth } = useMemo(() => {
@@ -1021,8 +1894,178 @@ export default function Cronograma() {
     return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * pxPerDay };
   }, [tasks, pxPerDay]);
 
-  const months = useMemo(() => monthsInRange(minDate, maxDate, pxPerDay), [minDate, maxDate, pxPerDay]);
   const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * pxPerDay, [minDate, pxPerDay]);
+
+  // Inline edit handlers
+  function startInlineEdit(task: GanttTask, colKey: string, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    if (['successors', 'critical'].includes(colKey)) {
+      openEdit(task, { stopPropagation: () => {} } as any);
+      return;
+    }
+
+    let value: string;
+    switch (colKey) {
+      case 'name': value = task.name; break;
+      case 'code': value = task.code; break;
+      case 'duration': value = String(task.durationDays ?? ''); break;
+      case 'startDate': value = task.startDate.slice(0, 10); break;
+      case 'endDate': value = task.endDate.slice(0, 10); break;
+      case 'progress': value = String(task.actualProgress); break;
+      case 'weight': value = String(task.weight ?? '0'); break;
+      case 'responsible': value = task.responsible ?? ''; break;
+      case 'predecessors': value = formatDepsAsText(task, tasks); break;
+      default: return;
+    }
+    setSelectedTaskId(task.id);
+    setInlineEdit({ taskId: task.id, colKey, value });
+  }
+
+  async function commitInlineEdit() {
+    if (!inlineEdit) return;
+    const task = tasks.find(t => t.id === inlineEdit.taskId);
+    if (!task) { setInlineEdit(null); return; }
+
+    const form = formFromTask(task);
+    try {
+      switch (inlineEdit.colKey) {
+        case 'name':
+          form.name = inlineEdit.value.trim();
+          break;
+        case 'code':
+          form.code = inlineEdit.value.trim();
+          break;
+        case 'duration': {
+          const days = parseInt(inlineEdit.value) || 1;
+          if (days < 1) return;
+          form.durationDays = days;
+          const s = parseDate(task.startDate);
+          if (!isNaN(s.getTime())) form.endDate = addDays(s, days);
+          break;
+        }
+        case 'startDate': {
+          form.startDate = inlineEdit.value;
+          const s = parseDate(inlineEdit.value);
+          const e = parseDate(form.endDate);
+          if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+            form.durationDays = Math.max(1, daysBetween(s, e));
+          }
+          break;
+        }
+        case 'endDate': {
+          form.endDate = inlineEdit.value;
+          const s = parseDate(form.startDate);
+          const e = parseDate(inlineEdit.value);
+          if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+            form.durationDays = Math.max(1, daysBetween(s, e));
+          }
+          break;
+        }
+        case 'progress': {
+          form.actualProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
+          break;
+        }
+        case 'weight': {
+          form.weight = Math.max(0, parseFloat(inlineEdit.value) || 0);
+          break;
+        }
+        case 'responsible': {
+          form.responsible = inlineEdit.value.trim();
+          break;
+        }
+        case 'predecessors': {
+          setInlineEdit(null);
+          await commitPredecessors(task, inlineEdit.value);
+          return;
+        }
+      }
+
+      if (!form.name.trim()) {
+        setInlineEdit(null);
+        return;
+      }
+
+      const payload = {
+        name: form.name,
+        code: form.code,
+        level: form.level,
+        parentId: form.parentId || undefined,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        durationDays: form.durationDays,
+        plannedProgress: form.plannedProgress,
+        actualProgress: form.actualProgress,
+        weight: form.weight,
+        isCriticalPath: form.isCriticalPath,
+        responsible: form.responsible || undefined,
+      };
+
+      if (projectId) {
+        await scheduleApi.update(task.id, payload);
+      }
+
+      setTasks(prev => prev.map(t => t.id === task.id ? {
+        ...t,
+        name: form.name,
+        code: form.code,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        durationDays: form.durationDays,
+        actualProgress: form.actualProgress,
+        weight: form.weight,
+        responsible: form.responsible || undefined,
+      } : t));
+
+      addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
+    }
+
+    const mode = afterCommitRef.current;
+    afterCommitRef.current = 'blur';
+    setInlineEdit(null);
+
+    // Move to next row if Enter was pressed
+    if (mode === 'enter' && task) {
+      const rowIdx = visibleTasks.findIndex(t => t.id === task.id);
+      const next = visibleTasks[rowIdx + 1];
+      if (next) {
+        setSelectedTaskId(next.id);
+        setTimeout(() => scrollToRow(rowIdx + 1), 0);
+      }
+    }
+  }
+
+  function cancelInlineEdit() {
+    setInlineEdit(null);
+  }
+
+  // Focus on inline input when edit starts
+  useEffect(() => {
+    if (inlineEdit && inlineInputRef.current) {
+      const editId = `${inlineEdit.taskId}-${inlineEdit.colKey}`;
+      const isNewEdit = inlineEditIdRef.current !== editId;
+      inlineEditIdRef.current = editId;
+
+      inlineInputRef.current.focus();
+      if (isNewEdit && inlineEdit.colKey !== 'duration' && inlineEdit.colKey !== 'progress' && inlineEdit.colKey !== 'startDate' && inlineEdit.colKey !== 'endDate') {
+        inlineInputRef.current.select();
+      }
+    } else {
+      inlineEditIdRef.current = null;
+    }
+  }, [inlineEdit?.taskId, inlineEdit?.colKey]);
+
+  // Focus on selected row
+  useEffect(() => {
+    if (selectedTaskId && !inlineEdit) {
+      const el = leftRef.current?.querySelector<HTMLDivElement>(`[data-task-id="${selectedTaskId}"]`);
+      if (el && document.activeElement !== el) {
+        el.focus({ preventScroll: true });
+      }
+    }
+  }, [selectedTaskId, inlineEdit]);
 
   // Scroll sync
   function onLeftScroll() {
@@ -1039,13 +2082,24 @@ export default function Cronograma() {
     syncingRef.current = false;
   }
 
+  function scrollToRow(rowIdx: number) {
+    const el = leftRef.current;
+    if (!el) return;
+    const top = rowIdx * ROW_H;
+    if (top < el.scrollTop) {
+      el.scrollTop = top;
+    } else if (top + ROW_H > el.scrollTop + el.clientHeight) {
+      el.scrollTop = top + ROW_H - el.clientHeight;
+    }
+  }
+
   function onGanttWheel(e: React.WheelEvent) {
+    if (!e.ctrlKey) return;
     e.preventDefault();
-    const levels: ZoomLevel[] = ['year', 'semester', 'month', 'week', 'day'];
-    setZoomLevel(prev => {
-      const idx = levels.indexOf(prev);
-      if (e.deltaY < 0) return levels[Math.min(idx + 1, levels.length - 1)];
-      return levels[Math.max(idx - 1, 0)];
+    setTimeScale(prev => {
+      const idx = SCALE_ORDER.indexOf(prev);
+      if (e.deltaY < 0) return SCALE_ORDER[Math.max(0, idx - 1)];
+      return SCALE_ORDER[Math.min(SCALE_ORDER.length - 1, idx + 1)];
     });
   }
 
@@ -1088,6 +2142,112 @@ export default function Cronograma() {
 
   function expandAll() { setExpanded(new Set(tasks.filter((t) => t.hasChildren).map((t) => t.id))); }
   function collapseAll() { setExpanded(new Set()); }
+
+  async function indentTask(taskId: string) {
+    const idx = tasks.findIndex(t => t.id === taskId);
+    if (idx <= 0) return;
+    const task = tasks[idx];
+    const prev = tasks[idx - 1];
+    const levelDelta = (prev.level + 1) - task.level;
+    const descendants = getAllDescendants(taskId, tasks);
+    let updated = tasks.map(t => {
+      if (t.id === taskId) return { ...t, parentId: prev.id, level: prev.level + 1 };
+      if (descendants.some(d => d.id === t.id)) return { ...t, level: t.level + levelDelta };
+      return t;
+    });
+    updated = updated.map(t => ({ ...t, hasChildren: updated.some(o => o.parentId === t.id) }));
+    const recalculated = recalculateWbs(updated).map((t, i) => ({ ...t, rowId: i + 1 }));
+    setTasks(recalculated);
+    const changed = recalculated.filter(t => {
+      const orig = tasks.find(o => o.id === t.id);
+      return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
+    });
+    await Promise.all(changed.map(t =>
+      scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
+    ));
+  }
+
+  async function outdentTask(taskId: string) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task?.parentId) return;
+    const parent = tasks.find(t => t.id === task.parentId);
+    if (!parent) return;
+    const levelDelta = -1;
+    const descendants = getAllDescendants(taskId, tasks);
+    let updated = tasks.map(t => {
+      if (t.id === taskId) return { ...t, parentId: parent.parentId, level: parent.level };
+      if (descendants.some(d => d.id === t.id)) return { ...t, level: t.level + levelDelta };
+      return t;
+    });
+    updated = updated.map(t => ({ ...t, hasChildren: updated.some(o => o.parentId === t.id) }));
+    const recalculated = recalculateWbs(updated).map((t, i) => ({ ...t, rowId: i + 1 }));
+    setTasks(recalculated);
+    const changed = recalculated.filter(t => {
+      const orig = tasks.find(o => o.id === t.id);
+      return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
+    });
+    await Promise.all(changed.map(t =>
+      scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
+    ));
+  }
+
+  function handleOutlineLevelChange(newLevel: number | 'all') {
+    setOutlineLevel(newLevel);
+    if (newLevel === 'all') {
+      setExpanded(new Set(tasks.filter(t => t.hasChildren).map(t => t.id)));
+    } else {
+      setExpanded(new Set(tasks.filter(t => t.hasChildren && t.level <= (newLevel as number) - 2).map(t => t.id)));
+    }
+  }
+
+  async function commitPredecessors(task: GanttTask, text: string) {
+    const { deps: parsed, errors } = parsePredecessorText(text, tasks);
+    if (errors.length) {
+      addToast({ type: 'error', title: 'Erro nas predecessoras', description: errors.join('\n') });
+      return;
+    }
+    const existing = task.predecessorDeps ?? [];
+    try {
+      await Promise.all(existing.map(d => scheduleApi.removeDependency(d.id)));
+      const created = [];
+      for (const p of parsed) {
+        const predTask = tasks.find(t => t.rowId === p.rowId);
+        if (!predTask) continue;
+        if (wouldCreateLoop(task.id, predTask.id, tasks)) {
+          addToast({ type: 'error', title: 'Dependência circular', description: `Vínculo com tarefa ${p.rowId} criaria um loop.` });
+          continue;
+        }
+        const dep = await scheduleApi.addDependency(task.id, { predecessorId: predTask.id, lagDays: p.lag, type: p.type });
+        created.push({ id: dep.id, predecessorId: dep.predecessorId, successorId: dep.successorId, lagDays: dep.lagDays, type: dep.type });
+      }
+      let updatedTasks = tasks.map(t => {
+        if (t.id === task.id) return { ...t, predecessorDeps: created };
+        const wasSuccessor = existing.some(d => d.predecessorId === t.id);
+        const isSuccessor = created.some(d => d.predecessorId === t.id);
+        if (wasSuccessor || isSuccessor) {
+          const newSuccDeps = [
+            ...(t.successorDeps ?? []).filter(d => d.successorId !== task.id),
+            ...created.filter(d => d.predecessorId === t.id),
+          ];
+          return { ...t, successorDeps: newSuccDeps };
+        }
+        return t;
+      });
+      updatedTasks = propagateDates(updatedTasks);
+      setTasks(updatedTasks);
+      const dateChanged = updatedTasks.filter(t => {
+        const orig = tasks.find(o => o.id === t.id);
+        return orig && (orig.startDate.slice(0,10) !== t.startDate.slice(0,10) || orig.endDate.slice(0,10) !== t.endDate.slice(0,10));
+      });
+      await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
+        startDate: t.startDate.slice(0,10),
+        endDate: t.endDate.slice(0,10),
+      })));
+      addToast({ type: 'success', title: 'Predecessoras atualizadas', description: `${created.length} vínculo(s) criado(s).` });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao salvar', description: String(err) });
+    }
+  }
 
   function handleExport() {
     if (tasks.length === 0) return;
@@ -1202,6 +2362,43 @@ export default function Cronograma() {
             />
             <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
             <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
+            <select
+              value={timeScale}
+              onChange={(e) => setTimeScale(e.target.value as TimeScale)}
+              style={{
+                padding: '5px 8px',
+                fontSize: 11,
+                border: '0.5px solid var(--bd2)',
+                borderRadius: 6,
+                background: 'var(--bg1)',
+                color: 'var(--t1)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {SCALE_ORDER.map(scale => <option key={scale} value={scale}>{SCALE_LABELS[scale]}</option>)}
+            </select>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
+              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
+              title="Adicionar recuo (tornar filho da tarefa acima)"
+            >→ Recuo</button>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
+              onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
+              title="Remover recuo (subir um nível)"
+            >← Recuo</button>
+            <select
+              value={outlineLevel}
+              onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              style={{ padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
+              title="Mostrar até este nível hierárquico"
+            >
+              <option value="all">Todos os níveis</option>
+              {[1,2,3,4,5].map(n => <option key={n} value={n}>Nível {n}</option>)}
+            </select>
             <div style={{ position: 'relative' }}>
               <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
               {showColPicker && (
@@ -1222,6 +2419,16 @@ export default function Cronograma() {
                 </div>
               )}
             </div>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={() => setShowAdvFilters(!showAdvFilters)}
+              style={{
+                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#2563EB' : undefined,
+                color: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#fff' : undefined,
+              }}
+            >
+              🔍 Filtros avançados
+            </button>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
             <button
@@ -1251,7 +2458,7 @@ export default function Cronograma() {
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 1, height: 12, background: '#E24B4A', display: 'inline-block' }} />Hoje
           </span>
-          <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Clique em uma linha para editar · Passe o mouse para ver ações</span>
+          <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
         </div>
 
         {/* Gantt wrap */}
@@ -1261,7 +2468,12 @@ export default function Cronograma() {
           <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
             {/* Header row */}
             <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
-              {visibleColDefs.map((col, colIdx) => (
+              {visibleColDefs.map((col, colIdx) => {
+                const colRef = useRef<HTMLButtonElement>(null);
+                const hasFilter = colFilters[col.key]?.length > 0;
+                const isFiltered = sortConfig?.key === col.key || hasFilter;
+
+                return (
                 <div
                   key={col.key}
                   style={{
@@ -1270,6 +2482,7 @@ export default function Cronograma() {
                     padding: '0 8px',
                     display: 'flex',
                     alignItems: 'center',
+                    gap: 4,
                     fontSize: 11,
                     fontWeight: 500,
                     color: 'var(--t2)',
@@ -1277,9 +2490,40 @@ export default function Cronograma() {
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     position: 'relative',
+                    justifyContent: 'space-between',
                   }}
                 >
-                  {col.label}
+                  <span>{col.label}</span>
+                  <button
+                    ref={colRef}
+                    onClick={() => setFilterDropdownCol(filterDropdownCol === col.key ? null : col.key)}
+                    title="Filtrar coluna"
+                    style={{
+                      background: isFiltered ? '#2563EB' : 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      padding: '2px 4px',
+                      color: isFiltered ? '#fff' : 'var(--t3)',
+                      borderRadius: 3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    ⊕
+                  </button>
+                  {filterDropdownCol === col.key && (
+                    <ColFilterDropdown
+                      colKey={col.key}
+                      label={col.label}
+                      allValues={colUniqueValues[col.key] ?? []}
+                      selected={colFilters[col.key] ?? []}
+                      sortDir={sortConfig?.key === col.key ? sortConfig.dir : null}
+                      onSortChange={(dir) => setSortConfig(dir ? { key: col.key, dir } : null)}
+                      onFilterChange={(vals) => setColFilters(prev => ({ ...prev, [col.key]: vals }))}
+                      onClose={() => setFilterDropdownCol(null)}
+                      triggerRef={colRef}
+                    />
+                  )}
                   {colIdx < visibleColDefs.length - 1 && (
                     <div
                       onMouseDown={(e) => startResize(e, col.key)}
@@ -1296,7 +2540,8 @@ export default function Cronograma() {
                     />
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Rows */}
@@ -1312,104 +2557,268 @@ export default function Cronograma() {
                     </div>
                   ))
                 : visibleTasks.map((task) => {
-                    const lvStyle = levelStyle(task.level);
+                    const lvStyle = levelStyle(task.level, task.hasChildren);
                     const isExpanded = expanded.has(task.id) || !!search;
                     const isHov = hoveredRow === task.id;
+                    const isSelected = selectedTaskId === task.id;
+
+                    function handleRowKeyDown(e: React.KeyboardEvent) {
+                      if (inlineEdit) return; // keyboard is captured by cell input
+                      const rowIdx = visibleTasks.findIndex(t => t.id === task.id);
+
+                      switch (e.key) {
+                        case 'ArrowDown': {
+                          e.preventDefault();
+                          const next = visibleTasks[rowIdx + 1];
+                          if (next) {
+                            setSelectedTaskId(next.id);
+                            setTimeout(() => scrollToRow(rowIdx + 1), 0);
+                          }
+                          break;
+                        }
+                        case 'ArrowUp': {
+                          e.preventDefault();
+                          const prev = visibleTasks[rowIdx - 1];
+                          if (prev) {
+                            setSelectedTaskId(prev.id);
+                            setTimeout(() => scrollToRow(rowIdx - 1), 0);
+                          }
+                          break;
+                        }
+                        case 'ArrowRight': {
+                          e.preventDefault();
+                          const nextIdx = Math.min(selectedColIdx + 1, visibleColDefs.length - 1);
+                          setSelectedColIdx(nextIdx);
+                          break;
+                        }
+                        case 'ArrowLeft': {
+                          e.preventDefault();
+                          setSelectedColIdx(Math.max(0, selectedColIdx - 1));
+                          break;
+                        }
+                        case 'Enter': {
+                          e.preventDefault();
+                          const colKey = visibleColDefs[selectedColIdx]?.key;
+                          if (colKey) {
+                            afterCommitRef.current = 'enter';
+                            startInlineEdit(task, colKey);
+                          }
+                          break;
+                        }
+                        case 'F2': {
+                          e.preventDefault();
+                          const colKey = visibleColDefs[selectedColIdx]?.key ?? 'name';
+                          startInlineEdit(task, colKey);
+                          break;
+                        }
+                        case 'Escape': {
+                          e.preventDefault();
+                          cancelInlineEdit();
+                          break;
+                        }
+                        case 'c':
+                        case 'C': {
+                          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            const colKey = visibleColDefs[selectedColIdx]?.key;
+                            if (colKey) {
+                              const value = getCellRawValue(task, colKey);
+                              setClipboard({ colKey, value });
+                              addToast({ type: 'success', title: `Copiado: ${value}` });
+                            }
+                          }
+                          break;
+                        }
+                        case 'v':
+                        case 'V': {
+                          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            if (clipboard) {
+                              const colKey = visibleColDefs[selectedColIdx]?.key;
+                              if (colKey && colKey === clipboard.colKey && ['name','code','duration','startDate','endDate','progress','weight','responsible'].includes(colKey)) {
+                                afterCommitRef.current = 'blur';
+                                setInlineEdit({ taskId: task.id, colKey, value: clipboard.value });
+                                setTimeout(() => commitInlineEdit(), 0);
+                              }
+                            }
+                          }
+                          break;
+                        }
+                      }
+                    }
+
                     return (
                       <div
                         key={task.id}
+                        data-task-id={task.id}
+                        tabIndex={0}
                         onMouseEnter={() => setHoveredRow(task.id)}
                         onMouseLeave={() => setHoveredRow(null)}
+                        onClick={() => setSelectedTaskId(task.id)}
+                        onKeyDown={handleRowKeyDown}
                         style={{
                           height: ROW_H,
                           display: 'flex',
                           borderBottom: '0.5px solid var(--bd)',
                           background: isHov ? 'var(--bg2)' : (lvStyle.background as string ?? ''),
                           userSelect: 'none',
+                          outline: isSelected ? '1px solid #2563EB' : 'none',
+                          outlineOffset: '-1px',
                         }}
                       >
                         {visibleColDefs.map((col, colIdx) => {
                           const isNameCol = col.key === 'name';
+                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key);
+                          const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.colKey === col.key;
+                          const isCellSelected = isSelected && colIdx === selectedColIdx;
+
+                          function handleCellKeyDown(e: React.KeyboardEvent) {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              afterCommitRef.current = 'enter';
+                              commitInlineEdit();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelInlineEdit();
+                            } else if (e.key === 'Tab') {
+                              e.preventDefault();
+                              afterCommitRef.current = 'tab';
+                              const editableCols = ['name', 'code', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible'];
+                              const currentIdx = editableCols.indexOf(col.key);
+                              if (e.shiftKey) {
+                                const prevIdx = currentIdx <= 0 ? editableCols.length - 1 : currentIdx - 1;
+                                setTimeout(() => startInlineEdit(task, editableCols[prevIdx]), 0);
+                              } else {
+                                const nextIdx = currentIdx >= editableCols.length - 1 ? 0 : currentIdx + 1;
+                                setTimeout(() => startInlineEdit(task, editableCols[nextIdx]), 0);
+                              }
+                            }
+                          }
+
                           return (
                             <div
                               key={col.key}
-                              onClick={isNameCol ? (e) => openEdit(task, e) : undefined}
-                              title={isNameCol ? 'Clique para editar' : ''}
+                              onDoubleClick={isEditable ? (e) => startInlineEdit(task, col.key, e) : undefined}
+                              title={isEditable ? 'Duplo clique para editar' : ''}
                               style={{
                                 width: effectiveWidth(col),
                                 flexShrink: 0,
-                                padding: '0 8px',
+                                padding: isEditing ? '0 4px' : '0 8px',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: isNameCol ? 4 : 0,
+                                gap: isNameCol && !isEditing ? 4 : 0,
                                 borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
-                                cursor: isNameCol ? 'pointer' : 'default',
+                                cursor: isEditable ? 'text' : 'default',
                                 overflow: 'hidden',
-                                ...(isNameCol ? lvStyle : { fontSize: 11 }),
+                                backgroundColor: isEditing ? '#fff' : undefined,
+                                border: isEditing ? '2px solid #2563EB' : (isCellSelected ? '1.5px solid #2563EB' : undefined),
+                                borderRadius: isEditing || isCellSelected ? 4 : 0,
+                                ...(isNameCol && !isEditing ? lvStyle : { fontSize: 11 }),
                               }}
                             >
-                              {col.key === 'code' && (
-                                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, whiteSpace: 'nowrap' }}>
-                                  {task.code}
-                                </span>
+                              {isEditing && (
+                                <input
+                                  ref={inlineInputRef}
+                                  type={col.key === 'duration' || col.key === 'progress' || col.key === 'weight' ? 'number' : col.key === 'startDate' || col.key === 'endDate' ? 'date' : 'text'}
+                                  min={col.key === 'duration' ? 1 : col.key === 'progress' || col.key === 'weight' ? 0 : undefined}
+                                  max={col.key === 'progress' ? 100 : undefined}
+                                  step={col.key === 'weight' ? 0.01 : undefined}
+                                  value={inlineEdit.value}
+                                  onChange={(e) => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                  onKeyDown={handleCellKeyDown}
+                                  onBlur={commitInlineEdit}
+                                  style={{
+                                    border: 'none',
+                                    outline: 'none',
+                                    width: '100%',
+                                    height: '100%',
+                                    padding: '4px 6px',
+                                    fontSize: 11,
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--t1)',
+                                    fontFamily: col.key === 'code' ? 'var(--mono)' : 'inherit',
+                                  }}
+                                />
                               )}
-                              {col.key === 'name' && (
-                                <>
-                                  {task.hasChildren ? (
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                      style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                                    >▶</button>
-                                  ) : (
-                                    <span style={{ width: 16, flexShrink: 0 }} />
-                                  )}
-                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: (task.level - 1) * 12 }} title={task.name}>
-                                    {task.name}
+                              {!isEditing && <>
+                                {col.key === 'code' && (
+                                  <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, whiteSpace: 'nowrap' }}>
+                                    {task.code}
                                   </span>
-                                  {isHov && (
-                                    <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
-                                      <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
-                                      <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
-                                      <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              {col.key === 'startDate' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {fmtDate(task.startDate)}
-                                </span>
-                              )}
-                              {col.key === 'endDate' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {fmtDate(task.endDate)}
-                                </span>
-                              )}
-                              {col.key === 'duration' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {task.durationDays ?? '—'}
-                                </span>
-                              )}
-                              {col.key === 'progress' && (
-                                <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
-                                  {task.actualProgress}%
-                                </span>
-                              )}
-                              {col.key === 'predecessors' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap', color: 'var(--t2)' }}>
-                                  —
-                                </span>
-                              )}
-                              {col.key === 'successors' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap', color: 'var(--t2)' }}>
-                                  —
-                                </span>
-                              )}
-                              {col.key === 'critical' && (
-                                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                                  {task.isCriticalPath ? 'Sim' : 'Não'}
-                                </span>
-                              )}
+                                )}
+                                {col.key === 'name' && (
+                                  <>
+                                    {task.hasChildren ? (
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                        style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                      >▶</button>
+                                    ) : (
+                                      <span style={{ width: 16, flexShrink: 0 }} />
+                                    )}
+                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: task.level * 16 }} title={task.name}>
+                                      {task.name}
+                                    </span>
+                                    {isHov && (
+                                      <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
+                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
+                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
+                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                {col.key === 'startDate' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {fmtDate(task.startDate)}
+                                  </span>
+                                )}
+                                {col.key === 'endDate' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {fmtDate(task.endDate)}
+                                  </span>
+                                )}
+                                {col.key === 'duration' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.durationDays ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'progress' && (
+                                  <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
+                                    {task.actualProgress}%
+                                  </span>
+                                )}
+                                {col.key === 'predecessors' && (
+                                  <span style={{ fontSize: 11, fontFamily: 'var(--mono)', whiteSpace: 'nowrap', color: task.predecessorDeps?.length ? 'var(--t1)' : 'var(--t3)' }}>
+                                    {formatDepsAsText(task, tasks) || '—'}
+                                  </span>
+                                )}
+                                {col.key === 'successors' && (
+                                  <span style={{ fontSize: 11, fontFamily: 'var(--mono)', whiteSpace: 'nowrap', color: task.successorDeps?.length ? 'var(--t1)' : 'var(--t3)' }}>
+                                    {formatSuccessorsText(task, tasks) || '—'}
+                                  </span>
+                                )}
+                                {col.key === 'rowId' && (
+                                  <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'var(--mono)' }}>
+                                    {task.rowId}
+                                  </span>
+                                )}
+                                {col.key === 'weight' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.weight ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'responsible' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {task.responsible ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'critical' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.isCriticalPath ? 'Sim' : 'Não'}
+                                  </span>
+                                )}
+                              </>}
                             </div>
                           );
                         })}
@@ -1439,18 +2848,32 @@ export default function Cronograma() {
           {/* ── Right Gantt panel ── */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }} onWheel={onGanttWheel}>
 
-            {/* Month header */}
+            {/* Header with upper and lower rows */}
             <div
               ref={hdrRef}
-              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', position: 'relative' }}
+              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
             >
-              <div style={{ position: 'relative', width: totalWidth, height: HDR_H }}>
-                {months.map((mon, i) => (
-                  <div key={i} style={{ position: 'absolute', left: mon.left, top: 0, width: mon.width, height: HDR_H, borderLeft: '0.5px solid var(--bd)', padding: '0 4px', fontSize: 9, color: 'var(--t2)', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-                    {mon.label}
-                  </div>
-                ))}
-                <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: HDR_H, zIndex: 2 }} />
+              {/* Upper header */}
+              <div style={{ flex: 1, position: 'relative', borderBottom: '0.5px solid var(--bd)' }}>
+                <div style={{ position: 'relative', width: totalWidth, height: '100%' }}>
+                  {generateHeaderCells(timeScale, minDate, maxDate, pxPerDay).upper.map((cell, i) => (
+                    <div key={i} style={{ position: 'absolute', left: cell.left, top: 0, width: cell.width, height: '100%', borderLeft: '0.5px solid var(--bd)', padding: '0 4px', fontSize: 10, color: 'var(--t2)', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                      {cell.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Lower header */}
+              <div style={{ flex: 1, position: 'relative' }}>
+                <div style={{ position: 'relative', width: totalWidth, height: '100%' }}>
+                  {generateHeaderCells(timeScale, minDate, maxDate, pxPerDay).lower.map((cell, i) => (
+                    <div key={i} style={{ position: 'absolute', left: cell.left, top: 0, width: cell.width, height: '100%', borderLeft: '0.5px solid var(--bd)', padding: '0 4px', fontSize: 9, color: 'var(--t2)', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap' }}>
+                      {cell.label}
+                    </div>
+                  ))}
+                  <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: '100%', zIndex: 2 }} />
+                </div>
               </div>
             </div>
 
@@ -1491,6 +2914,39 @@ export default function Cronograma() {
                     </div>
                   );
                 })}
+
+                {/* Dependency arrows */}
+                <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible', zIndex: 0 }}>
+                  <defs>
+                    <marker id="depArrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L6,3 z" fill="#94a3b8" />
+                    </marker>
+                  </defs>
+                  {visibleTasks.flatMap((task, rowIdx) =>
+                    (task.predecessorDeps ?? []).map(dep => {
+                      const predTask = visibleTasks.find(t => t.id === dep.predecessorId);
+                      if (!predTask) return null;
+                      const predRowIdx = visibleTasks.indexOf(predTask);
+                      const y1 = predRowIdx * ROW_H + ROW_H / 2;
+                      const y2 = rowIdx * ROW_H + ROW_H / 2;
+                      let x1: number, x2: number;
+                      switch (dep.type) {
+                        case 'FS': x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task); break;
+                        case 'SS': x1 = barLeft(predTask); x2 = barLeft(task); break;
+                        case 'FF': x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task) + barWidth(task); break;
+                        case 'SF': x1 = barLeft(predTask); x2 = barLeft(task) + barWidth(task); break;
+                        default: x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task);
+                      }
+                      const midX = x1 + 8;
+                      const pathD = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
+                      return (
+                        <path key={dep.id} d={pathD} fill="none" stroke="#94a3b8" strokeWidth={1.5}
+                          strokeDasharray={dep.lagDays !== 0 ? '4,2' : undefined}
+                          markerEnd="url(#depArrow)" />
+                      );
+                    }).filter(Boolean)
+                  )}
+                </svg>
               </div>
             </div>
           </div>
@@ -1534,6 +2990,16 @@ export default function Cronograma() {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Advanced Filters Panel */}
+      {showAdvFilters && (
+        <AdvancedFiltersPanel
+          filters={advFilters}
+          allResponsibles={uniqueResponsibles}
+          onChange={setAdvFilters}
+          onClose={() => setShowAdvFilters(false)}
+        />
+      )}
     </>
   );
 }

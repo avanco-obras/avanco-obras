@@ -59,8 +59,8 @@ export declare class WeeklyPlanningService {
         restrictions: {
             id: string;
             status: import(".prisma/client").$Enums.RestrictionStatus;
-            description: string;
             responsible: string;
+            description: string;
             dueDate: Date;
             resolvedAt: Date | null;
             weeklyPlanId: string;
@@ -113,8 +113,8 @@ export declare class WeeklyPlanningService {
     addRestriction(planId: string, dto: CreateRestrictionDto): Promise<{
         id: string;
         status: import(".prisma/client").$Enums.RestrictionStatus;
-        description: string;
         responsible: string;
+        description: string;
         dueDate: Date;
         resolvedAt: Date | null;
         weeklyPlanId: string;
@@ -122,8 +122,8 @@ export declare class WeeklyPlanningService {
     updateRestriction(restrictionId: string, dto: UpdateRestrictionDto): Promise<{
         id: string;
         status: import(".prisma/client").$Enums.RestrictionStatus;
-        description: string;
         responsible: string;
+        description: string;
         dueDate: Date;
         resolvedAt: Date | null;
         weeklyPlanId: string;

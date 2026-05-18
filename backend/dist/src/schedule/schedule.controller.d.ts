@@ -32,6 +32,7 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     })[]>;
@@ -62,6 +63,7 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -92,16 +94,17 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
     addDependency(successorId: string, dto: CreateDependencyDto): Promise<{
-        successor: {
+        predecessor: {
             id: string;
             name: string;
             code: string;
         };
-        predecessor: {
+        successor: {
             id: string;
             name: string;
             code: string;
@@ -109,20 +112,20 @@ export declare class ScheduleController {
     } & {
         id: string;
         type: string;
-        lagDays: number;
         predecessorId: string;
         successorId: string;
+        lagDays: number;
     }>;
     removeDependency(depId: string): Promise<{
         message: string;
     }>;
     getItemDependencies(itemId: string): Promise<({
-        successor: {
+        predecessor: {
             id: string;
             name: string;
             code: string;
         };
-        predecessor: {
+        successor: {
             id: string;
             name: string;
             code: string;
@@ -130,9 +133,9 @@ export declare class ScheduleController {
     } & {
         id: string;
         type: string;
-        lagDays: number;
         predecessorId: string;
         successorId: string;
+        lagDays: number;
     })[]>;
     remove(id: string): Promise<{
         message: string;

@@ -84,6 +84,7 @@ let ScheduleService = class ScheduleService {
                 actualProgress: dto.actualProgress ?? 0,
                 weight: dto.weight ?? 1,
                 isCriticalPath: dto.isCriticalPath ?? false,
+                responsible: dto.responsible ?? null,
                 order,
             },
             include: {
@@ -115,6 +116,7 @@ let ScheduleService = class ScheduleService {
                 ...(dto.weight !== undefined && { weight: dto.weight }),
                 ...(dto.isCriticalPath !== undefined && { isCriticalPath: dto.isCriticalPath }),
                 ...(dto.order !== undefined && { order: dto.order }),
+                ...(dto.responsible !== undefined && { responsible: dto.responsible }),
             },
             include: {
                 activityType: true,
@@ -156,8 +158,15 @@ let ScheduleService = class ScheduleService {
                 isCriticalPath: true,
                 order: true,
                 weight: true,
+                responsible: true,
                 _count: {
                     select: { children: true },
+                },
+                predecessors: {
+                    select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
+                },
+                successors: {
+                    select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
                 },
             },
             orderBy: { order: 'asc' },
@@ -177,6 +186,9 @@ let ScheduleService = class ScheduleService {
             hasChildren: item._count.children > 0,
             order: item.order,
             weight: Number(item.weight),
+            responsible: item.responsible ?? undefined,
+            predecessorDeps: item.predecessors,
+            successorDeps: item.successors,
         }));
     }
     async getCurvaS(projectId) {

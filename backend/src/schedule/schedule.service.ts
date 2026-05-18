@@ -10,6 +10,14 @@ import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
 
+export interface GanttDep {
+  id: string;
+  predecessorId: string;
+  successorId: string;
+  lagDays: number;
+  type: string;
+}
+
 export interface GanttRow {
   id: string;
   code: string;
@@ -25,6 +33,9 @@ export interface GanttRow {
   hasChildren: boolean;
   order: number;
   weight: number;
+  responsible?: string;
+  predecessorDeps: GanttDep[];
+  successorDeps: GanttDep[];
 }
 
 export interface CurvaSPoint {
@@ -114,6 +125,7 @@ export class ScheduleService {
         actualProgress: dto.actualProgress ?? 0,
         weight: dto.weight ?? 1,
         isCriticalPath: dto.isCriticalPath ?? false,
+        responsible: dto.responsible ?? null,
         order,
       },
       include: {
@@ -147,6 +159,7 @@ export class ScheduleService {
         ...(dto.weight !== undefined && { weight: dto.weight }),
         ...(dto.isCriticalPath !== undefined && { isCriticalPath: dto.isCriticalPath }),
         ...(dto.order !== undefined && { order: dto.order }),
+        ...(dto.responsible !== undefined && { responsible: dto.responsible }),
       },
       include: {
         activityType: true,
@@ -193,8 +206,15 @@ export class ScheduleService {
         isCriticalPath: true,
         order: true,
         weight: true,
+        responsible: true,
         _count: {
           select: { children: true },
+        },
+        predecessors: {
+          select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
+        },
+        successors: {
+          select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
         },
       },
       orderBy: { order: 'asc' },
@@ -215,6 +235,9 @@ export class ScheduleService {
       hasChildren: item._count.children > 0,
       order: item.order,
       weight: Number(item.weight),
+      responsible: item.responsible ?? undefined,
+      predecessorDeps: item.predecessors,
+      successorDeps: item.successors,
     }));
   }
 

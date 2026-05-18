@@ -2,6 +2,13 @@ import { PrismaService } from '../common/prisma.service';
 import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+export interface GanttDep {
+    id: string;
+    predecessorId: string;
+    successorId: string;
+    lagDays: number;
+    type: string;
+}
 export interface GanttRow {
     id: string;
     code: string;
@@ -17,6 +24,9 @@ export interface GanttRow {
     hasChildren: boolean;
     order: number;
     weight: number;
+    responsible?: string;
+    predecessorDeps: GanttDep[];
+    successorDeps: GanttDep[];
 }
 export interface CurvaSPoint {
     label: string;
@@ -54,6 +64,7 @@ export declare class ScheduleService {
         plannedProgress: Prisma.Decimal;
         actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     })[]>;
@@ -84,6 +95,7 @@ export declare class ScheduleService {
         plannedProgress: Prisma.Decimal;
         actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -114,6 +126,7 @@ export declare class ScheduleService {
         plannedProgress: Prisma.Decimal;
         actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -123,12 +136,12 @@ export declare class ScheduleService {
     getGanttData(projectId: string): Promise<GanttRow[]>;
     getCurvaS(projectId: string): Promise<CurvaSPoint[]>;
     addDependency(successorId: string, predecessorId: string, lagDays?: number, type?: string): Promise<{
-        successor: {
+        predecessor: {
             id: string;
             name: string;
             code: string;
         };
-        predecessor: {
+        successor: {
             id: string;
             name: string;
             code: string;
@@ -136,20 +149,20 @@ export declare class ScheduleService {
     } & {
         id: string;
         type: string;
-        lagDays: number;
         predecessorId: string;
         successorId: string;
+        lagDays: number;
     }>;
     removeDependency(depId: string): Promise<{
         message: string;
     }>;
     getItemDependencies(itemId: string): Promise<({
-        successor: {
+        predecessor: {
             id: string;
             name: string;
             code: string;
         };
-        predecessor: {
+        successor: {
             id: string;
             name: string;
             code: string;
@@ -157,9 +170,9 @@ export declare class ScheduleService {
     } & {
         id: string;
         type: string;
-        lagDays: number;
         predecessorId: string;
         successorId: string;
+        lagDays: number;
     })[]>;
     private normalizeColumnName;
     private mapColumnName;

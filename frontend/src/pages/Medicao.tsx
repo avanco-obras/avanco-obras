@@ -494,7 +494,7 @@ export default function Medicao() {
     [calculateTowerProgress],
   );
 
-  // ── Load towers + activity types ─────────────────────────────────────────
+  // ── Load towers + activity types + building data ─────────────────────────
 
   useEffect(() => {
     if (!projectId) return;
@@ -502,17 +502,39 @@ export default function Medicao() {
     Promise.all([
       towersApi.list(projectId),
       activityTypesApi.list(projectId),
+      measurementsApi.buildingData(projectId),
     ])
-      .then(([t, at]) => {
+      .then(([t, at, bd]) => {
         setTowers(t);
         setActivityTypes(at);
         if (t.length > 0) setSelectedTowerId(t[0].id);
+
+        // Populate floorUnitsCache and floorProgresses from buildingData
+        const unitsCache: Record<string, Unit[]> = {};
+        const floorProgs: FloorProgress = {};
+
+        bd.towers.forEach((tower) => {
+          tower.floors.forEach((floor) => {
+            floorProgs[floor.id] = floor.averageProgress;
+            unitsCache[floor.id] = floor.units.map((unit, idx) => ({
+              id: unit.id,
+              floorId: floor.id,
+              name: unit.name,
+              area: 0,
+              order: idx,
+              progressPercent: unit.progressPercent,
+            } as Unit));
+          });
+        });
+
+        setFloorUnitsCache(unitsCache);
+        setFloorProgresses(floorProgs);
       })
       .catch(() => {
         addToast({ type: 'error', title: 'Erro ao carregar dados', description: 'Não foi possível carregar as torres.' });
       })
       .finally(() => setLoadingTowers(false));
-  }, [projectId]);
+  }, [projectId, addToast]);
 
   // ── Load floors when tower changes ───────────────────────────────────────
 
@@ -664,7 +686,7 @@ export default function Medicao() {
   }
 
   async function handleSave() {
-    if (!selectedUnitId) return;
+    if (!selectedUnitId || !selectedFloorId) return;
     const dirty = entries.filter((e) => e.isDirty);
     if (dirty.length === 0) return;
     setSaving(true);
@@ -679,14 +701,30 @@ export default function Medicao() {
           }),
         ),
       );
-      setEntries((prev) => prev.map((e) => ({ ...e, isDirty: false })));
-      setFloorUnitsCache((prev) => {
-        if (!selectedFloorId) return prev;
-        const floorUnits = (prev[selectedFloorId] ?? []).map((u) =>
-          u.id === selectedUnitId ? { ...u, progressPercent: currentUnitProgress } : u,
-        );
-        return { ...prev, [selectedFloorId]: floorUnits };
-      });
+
+      // Calculate new unit progress from entries
+      const cleanedEntries = entries.map((e) => ({ ...e, isDirty: false }));
+      const newUnitProgress = calcOverallProgress(cleanedEntries);
+
+      // Update entries to clean state
+      setEntries(cleanedEntries);
+
+      // Update unit in cache with new progress
+      const updatedUnits = (floorUnitsCache[selectedFloorId] ?? []).map((u) =>
+        u.id === selectedUnitId ? { ...u, progressPercent: newUnitProgress } : u,
+      );
+
+      setFloorUnitsCache((prev) => ({ ...prev, [selectedFloorId]: updatedUnits }));
+
+      // Recalculate floor progress from updated units
+      const unitProgresses = updatedUnits.map((u) => u.progressPercent ?? 0);
+      const newFloorProgress =
+        unitProgresses.length > 0
+          ? Math.round(unitProgresses.reduce((a, b) => a + b, 0) / unitProgresses.length)
+          : 0;
+
+      setFloorProgresses((prev) => ({ ...prev, [selectedFloorId]: newFloorProgress }));
+
       addToast({ type: 'success', title: 'Salvo com sucesso', description: 'Medição da unidade salva.' });
     } catch {
       addToast({ type: 'error', title: 'Erro ao salvar', description: 'Tente novamente.' });

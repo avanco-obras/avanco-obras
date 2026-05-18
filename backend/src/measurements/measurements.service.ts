@@ -15,23 +15,28 @@ export interface FloorSummary {
 }
 
 export interface UnitBuildingData {
-  unitId: string;
-  unitName: string;
+  id: string;
+  name: string;
   activityProgress: { activityTypeId: string; activityTypeName: string; avgProgress: number }[];
-  overallAvgProgress: number;
+  progressPercent: number;
 }
 
 export interface FloorBuildingData {
-  floorId: string;
-  floorName: string;
+  id: string;
+  name: string;
   level: number;
   units: UnitBuildingData[];
+  averageProgress: number;
 }
 
 export interface TowerBuildingData {
-  towerId: string;
-  towerName: string;
+  id: string;
+  name: string;
   floors: FloorBuildingData[];
+}
+
+export interface BuildingDataResponse {
+  towers: TowerBuildingData[];
 }
 
 @Injectable()
@@ -279,7 +284,7 @@ export class MeasurementsService {
     return summary;
   }
 
-  async getBuildingData(projectId: string): Promise<TowerBuildingData[]> {
+  async getBuildingData(projectId: string): Promise<BuildingDataResponse> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       select: { id: true },
@@ -321,15 +326,11 @@ export class MeasurementsService {
       orderBy: { order: 'asc' },
     });
 
-    return towers.map((tower): TowerBuildingData => ({
-      towerId: tower.id,
-      towerName: tower.name,
-      floors: tower.floors.map((floor): FloorBuildingData => ({
-        floorId: floor.id,
-        floorName: floor.name,
-        level: floor.level,
-        units: floor.units.map((unit): UnitBuildingData => {
-          // Group latest measurement per activityType
+    const towerData = towers.map((tower): TowerBuildingData => ({
+      id: tower.id,
+      name: tower.name,
+      floors: tower.floors.map((floor): FloorBuildingData => {
+        const units = floor.units.map((unit): UnitBuildingData => {
           const latestByActivity = new Map<string, { name: string; percentComplete: number }>();
 
           for (const m of unit.measurements) {
@@ -350,19 +351,35 @@ export class MeasurementsService {
           );
 
           const values = activityProgress.map((a) => a.avgProgress);
-          const overallAvgProgress =
+          const progressPercent =
             values.length > 0
               ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100
               : 0;
 
           return {
-            unitId: unit.id,
-            unitName: unit.name,
+            id: unit.id,
+            name: unit.name,
             activityProgress,
-            overallAvgProgress,
+            progressPercent,
           };
-        }),
-      })),
+        });
+
+        const unitProgresses = units.map((u) => u.progressPercent);
+        const averageProgress =
+          unitProgresses.length > 0
+            ? Math.round((unitProgresses.reduce((a, b) => a + b, 0) / unitProgresses.length) * 100) / 100
+            : 0;
+
+        return {
+          id: floor.id,
+          name: floor.name,
+          level: floor.level,
+          units,
+          averageProgress,
+        };
+      }),
     }));
+
+    return { towers: towerData };
   }
 }

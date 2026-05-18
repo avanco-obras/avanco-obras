@@ -175,6 +175,7 @@ model ScheduleItem {
   weight          Decimal   @default(1) @db.Decimal(8, 4)
   isCriticalPath  Boolean   @default(false) @map("is_critical_path")
   order           Int       @default(0)
+  responsible     String?
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
