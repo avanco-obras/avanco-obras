@@ -6,7 +6,7 @@ services:
     region: oregon
     rootDir: backend
     buildCommand: npm ci --include=dev && npx prisma generate && npm run build
-    startCommand: npx prisma migrate deploy && node dist/main
+    startCommand: npx prisma db push --skip-generate --accept-data-loss && node dist/main
     healthCheckPath: /api/docs
     envVars:
       - key: NODE_ENV
