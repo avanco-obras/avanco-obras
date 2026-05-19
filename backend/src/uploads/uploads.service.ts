@@ -20,9 +20,10 @@ export class UploadsService implements OnModuleInit {
   ) {
     this.bucket = this.configService.get<string>('minio.bucket') ?? 'avanco-obras';
 
+    const minioPort = this.configService.get<number | undefined>('minio.port');
     this.minioClient = new MinioClient({
       endPoint: this.configService.get<string>('minio.endpoint') ?? 'localhost',
-      port: this.configService.get<number>('minio.port') ?? 9000,
+      ...(minioPort !== undefined && { port: minioPort }),
       useSSL: this.configService.get<boolean>('minio.useSSL') ?? false,
       accessKey: this.configService.get<string>('minio.accessKey') ?? 'minioadmin',
       secretKey: this.configService.get<string>('minio.secretKey') ?? 'minioadmin',
