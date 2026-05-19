@@ -4,9 +4,8 @@ services:
     env: node
     plan: free
     region: oregon
-    rootDir: backend
-    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
-    startCommand: node dist/main
+    buildCommand: cd backend && npm ci --include=dev && npx prisma generate && npm run build
+    startCommand: cd backend && node dist/main
     healthCheckPath: /api/docs
     envVars:
       - key: NODE_ENV
