@@ -21,9 +21,10 @@ let UploadsService = UploadsService_1 = class UploadsService {
         this.prisma = prisma;
         this.logger = new common_1.Logger(UploadsService_1.name);
         this.bucket = this.configService.get('minio.bucket') ?? 'avanco-obras';
+        const minioPort = this.configService.get('minio.port');
         this.minioClient = new minio_1.Client({
             endPoint: this.configService.get('minio.endpoint') ?? 'localhost',
-            port: this.configService.get('minio.port') ?? 9000,
+            ...(minioPort !== undefined && { port: minioPort }),
             useSSL: this.configService.get('minio.useSSL') ?? false,
             accessKey: this.configService.get('minio.accessKey') ?? 'minioadmin',
             secretKey: this.configService.get('minio.secretKey') ?? 'minioadmin',
