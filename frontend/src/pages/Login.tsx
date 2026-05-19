@@ -70,7 +70,7 @@ export default function Login() {
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         'E-mail ou senha inválidos. Verifique as credenciais.'
       setError(msg)
-      addToast({ type: 'error', title: 'Falha no login', description: msg })
+      addToast({ type: 'error', title: 'Falha no logindqwdoiuqwhdoiqwuhdwqdqw', description: msg })
     } finally {
       setIsLoading(false)
     }
