@@ -2209,7 +2209,7 @@ export default function Cronograma() {
     const existing = task.predecessorDeps ?? [];
     try {
       await Promise.all(existing.map(d => scheduleApi.removeDependency(d.id)));
-      const created = [];
+      const created: { id: string; predecessorId: string; successorId: string; lagDays: number; type: string }[] = [];
       for (const p of parsed) {
         const predTask = tasks.find(t => t.rowId === p.rowId);
         if (!predTask) continue;
