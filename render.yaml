@@ -1,11 +1,11 @@
 services:
   - type: web
     name: avanco-obras-api
-    env: node
+    env: docker
     plan: free
     region: oregon
-    buildCommand: cd backend && npm ci --include=dev && npx prisma generate && npm run build
-    startCommand: cd backend && node dist/main
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
     healthCheckPath: /api/docs
     envVars:
       - key: NODE_ENV
