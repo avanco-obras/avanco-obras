@@ -63,7 +63,7 @@ export default function Login() {
     setIsLoading(true)
     try {
       await login(email.trim(), password)
-      addToast({ type: 'success', title: 'Login realizado com sucesso', description: 'Bem-vindo ao AvançoObras Pro!' })
+      addToast({ type: 'success', title: 'Login realizado com sucesso!', description: 'Bem-vindo ao AvançoObras Pro!' })
       navigate('/', { replace: true })
     } catch (err: unknown) {
       const msg =
@@ -283,22 +283,20 @@ export default function Login() {
             <button
               type="button"
               onClick={() => switchMode('login')}
-              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
-                mode === 'login'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${mode === 'login'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+                }`}
             >
               Entrar
             </button>
             <button
               type="button"
               onClick={() => switchMode('register')}
-              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
-                mode === 'register'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${mode === 'register'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+                }`}
             >
               Criar conta
             </button>
