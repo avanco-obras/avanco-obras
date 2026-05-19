@@ -70,4 +70,9 @@ export class CreateScheduleItemDto {
   @IsInt()
   @Min(0)
   order?: number;
+
+  @ApiPropertyOptional({ description: 'Responsible person/team' })
+  @IsOptional()
+  @IsString()
+  responsible?: string;
 }

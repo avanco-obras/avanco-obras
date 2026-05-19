@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U avanco"]
+      test: ["CMD-SHELL", "pg_isready -U avanco -d avanco_obras"]
       interval: 5s
       retries: 5
 
@@ -40,6 +40,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: development
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql://avanco:${DB_PASSWORD:-avanco_secret}@postgres:5432/avanco_obras
       REDIS_URL: redis://redis:6379
@@ -66,7 +68,7 @@ services:
       redis:
         condition: service_started
     command: >
-      sh -c "npx prisma migrate deploy && npx prisma db seed && npm run start:dev"
+      sh -c "npx prisma db push && npx prisma db seed && npm run start:dev"
 
   frontend:
     build:

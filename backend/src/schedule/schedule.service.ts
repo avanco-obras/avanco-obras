@@ -2,10 +2,21 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
+import * as xlsx from 'xlsx';
+import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+
+export interface GanttDep {
+  id: string;
+  predecessorId: string;
+  successorId: string;
+  lagDays: number;
+  type: string;
+}
 
 export interface GanttRow {
   id: string;
@@ -21,6 +32,10 @@ export interface GanttRow {
   isCriticalPath: boolean;
   hasChildren: boolean;
   order: number;
+  weight: number;
+  responsible?: string;
+  predecessorDeps: GanttDep[];
+  successorDeps: GanttDep[];
 }
 
 export interface CurvaSPoint {
@@ -110,6 +125,7 @@ export class ScheduleService {
         actualProgress: dto.actualProgress ?? 0,
         weight: dto.weight ?? 1,
         isCriticalPath: dto.isCriticalPath ?? false,
+        responsible: dto.responsible ?? null,
         order,
       },
       include: {
@@ -143,6 +159,7 @@ export class ScheduleService {
         ...(dto.weight !== undefined && { weight: dto.weight }),
         ...(dto.isCriticalPath !== undefined && { isCriticalPath: dto.isCriticalPath }),
         ...(dto.order !== undefined && { order: dto.order }),
+        ...(dto.responsible !== undefined && { responsible: dto.responsible }),
       },
       include: {
         activityType: true,
@@ -188,8 +205,16 @@ export class ScheduleService {
         actualProgress: true,
         isCriticalPath: true,
         order: true,
+        weight: true,
+        responsible: true,
         _count: {
           select: { children: true },
+        },
+        predecessors: {
+          select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
+        },
+        successors: {
+          select: { id: true, predecessorId: true, successorId: true, lagDays: true, type: true },
         },
       },
       orderBy: { order: 'asc' },
@@ -209,6 +234,10 @@ export class ScheduleService {
       isCriticalPath: item.isCriticalPath,
       hasChildren: item._count.children > 0,
       order: item.order,
+      weight: Number(item.weight),
+      responsible: item.responsible ?? undefined,
+      predecessorDeps: item.predecessors,
+      successorDeps: item.successors,
     }));
   }
 
@@ -330,5 +359,311 @@ export class ScheduleService {
     }
 
     return points;
+  }
+
+  async addDependency(successorId: string, predecessorId: string, lagDays = 0, type = 'FS') {
+    if (successorId === predecessorId) {
+      throw new ConflictException('Um item não pode depender de si mesmo');
+    }
+    const [successor, predecessor] = await Promise.all([
+      this.prisma.scheduleItem.findUnique({ where: { id: successorId }, select: { id: true } }),
+      this.prisma.scheduleItem.findUnique({ where: { id: predecessorId }, select: { id: true } }),
+    ]);
+    if (!successor) throw new NotFoundException(`Item ${successorId} não encontrado`);
+    if (!predecessor) throw new NotFoundException(`Predecessora ${predecessorId} não encontrada`);
+
+    return this.prisma.scheduleDependency.create({
+      data: { predecessorId, successorId, lagDays, type },
+      include: {
+        predecessor: { select: { id: true, code: true, name: true } },
+        successor: { select: { id: true, code: true, name: true } },
+      },
+    });
+  }
+
+  async removeDependency(depId: string) {
+    const dep = await this.prisma.scheduleDependency.findUnique({ where: { id: depId } });
+    if (!dep) throw new NotFoundException(`Dependência ${depId} não encontrada`);
+    await this.prisma.scheduleDependency.delete({ where: { id: depId } });
+    return { message: 'Dependência removida com sucesso' };
+  }
+
+  async getItemDependencies(itemId: string) {
+    const item = await this.prisma.scheduleItem.findUnique({ where: { id: itemId }, select: { id: true } });
+    if (!item) throw new NotFoundException(`Item ${itemId} não encontrado`);
+
+    return this.prisma.scheduleDependency.findMany({
+      where: { OR: [{ predecessorId: itemId }, { successorId: itemId }] },
+      include: {
+        predecessor: { select: { id: true, code: true, name: true } },
+        successor: { select: { id: true, code: true, name: true } },
+      },
+    });
+  }
+
+  private normalizeColumnName(name: string): string {
+    return name.toLowerCase().trim();
+  }
+
+  private mapColumnName(normalized: string): string | null {
+    const columnMap: Record<string, string> = {
+      'código': 'code',
+      'wbs': 'code',
+      'code': 'code',
+      'nome': 'name',
+      'name': 'name',
+      'tarefa': 'name',
+      'task name': 'name',
+      'nível': 'level',
+      'level': 'level',
+      'outline level': 'level',
+      'início': 'startDate',
+      'start': 'startDate',
+      'data início': 'startDate',
+      'término': 'endDate',
+      'fim': 'endDate',
+      'finish': 'endDate',
+      'end': 'endDate',
+      'data término': 'endDate',
+      'duração': 'durationDays',
+      'duration': 'durationDays',
+      'dur.': 'durationDays',
+      '% plan': 'plannedProgress',
+      'prog. plan': 'plannedProgress',
+      'planned progress': 'plannedProgress',
+      '% real': 'actualProgress',
+      'prog. real': 'actualProgress',
+      'actual progress': 'actualProgress',
+      '% concluído': 'actualProgress',
+      'caminho crítico': 'isCriticalPath',
+      'critical': 'isCriticalPath',
+      'peso': 'weight',
+      'weight': 'weight',
+    };
+    return columnMap[normalized] || null;
+  }
+
+  private deriveLevelFromCode(code: string): number {
+    const parts = code.split('.').filter((p) => p.length > 0);
+    return Math.max(0, parts.length - 1);
+  }
+
+  private deriveParentCode(code: string): string | null {
+    const parts = code.split('.').filter((p) => p.length > 0);
+    if (parts.length <= 1) return null;
+    return parts.slice(0, -1).join('.');
+  }
+
+  async importBatch(
+    projectId: string,
+    buffer: Buffer,
+    mimetype: string,
+  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Projeto com ID "${projectId}" não encontrado`);
+    }
+
+    // Parse file
+    let workbook: xlsx.WorkBook;
+    try {
+      workbook = xlsx.read(buffer, { type: 'buffer', cellDates: true });
+    } catch (err) {
+      throw new BadRequestException('Arquivo inválido ou corrompido');
+    }
+
+    if (workbook.SheetNames.length === 0) {
+      throw new BadRequestException('Arquivo vazio');
+    }
+
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+    if (rows.length === 0) {
+      throw new BadRequestException('Planilha vazia');
+    }
+
+    // Normalize and map column names
+    const sampleRow = rows[0];
+    const columnMap = new Map<string, string>();
+
+    for (const colName of Object.keys(sampleRow)) {
+      const normalized = this.normalizeColumnName(colName);
+      const mapped = this.mapColumnName(normalized);
+      if (mapped) {
+        columnMap.set(colName, mapped);
+      }
+    }
+
+    // Check mandatory columns
+    const mappedFields = new Set(columnMap.values());
+    const requiredFields = ['code', 'name', 'startDate', 'endDate'];
+    const missingFields = requiredFields.filter((f) => !mappedFields.has(f));
+    if (missingFields.length > 0) {
+      throw new BadRequestException(
+        `Colunas obrigatórias não encontradas: ${missingFields.join(', ')}`,
+      );
+    }
+
+    const errors: string[] = [];
+    const importedItems: Array<{
+      code: string;
+      name: string;
+      level: number;
+      parentCode: string | null;
+      startDate: Date;
+      endDate: Date;
+      durationDays: number;
+      plannedProgress: number;
+      actualProgress: number;
+      isCriticalPath: boolean;
+      weight: number;
+    }> = [];
+
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      const row = rows[rowIdx];
+      const mappedRow: Record<string, unknown> = {};
+
+      for (const [colName, fieldName] of columnMap.entries()) {
+        mappedRow[fieldName] = row[colName];
+      }
+
+      const code = String(mappedRow['code'] || '').trim();
+      const name = String(mappedRow['name'] || '').trim();
+      const startDateRaw = mappedRow['startDate'];
+      const endDateRaw = mappedRow['endDate'];
+
+      if (!code || !name) {
+        errors.push(`Linha ${rowIdx + 2}: código ou nome vazio`);
+        continue;
+      }
+
+      let startDate: Date;
+      let endDate: Date;
+
+      try {
+        if (startDateRaw instanceof Date) {
+          startDate = startDateRaw;
+        } else if (typeof startDateRaw === 'string' || typeof startDateRaw === 'number') {
+          startDate = new Date(startDateRaw);
+        } else {
+          throw new Error('Data inválida');
+        }
+
+        if (isNaN(startDate.getTime())) {
+          throw new Error('Data inválida');
+        }
+
+        if (endDateRaw instanceof Date) {
+          endDate = endDateRaw;
+        } else if (typeof endDateRaw === 'string' || typeof endDateRaw === 'number') {
+          endDate = new Date(endDateRaw);
+        } else {
+          throw new Error('Data inválida');
+        }
+
+        if (isNaN(endDate.getTime())) {
+          throw new Error('Data inválida');
+        }
+      } catch (err) {
+        errors.push(`Linha ${rowIdx + 2}: data inválida`);
+        continue;
+      }
+
+      let durationDays = 0;
+      if (mappedRow['durationDays']) {
+        const dur = Number(mappedRow['durationDays']);
+        if (!isNaN(dur)) {
+          durationDays = Math.max(0, Math.floor(dur));
+        }
+      }
+
+      if (durationDays === 0) {
+        const diffMs = endDate.getTime() - startDate.getTime();
+        durationDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+      }
+
+      const level = mappedRow['level']
+        ? Number(mappedRow['level'])
+        : this.deriveLevelFromCode(code);
+      const plannedProgress = Math.max(
+        0,
+        Math.min(100, Number(mappedRow['plannedProgress'] || 0)),
+      );
+      const actualProgress = Math.max(
+        0,
+        Math.min(100, Number(mappedRow['actualProgress'] || 0)),
+      );
+      const weight = Math.max(0.01, Number(mappedRow['weight'] || 1));
+      const isCriticalPath = Boolean(mappedRow['isCriticalPath']);
+
+      const parentCode = this.deriveParentCode(code);
+
+      importedItems.push({
+        code,
+        name,
+        level: Math.max(0, level),
+        parentCode,
+        startDate,
+        endDate,
+        durationDays,
+        plannedProgress,
+        actualProgress,
+        isCriticalPath,
+        weight,
+      });
+    }
+
+    // Delete existing schedule items in transaction
+    await this.prisma.scheduleItem.deleteMany({ where: { projectId } });
+
+    // Sort by level to ensure parents are created before children
+    importedItems.sort((a, b) => a.level - b.level);
+
+    // Create items in order, maintaining code → id mapping
+    const codeToIdMap = new Map<string, string>();
+    let createdCount = 0;
+
+    for (const item of importedItems) {
+      try {
+        let parentId: string | null = null;
+
+        if (item.parentCode) {
+          parentId = codeToIdMap.get(item.parentCode) || null;
+        }
+
+        const created = await this.prisma.scheduleItem.create({
+          data: {
+            projectId,
+            code: item.code,
+            name: item.name,
+            level: item.level,
+            parentId,
+            startDate: item.startDate,
+            endDate: item.endDate,
+            durationDays: item.durationDays,
+            plannedProgress: new Prisma.Decimal(item.plannedProgress),
+            actualProgress: new Prisma.Decimal(item.actualProgress),
+            isCriticalPath: item.isCriticalPath,
+            weight: new Prisma.Decimal(item.weight),
+            order: createdCount,
+          },
+        });
+
+        codeToIdMap.set(item.code, created.id);
+        createdCount++;
+      } catch (err) {
+        errors.push(`Linha com código "${item.code}": falha ao criar (${String(err).slice(0, 50)})`);
+      }
+    }
+
+    return {
+      imported: createdCount,
+      skipped: importedItems.length - createdCount,
+      errors,
+    };
   }
 }

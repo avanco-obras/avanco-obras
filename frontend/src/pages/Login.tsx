@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Building2,
   Eye,
   EyeOff,
   Loader2,
@@ -9,6 +8,9 @@ import {
   Mail,
   Lock,
   AlertCircle,
+  User,
+  Phone,
+  BadgeCheck,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useStore } from '@/store'
@@ -19,18 +21,39 @@ import { Label } from '@/components/ui/label'
 const DEMO_EMAIL = 'carlos@horizonte.com.br'
 const DEMO_PASSWORD = 'admin123'
 
+type Mode = 'login' | 'register'
+
 export default function Login() {
   const navigate = useNavigate()
-  const { login } = useAuth()
+  const { login, register } = useAuth()
   const addToast = useStore((s) => s.addToast)
 
+  const [mode, setMode] = useState<Mode>('login')
+
+  // Login fields
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+
+  // Register fields
+  const [regFullName, setRegFullName] = useState('')
+  const [regUsername, setRegUsername] = useState('')
+  const [regEmail, setRegEmail] = useState('')
+  const [regPhone, setRegPhone] = useState('')
+  const [regCrea, setRegCrea] = useState('')
+  const [regPassword, setRegPassword] = useState('')
+  const [regConfirm, setRegConfirm] = useState('')
+
   const [showPassword, setShowPassword] = useState(false)
+  const [showRegPassword, setShowRegPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
-  async function handleSubmit(e: React.FormEvent) {
+  function switchMode(m: Mode) {
+    setMode(m)
+    setError('')
+  }
+
+  async function handleLoginSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password.trim()) {
       setError('Preencha o e-mail e a senha.')
@@ -40,19 +63,52 @@ export default function Login() {
     setIsLoading(true)
     try {
       await login(email.trim(), password)
-      addToast({
-        type: 'success',
-        title: 'Login realizado com sucesso',
-        description: 'Bem-vindo ao AvançoObras Pro!',
-      })
+      addToast({ type: 'success', title: 'Login realizado com sucesso', description: 'Bem-vindo ao AvançoObras Pro!' })
       navigate('/', { replace: true })
     } catch (err: unknown) {
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ??
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         'E-mail ou senha inválidos. Verifique as credenciais.'
       setError(msg)
       addToast({ type: 'error', title: 'Falha no login', description: msg })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function handleRegisterSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!regFullName.trim() || !regUsername.trim() || !regEmail.trim() || !regPassword.trim()) {
+      setError('Preencha todos os campos obrigatórios.')
+      return
+    }
+    if (regPassword.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres.')
+      return
+    }
+    if (regPassword !== regConfirm) {
+      setError('As senhas não coincidem.')
+      return
+    }
+    setError('')
+    setIsLoading(true)
+    try {
+      await register({
+        fullName: regFullName.trim(),
+        username: regUsername.trim(),
+        email: regEmail.trim(),
+        password: regPassword,
+        phone: regPhone.trim() || undefined,
+        crea: regCrea.trim() || undefined,
+      })
+      addToast({ type: 'success', title: 'Conta criada com sucesso!', description: 'Bem-vindo ao AvançoObras Pro!' })
+      navigate('/', { replace: true })
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Erro ao criar conta. Verifique os dados e tente novamente.'
+      setError(msg)
+      addToast({ type: 'error', title: 'Falha no cadastro', description: msg })
     } finally {
       setIsLoading(false)
     }
@@ -208,8 +264,8 @@ export default function Login() {
         </div>
       </div>
 
-      {/* ── Right Login Panel ───────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center px-4 py-12 bg-background">
+      {/* ── Right Panel ─────────────────────────────────────────────── */}
+      <div className="flex-1 flex items-center justify-center px-4 py-12 bg-background overflow-y-auto">
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
           <div className="flex lg:hidden items-center gap-2 justify-center mb-8">
@@ -217,18 +273,35 @@ export default function Login() {
               <HardHat className="h-7 w-7 text-primary-foreground" />
             </div>
             <div>
-              <span className="text-2xl font-black text-foreground leading-none block">
-                AvançoObras
-              </span>
+              <span className="text-2xl font-black text-foreground leading-none block">AvançoObras</span>
               <span className="text-primary font-bold text-base">Pro</span>
             </div>
           </div>
 
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-foreground">Entrar</h2>
-            <p className="text-muted-foreground text-sm mt-1">
-              Acesse sua conta para continuar
-            </p>
+          {/* Mode tabs */}
+          <div className="flex rounded-lg border border-border bg-muted/40 p-1 mb-8">
+            <button
+              type="button"
+              onClick={() => switchMode('login')}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === 'login'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === 'register'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Criar conta
+            </button>
           </div>
 
           {/* Error Alert */}
@@ -239,106 +312,217 @@ export default function Login() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email">E-mail</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="seu@email.com.br"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value)
-                    setError('')
-                  }}
-                  className="pl-9"
-                  autoComplete="email"
-                  disabled={isLoading}
-                  required
-                />
+          {/* ── LOGIN FORM ── */}
+          {mode === 'login' && (
+            <>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-foreground">Entrar</h2>
+                <p className="text-muted-foreground text-sm mt-1">Acesse sua conta para continuar</p>
               </div>
-            </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Senha</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value)
-                    setError('')
-                  }}
-                  className="pl-9 pr-10"
-                  autoComplete="current-password"
-                  disabled={isLoading}
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
+              <form onSubmit={handleLoginSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">E-mail</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="seu@email.com.br"
+                      value={email}
+                      onChange={(e) => { setEmail(e.target.value); setError('') }}
+                      className="pl-9"
+                      autoComplete="email"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="password">Senha</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => { setPassword(e.target.value); setError('') }}
+                      className="pl-9 pr-10"
+                      autoComplete="current-password"
+                      disabled={isLoading}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      tabIndex={-1}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Entrando...</> : 'Entrar'}
+                </Button>
+              </form>
+
+              <div className="mt-4 rounded-md bg-muted/60 border border-border px-3 py-2.5">
+                <p className="text-xs text-muted-foreground mb-1.5 font-medium">Credenciais de demonstração:</p>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-foreground font-mono">
+                    <span className="block">{DEMO_EMAIL}</span>
+                    <span className="block">{DEMO_PASSWORD}</span>
+                  </div>
+                  <button type="button" onClick={fillDemo} className="shrink-0 text-xs text-primary hover:underline font-medium">
+                    Preencher
+                  </button>
+                </div>
               </div>
-            </div>
+            </>
+          )}
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Entrando...
-                </>
-              ) : (
-                'Entrar'
-              )}
-            </Button>
-          </form>
-
-          {/* Demo credentials hint */}
-          <div className="mt-4 rounded-md bg-muted/60 border border-border px-3 py-2.5">
-            <p className="text-xs text-muted-foreground mb-1.5 font-medium">
-              Credenciais de demonstração:
-            </p>
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-foreground font-mono">
-                <span className="block">{DEMO_EMAIL}</span>
-                <span className="block">{DEMO_PASSWORD}</span>
+          {/* ── REGISTER FORM ── */}
+          {mode === 'register' && (
+            <>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-foreground">Criar conta</h2>
+                <p className="text-muted-foreground text-sm mt-1">Preencha os dados para se cadastrar</p>
               </div>
-              <button
-                type="button"
-                onClick={fillDemo}
-                className="shrink-0 text-xs text-primary hover:underline font-medium"
-              >
-                Preencher
-              </button>
-            </div>
-          </div>
 
-          <div className="mt-6 pt-6 border-t border-border text-center">
-            <p className="text-xs text-muted-foreground">
-              Não tem acesso?{' '}
-              <span className="text-foreground font-medium">
-                Contate o administrador.
-              </span>
-            </p>
-          </div>
+              <form onSubmit={handleRegisterSubmit} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-fullname">Nome completo <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="reg-fullname"
+                      placeholder="Carlos Drummond"
+                      value={regFullName}
+                      onChange={(e) => { setRegFullName(e.target.value); setError('') }}
+                      className="pl-9"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-username">Usuário <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <BadgeCheck className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="reg-username"
+                      placeholder="carlos.eng"
+                      value={regUsername}
+                      onChange={(e) => { setRegUsername(e.target.value.toLowerCase().replace(/\s/g, '')); setError('') }}
+                      className="pl-9"
+                      autoComplete="username"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-email">E-mail <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="reg-email"
+                      type="email"
+                      placeholder="seu@email.com.br"
+                      value={regEmail}
+                      onChange={(e) => { setRegEmail(e.target.value); setError('') }}
+                      className="pl-9"
+                      autoComplete="email"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-phone">Telefone</Label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                      <Input
+                        id="reg-phone"
+                        placeholder="(11) 99999-0000"
+                        value={regPhone}
+                        onChange={(e) => setRegPhone(e.target.value)}
+                        className="pl-9"
+                        disabled={isLoading}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-crea">CREA/CAU</Label>
+                    <Input
+                      id="reg-crea"
+                      placeholder="SP-123456"
+                      value={regCrea}
+                      onChange={(e) => setRegCrea(e.target.value)}
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-password">Senha <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="reg-password"
+                      type={showRegPassword ? 'text' : 'password'}
+                      placeholder="Mínimo 6 caracteres"
+                      value={regPassword}
+                      onChange={(e) => { setRegPassword(e.target.value); setError('') }}
+                      className="pl-9 pr-10"
+                      autoComplete="new-password"
+                      disabled={isLoading}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-confirm">Confirmar senha <span className="text-destructive">*</span></Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      id="reg-confirm"
+                      type="password"
+                      placeholder="Repita a senha"
+                      value={regConfirm}
+                      onChange={(e) => { setRegConfirm(e.target.value); setError('') }}
+                      className="pl-9"
+                      autoComplete="new-password"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full mt-2" disabled={isLoading}>
+                  {isLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Criando conta...</> : 'Criar conta'}
+                </Button>
+              </form>
+            </>
+          )}
 
           <p className="mt-8 text-center text-xs text-muted-foreground">
             &copy; {new Date().getFullYear()} AvançoObras Pro. Todos os direitos reservados.

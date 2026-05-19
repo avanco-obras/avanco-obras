@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AvancoObras · Redesign v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   DESIGN TOKENS
+═══════════════════════════════════════════════════════════ */
+:root {
+  --font: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', 'Consolas', monospace;
+
+  /* Surfaces */
+  --page:   #F2F3F5;
+  --s0:     #FFFFFF;
+  --s1:     #F7F8FA;
+  --s2:     #ECEEF1;
+  --s3:     #E2E4E8;
+
+  /* Borders */
+  --bd:     #E0E2E6;
+  --bd2:    #C8CBD2;
+
+  /* Text */
+  --t1:     #131720;
+  --t2:     #5A6275;
+  --t3:     #9AA0AD;
+
+  /* Accent */
+  --blue:   #1B6FE8;
+  --blue-d: #155DC0;
+  --blue-bg:#EBF2FD;
+  --blue-t: #0A3880;
+
+  /* Status */
+  --green:  #16803C;
+  --grn-bg: #E8F5EE;
+  --grn-t:  #0C4E25;
+  --amber:  #C47D0F;
+  --amb-bg: #FEF3DC;
+  --amb-t:  #7A4D07;
+  --red:    #C9312F;
+  --red-bg: #FDECEC;
+  --red-t:  #7A1A19;
+
+  /* Layout */
+  --sidebar-w: 216px;
+  --sidebar-collapsed: 48px;
+  --header-h: 44px;
+  --r:      6px;
+  --r-lg:   8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,.10), 0 2px 6px rgba(0,0,0,.06);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESET
+═══════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; }
+body { font-family: var(--font); background: var(--page); color: var(--t1); line-height: 1.4; -webkit-font-smoothing: antialiased; }
+button { font-family: var(--font); cursor: pointer; }
+a { text-decoration: none; color: inherit; }
+svg { display: block; }
+
+/* ═══════════════════════════════════════════════════════════
+   APP SHELL
+═══════════════════════════════════════════════════════════ */
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--s0);
+  border-right: 1px solid var(--bd);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.18s ease;
+  z-index: 30;
+}
+.sidebar.collapsed { width: var(--sidebar-collapsed); }
+
+.sidebar-logo {
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--bd);
+  flex-shrink: 0;
+}
+.logo-icon {
+  width: 22px; height: 22px;
+  background: var(--blue);
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.logo-icon svg { width: 13px; height: 13px; color: #fff; }
+.logo-text { font-size: 13px; font-weight: 600; letter-spacing: -0.2px; white-space: nowrap; overflow: hidden; }
+.logo-text span { color: var(--blue); }
+.logo-badge { font-size: 9px; font-weight: 500; color: var(--t3); background: var(--s2); border-radius: 3px; padding: 1px 4px; white-space: nowrap; }
+
+/* project selector */
+.proj-selector {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bd);
+  flex-shrink: 0;
+}
+.proj-btn {
+  width: 100%; display: flex; align-items: center; gap: 7px;
+  background: var(--s1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 6px 9px;
+  font-size: 11px; color: var(--t1); text-align: left;
+  transition: background 0.12s;
+}
+.proj-btn:hover { background: var(--s2); }
+.proj-icon { width: 18px; height: 18px; background: var(--blue-bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.proj-icon svg { width: 10px; height: 10px; color: var(--blue); }
+.proj-info { flex: 1; min-width: 0; }
+.proj-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.proj-sub { font-size: 10px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.proj-chevron { width: 12px; height: 12px; color: var(--t3); flex-shrink: 0; }
+
+/* nav */
+.nav-section { flex: 1; overflow-y: auto; padding: 6px 0; }
+.nav-label { font-size: 9px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.7px; padding: 8px 14px 4px; white-space: nowrap; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 14px; font-size: 12px; color: var(--t2);
+  border-radius: 0; cursor: pointer; white-space: nowrap;
+  transition: all 0.1s; position: relative; border: none; background: none; width: 100%;
+}
+.nav-item:hover { background: var(--s1); color: var(--t1); }
+.nav-item.active { background: var(--blue-bg); color: var(--blue-t); font-weight: 500; }
+.nav-item.active::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px; background: var(--blue); border-radius: 0 2px 2px 0; }
+.nav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
+.nav-item.active svg { opacity: 1; color: var(--blue); }
+.nav-badge { margin-left: auto; font-size: 10px; font-weight: 500; background: var(--red-bg); color: var(--red-t); padding: 1px 5px; border-radius: 10px; }
+.nav-badge.amber { background: var(--amb-bg); color: var(--amb-t); }
+
+/* sidebar footer */
+.sidebar-footer {
+  border-top: 1px solid var(--bd);
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+.user-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  background: none; border: none; padding: 4px;
+  border-radius: var(--r); cursor: pointer;
+  transition: background 0.1s;
+}
+.user-btn:hover { background: var(--s1); }
+.user-avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--blue); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600; flex-shrink: 0;
+}
+.user-info { flex: 1; text-align: left; }
+.user-name { font-size: 11px; font-weight: 500; color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-role { font-size: 10px; color: var(--t3); }
+
+/* ── Main area ── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Top bar ── */
+.topbar {
+  height: var(--header-h);
+  background: var(--s0);
+  border-bottom: 1px solid var(--bd);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.topbar-title { font-size: 14px; font-weight: 600; color: var(--t1); }
+.topbar-sep { width: 1px; height: 16px; background: var(--bd); }
+.topbar-crumb { font-size: 12px; color: var(--t2); }
+.topbar-spacer { flex: 1; }
+.topbar-pill {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--t2);
+  background: var(--s1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 4px 9px;
+}
+.topbar-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.topbar-pill .dot.amber { background: var(--amber); }
+.topbar-pill .dot.red { background: var(--red); }
+.topbar-actions { display: flex; gap: 6px; }
+.icon-btn {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid var(--bd); border-radius: var(--r);
+  color: var(--t2); transition: all 0.1s;
+}
+.icon-btn:hover { background: var(--s1); color: var(--t1); }
+.icon-btn svg { width: 14px; height: 14px; }
+
+/* ── Content area ── */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* hide scrollbar but keep scrolling */
+.content::-webkit-scrollbar { width: 4px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
+
+/* ── VIEW SWITCHER ── */
+.views { display: flex; gap: 0; }
+.view-tab {
+  display: none; width: 100%;
+  flex-direction: column; gap: 12px;
+}
+.view-tab.active { display: flex; }
+
+/* ═══════════════════════════════════════════════════════════
+   COMPONENT LIBRARY
+═══════════════════════════════════════════════════════════ */
+
+/* ── Card ── */
+.card {
+  background: var(--s0);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card-hdr {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bd);
+}
+.card-title { font-size: 12px; font-weight: 600; color: var(--t1); }
+.card-sub { font-size: 10px; color: var(--t3); margin-top: 1px; }
+.card-body { padding: 14px; }
+.card-body.no-pad { padding: 0; }
+
+/* ── KPI strip ── */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  background: var(--bd);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.kpi {
+  background: var(--s0);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kpi-label { font-size: 10px; color: var(--t3); font-weight: 500; text-transform: uppercase; letter-spacing: 0.4px; }
+.kpi-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; line-height: 1; }
+.kpi-delta {
+  font-size: 10px; display: flex; align-items: center; gap: 3px;
+  color: var(--t3);
+}
+.kpi-delta.up { color: var(--green); }
+.kpi-delta.down { color: var(--red); }
+.kpi-delta.warn { color: var(--amber); }
+.kpi-delta svg { width: 10px; height: 10px; }
+.kpi-bar { height: 3px; background: var(--s2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.kpi-bar-fill { height: 100%; border-radius: 2px; }
+
+/* ── Badge ── */
+.badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 20px; font-size: 10px; font-weight: 500; white-space: nowrap; }
+.badge-green  { background: var(--grn-bg); color: var(--grn-t); }
+.badge-amber  { background: var(--amb-bg); color: var(--amb-t); }
+.badge-red    { background: var(--red-bg); color: var(--red-t); }
+.badge-blue   { background: var(--blue-bg); color: var(--blue-t); }
+.badge-gray   { background: var(--s2); color: var(--t2); }
+
+/* ── Table ── */
+.tbl-wrap { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
+.tbl th {
+  font-size: 10px; font-weight: 600; color: var(--t3);
+  text-align: left; padding: 7px 12px;
+  background: var(--s1); border-bottom: 1px solid var(--bd);
+  white-space: nowrap; position: sticky; top: 0; z-index: 2;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.tbl th.r { text-align: right; }
+.tbl th.c { text-align: center; }
+.tbl td {
+  padding: 7px 12px; border-bottom: 1px solid var(--bd);
+  vertical-align: middle; color: var(--t1);
+}
+.tbl td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl td.c { text-align: center; }
+.tbl td.mono { font-family: var(--mono); font-size: 10.5px; color: var(--t2); }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tr:hover td { background: var(--s1); }
+.tbl td.dim { color: var(--t3); }
+
+/* mini progress */
+.mbar { display: flex; align-items: center; gap: 6px; }
+.mbar-track { flex: 1; height: 4px; background: var(--s2); border-radius: 2px; overflow: hidden; }
+.mbar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.mbar-val { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--t2); min-width: 28px; text-align: right; }
+
+/* ── Stage bars (etapas) ── */
+.etapa-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.etapa-name { font-size: 11px; color: var(--t2); width: 88px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etapa-track { flex: 1; position: relative; height: 6px; background: var(--s2); border-radius: 3px; overflow: hidden; }
+.etapa-planned { position: absolute; top: 0; left: 0; height: 100%; background: var(--s3); border-radius: 3px; }
+.etapa-actual  { position: absolute; top: 0; left: 0; height: 100%; border-radius: 3px; }
+.etapa-vals { display: flex; gap: 4px; flex-shrink: 0; }
+.etapa-v { font-size: 10px; font-variant-numeric: tabular-nums; min-width: 26px; text-align: right; }
+.etapa-v.plan { color: var(--t3); }
+.etapa-v.real { color: var(--t1); font-weight: 500; }
+
+/* ── Restriction row ── */
+.res-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--bd);
+  transition: background 0.1s;
+}
+.res-row:last-child { border-bottom: none; }
+.res-row:hover { background: var(--s1); }
+.res-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.res-desc { flex: 1; font-size: 11px; color: var(--t1); line-height: 1.35; }
+.res-who { font-size: 10px; color: var(--t3); white-space: nowrap; }
+.res-date { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--t2); white-space: nowrap; font-family: var(--mono); }
+
+/* ── Grid helpers ── */
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.g12 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+.g21 { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.g211 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+
+/* ── Btn ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; font-size: 11px; font-weight: 500;
+  border-radius: var(--r); border: 1px solid var(--bd);
+  background: var(--s0); color: var(--t1);
+  cursor: pointer; transition: all 0.1s;
+}
+.btn:hover { background: var(--s1); }
+.btn svg { width: 12px; height: 12px; }
+.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-primary:hover { background: var(--blue-d); }
+.btn-sm { padding: 3px 8px; font-size: 10px; }
+
+/* ── Tab bar ── */
+.tab-bar { display: flex; gap: 2px; background: var(--s1); border: 1px solid var(--bd); border-radius: var(--r); padding: 3px; width: fit-content; }
+.tab-item { padding: 4px 11px; font-size: 11px; font-weight: 400; color: var(--t2); border-radius: 4px; cursor: pointer; border: none; background: none; transition: all 0.1s; white-space: nowrap; }
+.tab-item:hover { color: var(--t1); background: var(--s0); }
+.tab-item.active { background: var(--s0); color: var(--t1); font-weight: 500; box-shadow: var(--shadow); }
+
+/* ── Section title ── */
+.sec-title { font-size: 10px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+
+/* ── Alert strip ── */
+.alert-strip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: var(--r);
+  font-size: 11px;
+}
+.alert-strip.warn { background: var(--amb-bg); border: 1px solid #F0C96A; color: var(--amb-t); }
+.alert-strip.danger { background: var(--red-bg); border: 1px solid #F2A8A7; color: var(--red-t); }
+.alert-strip.info { background: var(--blue-bg); border: 1px solid #A3C5F5; color: var(--blue-t); }
+.alert-strip svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   GANTT CHART
+═══════════════════════════════════════════════════════════ */
+.gantt-wrap { overflow-x: auto; position: relative; }
+.gantt { display: grid; }
+.gantt-row {
+  display: flex; align-items: center;
+  border-bottom: 1px solid var(--bd);
+  min-height: 28px;
+}
+.gantt-row:hover { background: var(--s1); }
+.gantt-row.group { background: var(--s1); }
+.gantt-label {
+  width: 220px; min-width: 220px; flex-shrink: 0;
+  padding: 4px 12px; font-size: 11px; color: var(--t1);
+  display: flex; align-items: center; gap: 6px;
+  border-right: 1px solid var(--bd);
+  overflow: hidden;
+}
+.gantt-label.indent { padding-left: 24px; }
+.gantt-label.indent2 { padding-left: 36px; }
+.gantt-code { font-family: var(--mono); font-size: 10px; color: var(--t3); min-width: 36px; }
+.gantt-timeline { flex: 1; position: relative; overflow: hidden; }
+.gantt-months {
+  display: flex; height: 24px; background: var(--s1);
+  border-bottom: 1px solid var(--bd);
+}
+.gantt-month {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.4px;
+  border-right: 1px solid var(--bd);
+}
+.gantt-month.current { background: var(--blue-bg); color: var(--blue-t); }
+.gantt-bar-row { flex: 1; position: relative; height: 28px; }
+.gantt-planned {
+  position: absolute; top: 9px; height: 10px;
+  background: var(--s3); border-radius: 2px; border: 1px solid var(--bd2);
+}
+.gantt-actual {
+  position: absolute; top: 9px; height: 10px;
+  border-radius: 2px;
+}
+.gantt-today {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: var(--blue); opacity: 0.6;
+  pointer-events: none; z-index: 5;
+}
+.gantt-today::before {
+  content: 'hoje';
+  position: absolute; top: 2px; left: 3px;
+  font-size: 8px; color: var(--blue); white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WEEKLY PLANNING
+═══════════════════════════════════════════════════════════ */
+.ppc-hero {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 18px;
+}
+.ppc-ring-wrap { position: relative; width: 80px; height: 80px; flex-shrink: 0; }
+.ppc-ring-wrap canvas { width: 80px !important; height: 80px !important; }
+.ppc-ring-val {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 600;
+}
+.ppc-ring-sub { font-size: 9px; color: var(--t3); }
+.ppc-stats { display: flex; flex-direction: column; gap: 5px; }
+.ppc-stat { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.ppc-stat-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.ppc-stat-lbl { color: var(--t2); width: 90px; }
+.ppc-stat-val { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.task-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto auto;
+  gap: 0; align-items: center;
+  border-bottom: 1px solid var(--bd);
+  min-height: 34px;
+  transition: background 0.1s;
+}
+.task-row:hover { background: var(--s1); }
+.task-row:last-child { border-bottom: none; }
+.task-idx { padding: 0 10px; font-size: 10px; color: var(--t3); font-family: var(--mono); text-align: center; }
+.task-name { padding: 8px 10px; font-size: 11px; color: var(--t1); }
+.task-name small { display: block; font-size: 10px; color: var(--t3); margin-top: 1px; }
+.task-resp { padding: 0 10px; font-size: 10px; color: var(--t3); white-space: nowrap; }
+.task-date { padding: 0 10px; font-size: 10px; color: var(--t2); font-family: var(--mono); white-space: nowrap; }
+.task-status { padding: 0 12px 0 8px; }
+
+.status-seg {
+  display: inline-flex; border: 1px solid var(--bd); border-radius: 4px; overflow: hidden;
+}
+.status-seg-opt {
+  padding: 3px 8px; font-size: 10px; cursor: pointer; border: none;
+  background: none; color: var(--t3); transition: all 0.1s;
+}
+.status-seg-opt:not(:last-child) { border-right: 1px solid var(--bd); }
+.status-seg-opt:hover { background: var(--s1); }
+.status-seg-opt.active-ok  { background: var(--grn-bg); color: var(--grn-t); }
+.status-seg-opt.active-par { background: var(--amb-bg); color: var(--amb-t); }
+.status-seg-opt.active-no  { background: var(--red-bg); color: var(--red-t); }
+
+/* ═══════════════════════════════════════════════════════════
+   COLLAPSE TOGGLE ANIMATION
+═══════════════════════════════════════════════════════════ */
+@keyframes fadeIn { from { opacity:0; transform: translateY(4px); } to { opacity:1; transform: translateY(0); } }
+.view-tab.active { animation: fadeIn 0.18s ease; }
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLLBAR HIDDEN UTILITY
+═══════════════════════════════════════════════════════════ */
+.noscroll::-webkit-scrollbar { display: none; }
+
+/* ═══════════════════════════════════════════════════════════
+   MINI CHART PLACEHOLDER
+═══════════════════════════════════════════════════════════ */
+.chart-wrap { position: relative; }
+
+/* ═══════════════════════════════════════════════════════════
+   MEASUREMENT VIEW
+═══════════════════════════════════════════════════════════ */
+.unit-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.unit-cell {
+  aspect-ratio: 1.2; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 8.5px; font-family: var(--mono); cursor: pointer;
+  border: 1px solid transparent; transition: all 0.1s;
+}
+.unit-cell.done   { background: var(--grn-bg); color: var(--grn-t); border-color: #B9E0C9; }
+.unit-cell.partial{ background: var(--amb-bg); color: var(--amb-t); border-color: #F0C96A; }
+.unit-cell.empty  { background: var(--s2); color: var(--t3); border-color: var(--bd); }
+.unit-cell.selected { box-shadow: 0 0 0 2px var(--blue); z-index: 1; }
+.unit-cell:hover  { border-color: var(--blue); }
+
+.floor-tabs { display: flex; gap: 2px; overflow-x: auto; padding-bottom: 4px; }
+.floor-tab {
+  flex-shrink: 0; padding: 3px 10px; font-size: 10px;
+  border-radius: var(--r); border: 1px solid var(--bd);
+  background: var(--s0); color: var(--t2); cursor: pointer;
+  transition: all 0.1s;
+}
+.floor-tab:hover { background: var(--s1); }
+.floor-tab.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* ═══════════════════════════════════════════════════════════
+   TOOLTIP
+═══════════════════════════════════════════════════════════ */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%);
+  background: var(--t1); color: #fff;
+  font-size: 10px; padding: 3px 7px; border-radius: 4px;
+  white-space: nowrap; pointer-events: none; z-index: 100;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════════ SIDEBAR ═══════════════════ -->
+  <aside class="sidebar" id="sidebar">
+
+    <!-- Logo -->
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M3 21h18M3 10L12 3l9 7M5 10v11M19 10v11M9 21V15h6v6"/>
+        </svg>
+      </div>
+      <span class="logo-text">Avanço<span>Obras</span></span>
+      <span class="logo-badge">PRO</span>
+    </div>
+
+    <!-- Project selector -->
+    <div class="proj-selector">
+      <button class="proj-btn" onclick="toggleProjDropdown()">
+        <div class="proj-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+        </div>
+        <div class="proj-info">
+          <div class="proj-name">Residencial Panorama</div>
+          <div class="proj-sub">Construtora Alpha · Torre A</div>
+        </div>
+        <svg class="proj-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="nav-section">
+      <div class="nav-label">Principal</div>
+
+      <button class="nav-item" onclick="switchView('dashboard')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+      </button>
+
+      <button class="nav-item" onclick="switchView('cronograma')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Cronograma
+        <span class="nav-badge amber">SPI 0.91</span>
+      </button>
+
+      <button class="nav-item" onclick="switchView('medicao')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 6H3M21 12H8M21 18H8M5 12v.01M5 18v.01"/></svg>
+        Medição
+      </button>
+
+      <button class="nav-item active" onclick="switchView('programacao')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/><path d="M9 12l2 2 4-4"/></svg>
+        Prog. Semanal
+        <span class="nav-badge">3</span>
+      </button>
+
+      <div class="nav-label" style="margin-top:6px">Configuração</div>
+
+      <button class="nav-item" onclick="switchView('cadastro')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Cadastro
+      </button>
+
+      <button class="nav-item" onclick="switchView('configuracoes')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        Configurações
+      </button>
+    </nav>
+
+    <!-- User footer -->
+    <div class="sidebar-footer">
+      <button class="user-btn">
+        <div class="user-avatar">LT</div>
+        <div class="user-info">
+          <div class="user-name">Lucas Tamai</div>
+          <div class="user-role">Engenheiro</div>
+        </div>
+        <svg style="width:12px;height:12px;color:var(--t3)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════ MAIN ═══════════════════ -->
+  <div class="main">
+
+    <!-- Top bar -->
+    <header class="topbar" id="topbar">
+      <button class="icon-btn" onclick="toggleSidebar()" data-tip="Recolher menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <span class="topbar-title" id="topbar-title">Programação Semanal</span>
+      <span class="topbar-sep"></span>
+      <span class="topbar-crumb" id="topbar-crumb">Semana 18 · 29 abr – 05 mai 2025</span>
+
+      <div class="topbar-spacer"></div>
+
+      <div class="topbar-pill">
+        <span class="dot amber"></span>
+        <span>SPI 0.91 · 14 dias de atraso</span>
+      </div>
+
+      <div class="topbar-pill">
+        <span style="font-size:10px;color:var(--t3)">Atualizado</span>
+        <span style="font-size:11px">hoje 09:42</span>
+      </div>
+
+      <div class="topbar-actions">
+        <button class="icon-btn" data-tip="Notificações">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+        </button>
+        <button class="icon-btn" data-tip="Exportar PDF">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Scrollable content -->
+    <div class="content" id="main-content">
+
+      <!-- ════════════════ DASHBOARD ════════════════ -->
+      <div class="view-tab" id="view-dashboard">
+
+        <!-- Alert -->
+        <div class="alert-strip warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01"/></svg>
+          <strong>Atenção:</strong>&nbsp;7 atividades em atraso crítico. Estrutura — Laje 8º andar está 18 dias acima do planejado.
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="kpi-strip">
+          <div class="kpi">
+            <div class="kpi-label">Avanço Físico</div>
+            <div class="kpi-value" style="color:var(--blue)">47,3%</div>
+            <div class="kpi-delta down">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7 7 7-7"/></svg>
+              4,8% abaixo do planejado
+            </div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:47.3%;background:var(--blue)"></div></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Planejado</div>
+            <div class="kpi-value" style="color:var(--t2)">52,1%</div>
+            <div class="kpi-delta" style="color:var(--t3)">Linha de base acumulada</div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:52.1%;background:var(--s3)"></div></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">SPI</div>
+            <div class="kpi-value" style="color:var(--amber)">0,91</div>
+            <div class="kpi-delta warn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+              Abaixo de 1,0
+            </div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:91%;background:var(--amber)"></div></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">PPC Semana</div>
+            <div class="kpi-value" style="color:var(--green)">76%</div>
+            <div class="kpi-delta up">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+              Meta: 80%
+            </div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:76%;background:var(--green)"></div></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Atraso</div>
+            <div class="kpi-value" style="color:var(--red)">14 dias</div>
+            <div class="kpi-delta down">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7 7 7-7"/></svg>
+              7 atividades críticas
+            </div>
+            <div class="kpi-bar"><div class="kpi-bar-fill" style="width:35%;background:var(--red)"></div></div>
+          </div>
+        </div>
+
+        <!-- Curva S + Etapas -->
+        <div class="g21">
+          <!-- Curva S -->
+          <div class="card">
+            <div class="card-hdr">
+              <div>
+                <div class="card-title">Curva S — Avanço Físico Acumulado</div>
+                <div class="card-sub">Planejado vs. Realizado · Residencial Panorama</div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--t3)"><span style="display:inline-block;width:14px;height:2px;background:var(--s3);border-radius:1px"></span>Planejado</span>
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--blue)"><span style="display:inline-block;width:14px;height:2px;background:var(--blue);border-radius:1px"></span>Realizado</span>
+                <button class="btn btn-sm">Ver detalhes</button>
+              </div>
+            </div>
+            <div class="card-body" style="padding:12px 14px 8px">
+              <div class="chart-wrap" style="height:190px">
+                <canvas id="curvaSChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Etapas -->
+          <div class="card">
+            <div class="card-hdr">
+              <div class="card-title">Etapas da Obra</div>
+              <div style="display:flex;gap:6px;font-size:10px;color:var(--t3);align-items:center">
+                <span style="color:var(--t3)">Plan</span>
+                <span style="color:var(--t1);font-weight:500">Real</span>
+              </div>
+            </div>
+            <div class="card-body" style="padding:8px 14px">
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <!-- rows -->
+                <div class="etapa-row">
+                  <span class="etapa-name">Fundações</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:100%"></div>
+                    <div class="etapa-actual" style="width:100%;background:var(--green)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">100%</span>
+                    <span class="etapa-v real" style="color:var(--green)">100%</span>
+                  </div>
+                </div>
+                <div class="etapa-row">
+                  <span class="etapa-name">Estrutura</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:85%"></div>
+                    <div class="etapa-actual" style="width:68%;background:var(--red)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">85%</span>
+                    <span class="etapa-v real" style="color:var(--red)">68%</span>
+                  </div>
+                </div>
+                <div class="etapa-row">
+                  <span class="etapa-name">Alvenaria</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:63%"></div>
+                    <div class="etapa-actual" style="width:52%;background:var(--amber)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">63%</span>
+                    <span class="etapa-v real" style="color:var(--amber)">52%</span>
+                  </div>
+                </div>
+                <div class="etapa-row">
+                  <span class="etapa-name">Cobertura</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:40%"></div>
+                    <div class="etapa-actual" style="width:30%;background:var(--amber)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">40%</span>
+                    <span class="etapa-v real" style="color:var(--amber)">30%</span>
+                  </div>
+                </div>
+                <div class="etapa-row">
+                  <span class="etapa-name">Instalações</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:55%"></div>
+                    <div class="etapa-actual" style="width:44%;background:var(--amber)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">55%</span>
+                    <span class="etapa-v real" style="color:var(--amber)">44%</span>
+                  </div>
+                </div>
+                <div class="etapa-row">
+                  <span class="etapa-name">Acabamentos</span>
+                  <div class="etapa-track">
+                    <div class="etapa-planned" style="width:20%"></div>
+                    <div class="etapa-actual" style="width:12%;background:var(--blue)"></div>
+                  </div>
+                  <div class="etapa-vals">
+                    <span class="etapa-v plan">20%</span>
+                    <span class="etapa-v real" style="color:var(--blue)">12%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PPC History + Delays + Restrictions -->
+        <div class="g211">
+
+          <!-- PPC History -->
+          <div class="card">
+            <div class="card-hdr">
+              <div class="card-title">Histórico PPC</div>
+              <span class="badge badge-gray">Últimas 8 semanas</span>
+            </div>
+            <div class="card-body" style="padding:12px 14px 8px">
+              <div class="chart-wrap" style="height:120px">
+                <canvas id="ppcChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Delayed Activities -->
+          <div class="card">
+            <div class="card-hdr">
+              <div class="card-title">Atividades Atrasadas</div>
+              <span class="badge badge-red">7 críticas</span>
+            </div>
+            <div class="card-body no-pad">
+              <table class="tbl" style="font-size:10.5px">
+                <thead>
+                  <tr>
+                    <th>Atividade</th>
+                    <th class="r">Real</th>
+                    <th class="r">Desv.</th>
+                    <th class="r">Dias</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="mono" style="font-family:var(--mono);font-size:9.5px;color:var(--t3)">1.3.2</span><br>Estrutura · Laje 8º</td>
+                    <td class="r">72%</td>
+                    <td class="r" style="color:var(--red)">−28%</td>
+                    <td class="r"><span class="badge badge-red" style="font-size:9px">18d</span></td>
+                  </tr>
+                  <tr>
+                    <td><span style="font-family:var(--mono);font-size:9.5px;color:var(--t3)">2.1.4</span><br>Alvenaria · Bloco B</td>
+                    <td class="r">61%</td>
+                    <td class="r" style="color:var(--amber)">−24%</td>
+                    <td class="r"><span class="badge badge-amber" style="font-size:9px">12d</span></td>
+                  </tr>
+                  <tr>
+                    <td><span style="font-family:var(--mono);font-size:9.5px;color:var(--t3)">3.2.1</span><br>Elétric. · Shaft</td>
+                    <td class="r">44%</td>
+                    <td class="r" style="color:var(--amber)">−16%</td>
+                    <td class="r"><span class="badge badge-amber" style="font-size:9px">8d</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Restrictions -->
+          <div class="card">
+            <div class="card-hdr">
+              <div class="card-title">Restrições Ativas</div>
+              <span class="badge badge-amber">2 pendentes</span>
+            </div>
+            <div>
+              <div class="res-row">
+                <div class="res-dot" style="background:var(--red)"></div>
+                <div class="res-desc">Aprovação estrutural pela prefeitura</div>
+                <div class="res-who">Eng. Silva</div>
+                <div class="res-date">20/05</div>
+              </div>
+              <div class="res-row">
+                <div class="res-dot" style="background:var(--amber)"></div>
+                <div class="res-desc">Fornecimento vergalhão CA-50</div>
+                <div class="res-who">Compras</div>
+                <div class="res-date">15/05</div>
+              </div>
+              <div class="res-row">
+                <div class="res-dot" style="background:var(--green)"></div>
+                <div class="res-desc">Liberação acesso escavação</div>
+                <div class="res-who">Segurança</div>
+                <div class="res-date">10/05</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /dashboard -->
+
+      <!-- ════════════════ CRONOGRAMA ════════════════ -->
+      <div class="view-tab" id="view-cronograma">
+
+        <div class="card">
+          <div class="card-hdr">
+            <div>
+              <div class="card-title">Cronograma Físico — Residencial Panorama</div>
+              <div class="card-sub">Jan 2025 – Dez 2025 · Gantt com linha de base</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <div class="tab-bar">
+                <button class="tab-item active">Meses</button>
+                <button class="tab-item">Semanas</button>
+              </div>
+              <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> Exportar</button>
+            </div>
+          </div>
+
+          <!-- Gantt -->
+          <div class="card-body no-pad">
+            <div class="gantt-wrap">
+              <div style="display:flex;border-bottom:1px solid var(--bd);background:var(--s1)">
+                <div style="width:220px;min-width:220px;border-right:1px solid var(--bd);padding:5px 12px;font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.3px">ATIVIDADE</div>
+                <div class="gantt-months" style="flex:1">
+                  <div class="gantt-month">Jan</div>
+                  <div class="gantt-month">Fev</div>
+                  <div class="gantt-month">Mar</div>
+                  <div class="gantt-month">Abr</div>
+                  <div class="gantt-month current">Mai</div>
+                  <div class="gantt-month">Jun</div>
+                  <div class="gantt-month">Jul</div>
+                  <div class="gantt-month">Ago</div>
+                  <div class="gantt-month">Set</div>
+                  <div class="gantt-month">Out</div>
+                  <div class="gantt-month">Nov</div>
+                  <div class="gantt-month">Dez</div>
+                </div>
+              </div>
+
+              <!-- Group 1 -->
+              <div class="gantt-row group">
+                <div class="gantt-label" style="font-weight:600;font-size:11px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M6 9l6 6 6-6"/></svg>
+                  <span class="gantt-code">1</span>
+                  Fundações e Infraestrutura
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:0%;width:25%"></div>
+                  <div class="gantt-actual" style="left:0%;width:25%;background:var(--green)"></div>
+                </div>
+              </div>
+
+              <div class="gantt-row">
+                <div class="gantt-label indent">
+                  <span class="gantt-code">1.1</span>
+                  Escavação e contenção
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:0%;width:8.3%"></div>
+                  <div class="gantt-actual" style="left:0%;width:8.3%;background:var(--green)"></div>
+                </div>
+              </div>
+
+              <div class="gantt-row">
+                <div class="gantt-label indent">
+                  <span class="gantt-code">1.2</span>
+                  Fundação direta
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:8.3%;width:16.6%"></div>
+                  <div class="gantt-actual" style="left:8.3%;width:16.6%;background:var(--green)"></div>
+                </div>
+              </div>
+
+              <!-- Group 2 -->
+              <div class="gantt-row group">
+                <div class="gantt-label" style="font-weight:600;font-size:11px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M6 9l6 6 6-6"/></svg>
+                  <span class="gantt-code">2</span>
+                  Estrutura
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:16.6%;width:50%"></div>
+                  <div class="gantt-actual" style="left:16.6%;width:29%;background:var(--red)"></div>
+                </div>
+              </div>
+
+              <div class="gantt-row">
+                <div class="gantt-label indent">
+                  <span class="gantt-code">2.1</span>
+                  Pilares e vigas
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:16.6%;width:33.3%"></div>
+                  <div class="gantt-actual" style="left:16.6%;width:22%;background:var(--amber)"></div>
+                </div>
+              </div>
+
+              <div class="gantt-row">
+                <div class="gantt-label indent">
+                  <span class="gantt-code">2.2</span>
+                  Lajes — andares 1–6
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:25%;width:25%"></div>
+                  <div class="gantt-actual" style="left:25%;width:18%;background:var(--amber)"></div>
+                </div>
+              </div>
+
+              <div class="gantt-row">
+                <div class="gantt-label indent">
+                  <span class="gantt-code">2.3</span>
+                  Lajes — andares 7–12
+                  <span class="badge badge-red" style="margin-left:4px;font-size:8.5px">atraso</span>
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:33.3%;width:25%"></div>
+                  <div class="gantt-actual" style="left:33.3%;width:7%;background:var(--red)"></div>
+                </div>
+              </div>
+
+              <!-- Group 3 -->
+              <div class="gantt-row group">
+                <div class="gantt-label" style="font-weight:600;font-size:11px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M6 9l6 6 6-6"/></svg>
+                  <span class="gantt-code">3</span>
+                  Alvenaria e Vedações
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:25%;width:41.6%"></div>
+                  <div class="gantt-actual" style="left:25%;width:20%;background:var(--amber)"></div>
+                </div>
+              </div>
+
+              <!-- Group 4 -->
+              <div class="gantt-row group">
+                <div class="gantt-label" style="font-weight:600;font-size:11px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg>
+                  <span class="gantt-code">4</span>
+                  Instalações
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:33.3%;width:41.6%"></div>
+                  <div class="gantt-actual" style="left:33.3%;width:9%;background:var(--blue)"></div>
+                </div>
+              </div>
+
+              <!-- Group 5 -->
+              <div class="gantt-row group">
+                <div class="gantt-label" style="font-weight:600;font-size:11px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg>
+                  <span class="gantt-code">5</span>
+                  Acabamentos
+                </div>
+                <div class="gantt-bar-row" style="display:flex;align-items:center;flex:1;position:relative;overflow:hidden;">
+                  <div class="gantt-today" style="left:34%"></div>
+                  <div class="gantt-planned" style="left:66.6%;width:33.3%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legend -->
+          <div class="card-body" style="padding:8px 14px;border-top:1px solid var(--bd);display:flex;gap:16px;align-items:center">
+            <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3)"><span style="display:inline-block;width:16px;height:6px;background:var(--s3);border:1px solid var(--bd2);border-radius:2px"></span>Planejado</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--green)"><span style="display:inline-block;width:16px;height:6px;background:var(--green);border-radius:2px"></span>Concluído</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--amber)"><span style="display:inline-block;width:16px;height:6px;background:var(--amber);border-radius:2px"></span>Em andamento</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--red)"><span style="display:inline-block;width:16px;height:6px;background:var(--red);border-radius:2px"></span>Em atraso</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--blue)"><span style="display:inline-block;width:2px;height:14px;background:var(--blue);border-radius:1px"></span>Hoje</span>
+          </div>
+        </div>
+      </div><!-- /cronograma -->
+
+      <!-- ════════════════ MEDIÇÃO ════════════════ -->
+      <div class="view-tab" id="view-medicao">
+
+        <div style="display:flex;gap:12px;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:14px;font-weight:600">Medição Física por Unidade</div>
+            <div style="font-size:11px;color:var(--t2);margin-top:2px">Torre A · Selecione a atividade e marque as unidades concluídas</div>
+          </div>
+          <button class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+            Salvar medição
+          </button>
+        </div>
+
+        <div class="g12">
+          <!-- Selector panel -->
+          <div style="display:flex;flex-direction:column;gap:10px">
+
+            <!-- Activity select -->
+            <div class="card">
+              <div class="card-hdr"><div class="card-title">Atividade</div></div>
+              <div class="card-body" style="padding:10px 14px">
+                <select style="width:100%;padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                  <option>2.2 · Lajes — andares 1–6 (concreto)</option>
+                  <option>2.3 · Lajes — andares 7–12</option>
+                  <option>3.1 · Alvenaria interna — Bloco A</option>
+                  <option>4.1 · Instalações elétricas</option>
+                </select>
+
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
+                  <div style="font-size:10px;color:var(--t3)">Método de medição</div>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn" style="flex:1;justify-content:center;background:var(--blue-bg);border-color:var(--blue);color:var(--blue-t)">% Unidades</button>
+                    <button class="btn" style="flex:1;justify-content:center">Métrico (m²)</button>
+                    <button class="btn" style="flex:1;justify-content:center">Contagem</button>
+                  </div>
+                </div>
+
+                <div style="margin-top:10px;padding:8px;background:var(--s1);border-radius:var(--r);border:1px solid var(--bd)">
+                  <div style="display:flex;justify-content:space-between;font-size:11px">
+                    <span style="color:var(--t2)">Planejado</span>
+                    <strong>85%</strong>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px">
+                    <span style="color:var(--t2)">Realizado</span>
+                    <strong style="color:var(--amber)">68%</strong>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px">
+                    <span style="color:var(--t2)">Desvio</span>
+                    <strong style="color:var(--red)">−17%</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Input form -->
+            <div class="card">
+              <div class="card-hdr"><div class="card-title">Registrar Medição</div></div>
+              <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label style="font-size:10px;color:var(--t3)">Data da medição</label>
+                  <input type="date" value="2025-05-10" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label style="font-size:10px;color:var(--t3)">Unidades concluídas selecionadas</label>
+                  <input type="text" value="12 unidades (3° e 4° andares)" readonly style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s1);color:var(--t2);font-family:var(--font)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label style="font-size:10px;color:var(--t3)">Percentual calculado</label>
+                  <input type="text" value="68,4%" readonly style="padding:6px 9px;font-size:13px;font-weight:600;border:1px solid var(--bd);border-radius:var(--r);background:var(--s1);color:var(--t1);font-family:var(--mono)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label style="font-size:10px;color:var(--t3)">Observações</label>
+                  <textarea rows="2" placeholder="Condições de campo, impedimentos..." style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font);resize:none"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Unit grid panel -->
+          <div class="card">
+            <div class="card-hdr">
+              <div class="card-title">Grade de Unidades — Torre A</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--green)"><span style="width:9px;height:9px;background:var(--grn-bg);border:1px solid #B9E0C9;border-radius:2px;display:inline-block"></span>Concluída</span>
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--amber)"><span style="width:9px;height:9px;background:var(--amb-bg);border:1px solid #F0C96A;border-radius:2px;display:inline-block"></span>Parcial</span>
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--t3)"><span style="width:9px;height:9px;background:var(--s2);border:1px solid var(--bd);border-radius:2px;display:inline-block"></span>Pendente</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <!-- Floor tabs -->
+              <div class="floor-tabs" style="margin-bottom:10px">
+                <button class="floor-tab">1°</button>
+                <button class="floor-tab">2°</button>
+                <button class="floor-tab active">3°</button>
+                <button class="floor-tab">4°</button>
+                <button class="floor-tab">5°</button>
+                <button class="floor-tab">6°</button>
+                <button class="floor-tab">7°</button>
+                <button class="floor-tab">8°</button>
+                <button class="floor-tab">9°</button>
+                <button class="floor-tab">10°</button>
+                <button class="floor-tab">11°</button>
+                <button class="floor-tab">12°</button>
+              </div>
+
+              <!-- Unit grid -->
+              <div style="font-size:10px;color:var(--t3);margin-bottom:6px">3° Andar — 32 unidades · 24 concluídas</div>
+              <div class="unit-grid">
+                <!-- 32 units: 24 done, 4 partial, 4 empty -->
+                <div class="unit-cell done">301</div><div class="unit-cell done">302</div><div class="unit-cell done">303</div><div class="unit-cell done">304</div>
+                <div class="unit-cell done">305</div><div class="unit-cell done">306</div><div class="unit-cell done">307</div><div class="unit-cell done">308</div>
+                <div class="unit-cell done">309</div><div class="unit-cell done">310</div><div class="unit-cell done">311</div><div class="unit-cell done">312</div>
+                <div class="unit-cell done">313</div><div class="unit-cell done">314</div><div class="unit-cell done">315</div><div class="unit-cell done">316</div>
+                <div class="unit-cell done">317</div><div class="unit-cell done">318</div><div class="unit-cell done">319</div><div class="unit-cell done">320</div>
+                <div class="unit-cell done">321</div><div class="unit-cell done">322</div><div class="unit-cell done">323</div><div class="unit-cell done">324</div>
+                <div class="unit-cell partial selected">325</div><div class="unit-cell partial">326</div><div class="unit-cell partial">327</div><div class="unit-cell partial">328</div>
+                <div class="unit-cell empty">329</div><div class="unit-cell empty">330</div><div class="unit-cell empty">331</div><div class="unit-cell empty">332</div>
+              </div>
+
+              <!-- Mini summary -->
+              <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+                <div style="text-align:center;padding:8px;background:var(--grn-bg);border-radius:var(--r);border:1px solid #B9E0C9">
+                  <div style="font-size:18px;font-weight:600;color:var(--green)">24</div>
+                  <div style="font-size:9px;color:var(--grn-t)">Concluídas</div>
+                </div>
+                <div style="text-align:center;padding:8px;background:var(--amb-bg);border-radius:var(--r);border:1px solid #F0C96A">
+                  <div style="font-size:18px;font-weight:600;color:var(--amber)">4</div>
+                  <div style="font-size:9px;color:var(--amb-t)">Parciais</div>
+                </div>
+                <div style="text-align:center;padding:8px;background:var(--s1);border-radius:var(--r);border:1px solid var(--bd)">
+                  <div style="font-size:18px;font-weight:600;color:var(--t2)">4</div>
+                  <div style="font-size:9px;color:var(--t3)">Pendentes</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /medicao -->
+
+      <!-- ════════════════ PROGRAMAÇÃO SEMANAL ════════════════ -->
+      <div class="view-tab active" id="view-programacao">
+
+        <!-- Week nav + PPC hero -->
+        <div class="g21">
+
+          <!-- PPC card -->
+          <div class="card">
+            <div class="card-hdr">
+              <div>
+                <div class="card-title">PPC — Percentual de Planos Concluídos</div>
+                <div class="card-sub">Semana 18 · 29 abr – 05 mai 2025</div>
+              </div>
+              <div style="display:flex;gap:6px">
+                <button class="btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M15 18l-6-6 6-6"/></svg>
+                  Sem. anterior
+                </button>
+                <button class="btn btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                  Nova semana
+                </button>
+              </div>
+            </div>
+            <div class="ppc-hero">
+              <div class="ppc-ring-wrap">
+                <canvas id="ppcRing"></canvas>
+                <div class="ppc-ring-val">
+                  <span>76%</span>
+                  <span class="ppc-ring-sub">PPC</span>
+                </div>
+              </div>
+              <div class="ppc-stats">
+                <div class="ppc-stat">
+                  <div class="ppc-stat-dot" style="background:var(--green)"></div>
+                  <span class="ppc-stat-lbl">Concluídas</span>
+                  <span class="ppc-stat-val" style="color:var(--green)">10 tarefas</span>
+                </div>
+                <div class="ppc-stat">
+                  <div class="ppc-stat-dot" style="background:var(--amber)"></div>
+                  <span class="ppc-stat-lbl">Parciais</span>
+                  <span class="ppc-stat-val" style="color:var(--amber)">3 tarefas</span>
+                </div>
+                <div class="ppc-stat">
+                  <div class="ppc-stat-dot" style="background:var(--red)"></div>
+                  <span class="ppc-stat-lbl">Não cumpridas</span>
+                  <span class="ppc-stat-val" style="color:var(--red)">4 tarefas</span>
+                </div>
+                <div class="ppc-stat">
+                  <div class="ppc-stat-dot" style="background:var(--s3)"></div>
+                  <span class="ppc-stat-lbl">Meta semana</span>
+                  <span class="ppc-stat-val">80%</span>
+                </div>
+              </div>
+              <div style="flex:1"></div>
+              <!-- mini sparkline -->
+              <div>
+                <div style="font-size:9px;color:var(--t3);margin-bottom:4px;text-align:center">Últimas 8 semanas</div>
+                <canvas id="ppcSparkline" style="width:160px;height:50px"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Week summary -->
+          <div class="card">
+            <div class="card-hdr"><div class="card-title">Resumo da Semana</div></div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:6px">
+              <div style="padding:6px 8px;background:var(--s1);border-radius:var(--r);border:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;color:var(--t2)">Período</span>
+                <span style="font-size:11px;font-weight:500">29/04 – 05/05/2025</span>
+              </div>
+              <div style="padding:6px 8px;background:var(--s1);border-radius:var(--r);border:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;color:var(--t2)">Responsável</span>
+                <span style="font-size:11px;font-weight:500">Eng. Lucas Tamai</span>
+              </div>
+              <div style="padding:6px 8px;background:var(--grn-bg);border-radius:var(--r);border:1px solid #B9E0C9;display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;color:var(--grn-t)">Total planejadas</span>
+                <span style="font-size:13px;font-weight:600;color:var(--green)">17</span>
+              </div>
+              <div style="padding:6px 8px;background:var(--blue-bg);border-radius:var(--r);border:1px solid #A3C5F5;display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:11px;color:var(--blue-t)">Restrições ativas</span>
+                <span style="font-size:13px;font-weight:600;color:var(--blue)">3</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tasks table -->
+        <div class="card">
+          <div class="card-hdr">
+            <div class="card-title">Tarefas da Semana</div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <div class="tab-bar">
+                <button class="tab-item active">Todas (17)</button>
+                <button class="tab-item" style="color:var(--red)">Não cumpridas (4)</button>
+                <button class="tab-item">Com restrição</button>
+              </div>
+              <button class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                Adicionar tarefa
+              </button>
+            </div>
+          </div>
+          <div>
+            <!-- Header row -->
+            <div style="display:grid;grid-template-columns:32px 1fr auto auto auto;background:var(--s1);border-bottom:1px solid var(--bd);font-size:9.5px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:0.3px">
+              <div style="padding:6px 10px;text-align:center">#</div>
+              <div style="padding:6px 10px">Atividade</div>
+              <div style="padding:6px 10px;min-width:90px">Responsável</div>
+              <div style="padding:6px 10px;min-width:70px">Prazo</div>
+              <div style="padding:6px 12px;min-width:160px">Status</div>
+            </div>
+
+            <!-- Task rows -->
+            <div class="task-row">
+              <div class="task-idx">01</div>
+              <div class="task-name">Concretagem laje 8° andar<small>2.3 · Estrutura</small></div>
+              <div class="task-resp">Mestre João</div>
+              <div class="task-date">03/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt active-ok">✓ OK</button>
+                  <button class="status-seg-opt">~ Par</button>
+                  <button class="status-seg-opt">✗ Não</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-row">
+              <div class="task-idx">02</div>
+              <div class="task-name">Alvenaria vedação 5° andar bloco B<small>3.1 · Alvenaria</small></div>
+              <div class="task-resp">Ofic. Pedro</div>
+              <div class="task-date">05/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt">✓ OK</button>
+                  <button class="status-seg-opt active-par">~ Par</button>
+                  <button class="status-seg-opt">✗ Não</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-row">
+              <div class="task-idx">03</div>
+              <div class="task-name">Instalação eletroduto shaft principal<small>4.1 · Instalações elétricas</small></div>
+              <div class="task-resp">Elet. Carlos</div>
+              <div class="task-date">02/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt">✓ OK</button>
+                  <button class="status-seg-opt">~ Par</button>
+                  <button class="status-seg-opt active-no">✗ Não</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-row">
+              <div class="task-idx">04</div>
+              <div class="task-name">Impermeabilização caixa d'água<small>3.4 · Cobertura</small></div>
+              <div class="task-resp">Ofic. Rui</div>
+              <div class="task-date">04/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt active-ok">✓ OK</button>
+                  <button class="status-seg-opt">~ Par</button>
+                  <button class="status-seg-opt">✗ Não</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-row">
+              <div class="task-idx">05</div>
+              <div class="task-name">Montagem escoramento laje 9°<small>2.3 · Estrutura</small></div>
+              <div class="task-resp">Mestre João</div>
+              <div class="task-date">05/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt active-ok">✓ OK</button>
+                  <button class="status-seg-opt">~ Par</button>
+                  <button class="status-seg-opt">✗ Não</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-row">
+              <div class="task-idx">06</div>
+              <div class="task-name">Passagem tubulação hidráulica 6°<small>4.2 · Instalações hidráulicas</small></div>
+              <div class="task-resp">Hidr. Marco</div>
+              <div class="task-date">05/05</div>
+              <div class="task-status">
+                <div class="status-seg">
+                  <button class="status-seg-opt">✓ OK</button>
+                  <button class="status-seg-opt">~ Par</button>
+                  <button class="status-seg-opt active-no">✗ Não</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer showing more -->
+          <div style="padding:8px 12px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:10px;color:var(--t3)">Mostrando 6 de 17 tarefas</span>
+            <button class="btn btn-sm">Ver todas (17)</button>
+          </div>
+        </div>
+
+        <!-- Restrictions -->
+        <div class="card">
+          <div class="card-hdr">
+            <div class="card-title">Restrições da Semana</div>
+            <button class="btn btn-sm btn-primary">+ Nova restrição</button>
+          </div>
+          <div>
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th style="width:36px;text-align:center">#</th>
+                  <th>Descrição</th>
+                  <th>Responsável</th>
+                  <th>Prazo</th>
+                  <th class="c">Status</th>
+                  <th style="width:60px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="c dim">1</td>
+                  <td>Aprovação do projeto estrutural pela prefeitura</td>
+                  <td>Eng. Silva</td>
+                  <td class="mono">20/05/25</td>
+                  <td class="c"><span class="badge badge-red">Pendente</span></td>
+                  <td class="c"><button class="btn btn-sm">Editar</button></td>
+                </tr>
+                <tr>
+                  <td class="c dim">2</td>
+                  <td>Fornecimento de vergalhão CA-50 — pedido em atraso</td>
+                  <td>Compras</td>
+                  <td class="mono">15/05/25</td>
+                  <td class="c"><span class="badge badge-amber">Em análise</span></td>
+                  <td class="c"><button class="btn btn-sm">Editar</button></td>
+                </tr>
+                <tr>
+                  <td class="c dim">3</td>
+                  <td>Liberação de acesso à área de escavação bloco B</td>
+                  <td>Segurança</td>
+                  <td class="mono">10/05/25</td>
+                  <td class="c"><span class="badge badge-green">Liberada</span></td>
+                  <td class="c"><button class="btn btn-sm">Editar</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- /programacao -->
+
+      <!-- ════════════════ CADASTRO ════════════════ -->
+      <div class="view-tab" id="view-cadastro">
+        <div class="g2">
+          <div class="card">
+            <div class="card-hdr"><div class="card-title">Dados do Projeto</div></div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <label style="font-size:10px;color:var(--t3)">Nome do projeto</label>
+                  <input type="text" value="Residencial Panorama" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <label style="font-size:10px;color:var(--t3)">Construtora</label>
+                  <input type="text" value="Construtora Alpha" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <label style="font-size:10px;color:var(--t3)">Início</label>
+                  <input type="date" value="2025-01-06" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <label style="font-size:10px;color:var(--t3)">Prazo</label>
+                  <input type="date" value="2025-12-19" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <label style="font-size:10px;color:var(--t3)">Status</label>
+                  <select style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+                    <option>Em andamento</option>
+                    <option>Planejamento</option>
+                    <option>Concluído</option>
+                    <option>Pausado</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px">
+                <label style="font-size:10px;color:var(--t3)">Endereço</label>
+                <input type="text" value="Av. das Nações Unidas, 14401 — São Paulo/SP" style="padding:6px 9px;font-size:12px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s0);color:var(--t1);font-family:var(--font)">
+              </div>
+              <button class="btn btn-primary" style="width:fit-content">Salvar alterações</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr"><div class="card-title">Equipe do Projeto</div><button class="btn btn-sm btn-primary">+ Membro</button></div>
+            <div class="card-body no-pad">
+              <table class="tbl">
+                <thead><tr><th>Nome</th><th>Função</th><th class="c">Ação</th></tr></thead>
+                <tbody>
+                  <tr><td>Lucas Tamai</td><td><span class="badge badge-blue">Engenheiro</span></td><td class="c"><button class="btn btn-sm">···</button></td></tr>
+                  <tr><td>João Ferreira</td><td><span class="badge badge-gray">Mestre</span></td><td class="c"><button class="btn btn-sm">···</button></td></tr>
+                  <tr><td>Ana Costa</td><td><span class="badge badge-gray">Apontador</span></td><td class="c"><button class="btn btn-sm">···</button></td></tr>
+                  <tr><td>Carlos Melo</td><td><span class="badge badge-gray">Encarregado</span></td><td class="c"><button class="btn btn-sm">···</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div><!-- /cadastro -->
+
+      <!-- ════════════════ CONFIGURAÇÕES ════════════════ -->
+      <div class="view-tab" id="view-configuracoes">
+        <div class="card">
+          <div class="card-hdr"><div class="card-title">Tipos de Atividade</div><button class="btn btn-primary btn-sm">+ Novo tipo</button></div>
+          <div class="card-body no-pad">
+            <table class="tbl">
+              <thead><tr><th>Nome</th><th>Método</th><th>Unidade</th><th>Peso (%)</th><th class="c">Ações</th></tr></thead>
+              <tbody>
+                <tr><td>Concreto estrutural</td><td><span class="badge badge-gray">Métrico</span></td><td class="mono">m³</td><td class="r">18%</td><td class="c"><button class="btn btn-sm">Editar</button></td></tr>
+                <tr><td>Alvenaria de vedação</td><td><span class="badge badge-gray">Métrico</span></td><td class="mono">m²</td><td class="r">12%</td><td class="c"><button class="btn btn-sm">Editar</button></td></tr>
+                <tr><td>Revestimento cerâmico</td><td><span class="badge badge-blue">Percentual</span></td><td class="mono">%</td><td class="r">8%</td><td class="c"><button class="btn btn-sm">Editar</button></td></tr>
+                <tr><td>Instalação elétrica</td><td><span class="badge badge-gray">Contagem</span></td><td class="mono">pts</td><td class="r">10%</td><td class="c"><button class="btn btn-sm">Editar</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div><!-- /configuracoes -->
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+/* ══════════════════════════════════════
+   NAV SWITCHING
+══════════════════════════════════════ */
+const VIEWS = {
+  dashboard:     { title: 'Dashboard',           crumb: 'Residencial Panorama · Mai 2025' },
+  cronograma:    { title: 'Cronograma',           crumb: 'Jan 2025 – Dez 2025' },
+  medicao:       { title: 'Medição Física',       crumb: 'Torre A · Semana 18' },
+  programacao:   { title: 'Programação Semanal',  crumb: 'Semana 18 · 29 abr – 05 mai 2025' },
+  cadastro:      { title: 'Cadastro do Projeto',  crumb: 'Residencial Panorama' },
+  configuracoes: { title: 'Configurações',        crumb: 'Tipos de Atividade · Equipe' },
+};
+
+function switchView(id) {
+  document.querySelectorAll('.view-tab').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + id)?.classList.add('active');
+
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    if (btn.getAttribute('onclick')?.includes(id)) btn.classList.add('active');
+  });
+
+  const info = VIEWS[id];
+  if (info) {
+    document.getElementById('topbar-title').textContent = info.title;
+    document.getElementById('topbar-crumb').textContent = info.crumb;
+  }
+
+  // init charts when switching to that view
+  if (id === 'dashboard') initDashboardCharts();
+  if (id === 'programacao') initPPCRing();
+}
+
+/* ══════════════════════════════════════
+   SIDEBAR TOGGLE
+══════════════════════════════════════ */
+let sidebarCollapsed = false;
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed', sidebarCollapsed);
+}
+
+/* ══════════════════════════════════════
+   CHARTS — DASHBOARD
+══════════════════════════════════════ */
+let curvaSInst, ppcHistInst;
+
+function initDashboardCharts() {
+  // ── Curva S ──────────────────────────────
+  const ctxS = document.getElementById('curvaSChart');
+  if (!ctxS || ctxS._chartCreated) return;
+  ctxS._chartCreated = true;
+
+  const labels = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const planned = [0, 8, 14, 20, 28, 36, 44, 52, 60, 68, 76, 87, 100];
+  const actual  = [0, 6, 11, 18, 25, 33, 40, 47, null, null, null, null, null];
+
+  curvaSInst = new Chart(ctxS, {
+    type: 'line',
+    data: {
+      labels: ['In.', ...labels],
+      datasets: [
+        {
+          label: 'Planejado',
+          data: planned,
+          borderColor: '#C8CBD2',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: 0,
+          tension: 0.35,
+        },
+        {
+          label: 'Realizado',
+          data: actual,
+          borderColor: '#1B6FE8',
+          backgroundColor: 'rgba(27,111,232,0.06)',
+          fill: true,
+          borderWidth: 2,
+          pointRadius: (ctx) => ctx.dataIndex === actual.filter(v => v !== null).length - 1 ? 4 : 0,
+          pointBackgroundColor: '#1B6FE8',
+          tension: 0.35,
+          spanGaps: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#131720',
+          titleColor: '#fff', bodyColor: '#9AA0AD',
+          titleFont: { family: "'IBM Plex Sans'", size: 11 },
+          bodyFont: { family: "'IBM Plex Sans'", size: 10 },
+          padding: 8, cornerRadius: 6,
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y + '%' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false },
+          ticks: { font: { family: "'IBM Plex Sans'", size: 9 }, color: '#9AA0AD' },
+          border: { display: false }
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false },
+          ticks: {
+            font: { family: "'IBM Plex Sans'", size: 9 }, color: '#9AA0AD',
+            callback: v => v + '%', stepSize: 20
+          },
+          border: { display: false }
+        }
+      }
+    }
+  });
+
+  // ── PPC history ──────────────────────────
+  const ctxP = document.getElementById('ppcChart');
+  if (!ctxP || ctxP._chartCreated) return;
+  ctxP._chartCreated = true;
+
+  const ppcVals = [83, 75, 91, 68, 80, 85, 72, 76];
+  const ppcLabels = ['S11','S12','S13','S14','S15','S16','S17','S18'];
+
+  ppcHistInst = new Chart(ctxP, {
+    type: 'bar',
+    data: {
+      labels: ppcLabels,
+      datasets: [
+        {
+          label: 'PPC',
+          data: ppcVals,
+          backgroundColor: ppcVals.map(v => v >= 80 ? 'rgba(22,128,60,0.7)' : v >= 70 ? 'rgba(196,125,15,0.7)' : 'rgba(201,49,47,0.7)'),
+          borderRadius: 3,
+          borderSkipped: false,
+          barPercentage: 0.65,
+        },
+        {
+          label: 'Meta',
+          data: Array(8).fill(80),
+          type: 'line',
+          borderColor: 'rgba(27,111,232,0.5)',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: 0,
+          fill: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#131720', titleColor: '#fff', bodyColor: '#9AA0AD',
+          titleFont: { family: "'IBM Plex Sans'", size: 11 },
+          bodyFont: { family: "'IBM Plex Sans'", size: 10 },
+          padding: 8, cornerRadius: 6,
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { family: "'IBM Plex Sans'", size: 9 }, color: '#9AA0AD' },
+          border: { display: false }
+        },
+        y: {
+          min: 50, max: 100,
+          grid: { color: 'rgba(0,0,0,0.04)', drawBorder: false },
+          ticks: { font: { family: "'IBM Plex Sans'", size: 9 }, color: '#9AA0AD', callback: v => v + '%', stepSize: 10 },
+          border: { display: false }
+        }
+      }
+    }
+  });
+}
+
+/* ══════════════════════════════════════
+   PPC RING + SPARKLINE (Weekly Planning)
+══════════════════════════════════════ */
+let ppcRingInst, ppcSparkInst;
+
+function initPPCRing() {
+  // Ring
+  const ctxR = document.getElementById('ppcRing');
+  if (!ctxR || ctxR._chartCreated) return;
+  ctxR._chartCreated = true;
+
+  ppcRingInst = new Chart(ctxR, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [76, 24],
+        backgroundColor: ['#16803C', '#ECEEF1'],
+        borderWidth: 0,
+        borderRadius: 2,
+      }]
+    },
+    options: {
+      responsive: false, cutout: '78%',
+      animation: { duration: 600 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
+
+  // Sparkline
+  const ctxSp = document.getElementById('ppcSparkline');
+  if (!ctxSp || ctxSp._chartCreated) return;
+  ctxSp._chartCreated = true;
+
+  ppcSparkInst = new Chart(ctxSp, {
+    type: 'line',
+    data: {
+      labels: ['S11','S12','S13','S14','S15','S16','S17','S18'],
+      datasets: [{
+        data: [83, 75, 91, 68, 80, 85, 72, 76],
+        borderColor: '#1B6FE8',
+        borderWidth: 1.5,
+        pointRadius: 2,
+        pointBackgroundColor: '#1B6FE8',
+        fill: true,
+        backgroundColor: 'rgba(27,111,232,0.07)',
+        tension: 0.35,
+      }]
+    },
+    options: {
+      responsive: false,
+      animation: { duration: 300 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { display: false, min: 50, max: 100 }
+      }
+    }
+  });
+}
+
+/* ══════════════════════════════════════
+   INIT
+══════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  initPPCRing(); // default view is programacao
+});
+</script>
+</body>
+</html>

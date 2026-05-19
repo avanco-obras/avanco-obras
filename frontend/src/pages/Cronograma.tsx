@@ -1,0 +1,3005 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useStore } from '@/store';
+import { scheduleApi } from '@/services/api';
+import * as xlsx from 'xlsx';
+import type { GanttTask, ScheduleDependencyItem } from '@/types';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ROW_H = 28;
+const HDR_H = 56;
+const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const DAYS_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+type TimeScale = 'day' | 'week' | 'month' | 'quarter' | 'semester' | 'year';
+const SCALE_ORDER: TimeScale[] = ['day', 'week', 'month', 'quarter', 'semester', 'year'];
+const SCALE_LABELS: Record<TimeScale, string> = {
+  day: 'Dias',
+  week: 'Semanas',
+  month: 'Meses',
+  quarter: 'Trimestres',
+  semester: 'Semestres',
+  year: 'Anos',
+};
+const PX_PER_DAY_BY_SCALE: Record<TimeScale, number> = {
+  day: 40,
+  week: 14,
+  month: 4,
+  quarter: 1.4,
+  semester: 0.7,
+  year: 0.3,
+};
+
+// ── Column definitions ────────────────────────────────────────────────────────
+interface ColDef {
+  key: string;
+  label: string;
+  width: number;
+  fixed: boolean;
+}
+const COL_DEFS: ColDef[] = [
+  { key: 'rowId', label: 'ID', width: 44, fixed: true },
+  { key: 'code', label: 'Código WBS', width: 80, fixed: false },
+  { key: 'name', label: 'Atividade', width: 220, fixed: true },
+  { key: 'duration', label: 'Duração', width: 72, fixed: false },
+  { key: 'startDate', label: 'Início', width: 86, fixed: false },
+  { key: 'endDate', label: 'Término', width: 86, fixed: false },
+  { key: 'progress', label: '% Real', width: 62, fixed: false },
+  { key: 'weight', label: 'Peso', width: 70, fixed: false },
+  { key: 'responsible', label: 'Responsável', width: 120, fixed: false },
+  { key: 'predecessors', label: 'Predecessora', width: 90, fixed: false },
+  { key: 'successors', label: 'Sucessora', width: 90, fixed: false },
+  { key: 'critical', label: 'C. Crítico', width: 72, fixed: false },
+];
+
+// ── Mock data ─────────────────────────────────────────────────────────────────
+
+function buildMockTasks(): GanttTask[] {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const d = (om: number, od = 0) => new Date(y, m + om, 1 + od).toISOString().split('T')[0];
+  return [
+    { id: '1', code: '1', name: 'OBRA', level: 0, startDate: d(-1), endDate: d(11), plannedProgress: 35, actualProgress: 30, isCriticalPath: false, hasChildren: true, durationDays: 365, weight: 1 },
+    { id: '2', code: '1.1', name: 'ESTRUTURA', level: 1, parentId: '1', startDate: d(-1), endDate: d(5), plannedProgress: 60, actualProgress: 50, isCriticalPath: true, hasChildren: true, durationDays: 180, weight: 0.4 },
+    { id: '3', code: '1.1.1', name: 'Fundação', level: 2, parentId: '2', startDate: d(-1), endDate: d(1), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: true, durationDays: 60, weight: 0.15 },
+    { id: '4', code: '1.1.1.1', name: 'Estacas', level: 3, parentId: '3', startDate: d(-1), endDate: d(0, 15), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: false, durationDays: 45, weight: 0.08 },
+    { id: '5', code: '1.1.1.2', name: 'Blocos', level: 3, parentId: '3', startDate: d(0, 10), endDate: d(1), plannedProgress: 100, actualProgress: 95, isCriticalPath: true, hasChildren: true, durationDays: 20, weight: 0.07 },
+    { id: '6', code: '1.1.1.2.1', name: 'Bloco tipo A', level: 4, parentId: '5', startDate: d(0, 10), endDate: d(0, 20), plannedProgress: 100, actualProgress: 100, isCriticalPath: false, hasChildren: false, durationDays: 10, weight: 0.03 },
+    { id: '7', code: '1.1.2', name: 'Pilares e Lajes', level: 2, parentId: '2', startDate: d(1), endDate: d(5), plannedProgress: 40, actualProgress: 25, isCriticalPath: true, hasChildren: false, durationDays: 120, weight: 0.25 },
+    { id: '8', code: '1.2', name: 'ALVENARIA', level: 1, parentId: '1', startDate: d(3), endDate: d(7), plannedProgress: 10, actualProgress: 5, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '9', code: '1.2.1', name: 'Vedação interna', level: 2, parentId: '8', startDate: d(3), endDate: d(6), plannedProgress: 15, actualProgress: 8, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '10', code: '1.2.2', name: 'Vedação externa', level: 2, parentId: '8', startDate: d(5), endDate: d(7), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+    { id: '11', code: '1.3', name: 'ACABAMENTO', level: 1, parentId: '1', startDate: d(7), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '12', code: '1.3.1', name: 'Revestimento', level: 2, parentId: '11', startDate: d(7), endDate: d(10), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '13', code: '1.3.2', name: 'Pintura', level: 2, parentId: '11', startDate: d(9), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+  ];
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function compareWbs(a: string, b: string): number {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+// Dependency type mapping: PT (português) → DB
+const DEP_TYPE_PT_TO_DB: Record<string, string> = { 'TI':'FS', 'II':'SS', 'TT':'FF', 'IT':'SF' };
+const DEP_TYPE_DB_TO_PT: Record<string, string> = { 'FS':'TI', 'SS':'II', 'FF':'TT', 'SF':'IT' };
+
+interface ParsedDep { rowId: number; type: string; lag: number; }
+interface ParseResult { deps: ParsedDep[]; errors: string[]; }
+
+function parsePredecessorText(text: string, tasks: GanttTask[]): ParseResult {
+  if (!text.trim()) return { deps: [], errors: [] };
+  const parts = text.split(';').map(s => s.trim()).filter(Boolean);
+  const deps: ParsedDep[] = [];
+  const errors: string[] = [];
+  for (const part of parts) {
+    const m = part.match(/^(\d+)(TI|II|TT|IT|FS|SS|FF|SF)?([+-]\d+)?$/i);
+    if (!m) { errors.push(`Sintaxe inválida: "${part}"`); continue; }
+    const rowId = parseInt(m[1]);
+    const typeRaw = (m[2] ?? 'TI').toUpperCase();
+    const type = DEP_TYPE_PT_TO_DB[typeRaw] ?? typeRaw;
+    const lag = m[3] ? parseInt(m[3]) : 0;
+    if (!['FS','SS','FF','SF'].includes(type)) { errors.push(`Tipo inválido: "${typeRaw}"`); continue; }
+    const target = tasks.find(t => t.rowId === rowId);
+    if (!target) { errors.push(`Tarefa ID ${rowId} não encontrada`); continue; }
+    deps.push({ rowId, type, lag });
+  }
+  return { deps, errors };
+}
+
+function formatDepsAsText(task: GanttTask, tasks: GanttTask[]): string {
+  if (!task.predecessorDeps?.length) return '';
+  return task.predecessorDeps.map(dep => {
+    const pred = tasks.find(t => t.id === dep.predecessorId);
+    const rowId = pred?.rowId ?? '?';
+    const type = DEP_TYPE_DB_TO_PT[dep.type] ?? dep.type;
+    const lag = dep.lagDays > 0 ? `+${dep.lagDays}` : dep.lagDays < 0 ? `${dep.lagDays}` : '';
+    return type === 'TI' && lag === '' ? `${rowId}` : `${rowId}${type}${lag}`;
+  }).join(';');
+}
+
+function formatSuccessorsText(task: GanttTask, tasks: GanttTask[]): string {
+  if (!task.successorDeps?.length) return '';
+  return task.successorDeps.map(dep => {
+    const succ = tasks.find(t => t.id === dep.successorId);
+    return succ?.rowId ?? '?';
+  }).join(';');
+}
+
+function addWorkDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  if (days === 0) return result;
+  const step = days > 0 ? 1 : -1;
+  let remaining = Math.abs(days);
+  while (remaining > 0) {
+    result.setDate(result.getDate() + step);
+    const dow = result.getDay();
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  return result;
+}
+
+function calculateScheduledStart(task: GanttTask, tasks: GanttTask[]): { start: Date; end: Date } | null {
+  const deps = task.predecessorDeps ?? [];
+  if (!deps.length) return null;
+  const duration = task.durationDays ?? 1;
+  let forcedStart: Date | null = null;
+  let forcedEnd: Date | null = null;
+  for (const dep of deps) {
+    const pred = tasks.find(t => t.id === dep.predecessorId);
+    if (!pred) continue;
+    const predStart = parseDate(pred.startDate);
+    const predEnd = parseDate(pred.endDate);
+    switch (dep.type) {
+      case 'FS': {
+        const candidate = addWorkDays(predEnd, dep.lagDays);
+        if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
+        break;
+      }
+      case 'SS': {
+        const candidate = addWorkDays(predStart, dep.lagDays);
+        if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
+        break;
+      }
+      case 'FF': {
+        const endCandidate = addWorkDays(predEnd, dep.lagDays);
+        if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
+        break;
+      }
+      case 'SF': {
+        const endCandidate = addWorkDays(predStart, dep.lagDays);
+        if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
+        break;
+      }
+    }
+  }
+  if (forcedEnd && (!forcedStart || addWorkDays(forcedEnd, -duration) > forcedStart)) {
+    forcedStart = addWorkDays(forcedEnd, -duration);
+  }
+  if (!forcedStart) return null;
+  const start = forcedStart;
+  const end = addWorkDays(start, duration - 1);
+  return { start, end };
+}
+
+function propagateDates(tasks: GanttTask[]): GanttTask[] {
+  let current = [...tasks];
+  for (let iter = 0; iter < 10; iter++) {
+    let changed = false;
+    current = current.map(task => {
+      const scheduled = calculateScheduledStart(task, current);
+      if (!scheduled) return task;
+      const newStart = scheduled.start.toISOString().split('T')[0];
+      const newEnd = scheduled.end.toISOString().split('T')[0];
+      if (newStart !== task.startDate.slice(0,10) || newEnd !== task.endDate.slice(0,10)) {
+        changed = true;
+        return { ...task, startDate: newStart, endDate: newEnd };
+      }
+      return task;
+    });
+    if (!changed) break;
+  }
+  return current;
+}
+
+function wouldCreateLoop(taskId: string, newPredId: string, tasks: GanttTask[]): boolean {
+  const visited = new Set<string>();
+  const queue = [newPredId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (current === taskId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const t = tasks.find(x => x.id === current);
+    t?.predecessorDeps?.forEach(d => queue.push(d.predecessorId));
+  }
+  return false;
+}
+
+function getAllDescendants(taskId: string, tasks: GanttTask[]): GanttTask[] {
+  const children = tasks.filter(t => t.parentId === taskId);
+  return children.flatMap(c => [c, ...getAllDescendants(c.id, tasks)]);
+}
+
+function recalculateWbs(flatList: GanttTask[]): GanttTask[] {
+  const counters: Record<string, number> = {};
+  const idToCode: Record<string, string> = {};
+  return flatList.map(task => {
+    const parentKey = task.parentId ?? '__ROOT__';
+    counters[parentKey] = (counters[parentKey] ?? 0) + 1;
+    const n = counters[parentKey];
+    const parentCode = task.parentId ? idToCode[task.parentId] : null;
+    const newCode = parentCode ? `${parentCode}.${n}` : String(n);
+    idToCode[task.id] = newCode;
+    return { ...task, code: newCode };
+  });
+}
+
+function fmtDate(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}`;
+}
+
+function daysBetween(a: Date, b: Date) {
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+function parseDate(s: string) {
+  return new Date(s.slice(0, 10) + 'T00:00:00');
+}
+
+function addDays(date: Date, days: number): string {
+  return new Date(date.getTime() + days * 86_400_000).toISOString().split('T')[0];
+}
+
+interface HeaderCell { label: string; left: number; width: number; }
+
+function generateHeaderCells(scale: TimeScale, minDate: Date, maxDate: Date, pxPerDay: number): { upper: HeaderCell[]; lower: HeaderCell[] } {
+  if (scale === 'day') {
+    const lower: HeaderCell[] = [];
+    const cur = new Date(minDate);
+    while (cur <= maxDate) {
+      const left = daysBetween(minDate, cur) * pxPerDay;
+      const dayOfWeek = DAYS_PT[cur.getDay()];
+      lower.push({ label: dayOfWeek, left, width: pxPerDay });
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const upper: HeaderCell[] = [];
+    const weekStart = new Date(minDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const weekCur = new Date(weekStart);
+    while (weekCur <= maxDate) {
+      const weekEnd = new Date(weekCur);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const overlapStart = weekCur < minDate ? minDate : new Date(weekCur);
+      const overlapEnd = weekEnd > maxDate ? maxDate : weekEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        const weekNum = Math.ceil((daysBetween(new Date(weekCur.getFullYear(), 0, 1), weekCur) + 1) / 7);
+        const label = `${MONTHS_PT[overlapStart.getMonth()]} S${weekNum}`;
+        upper.push({ label, left, width });
+      }
+      weekCur.setDate(weekCur.getDate() + 7);
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'week') {
+    const lower: HeaderCell[] = [];
+    const monthDays = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+    const cur = new Date(minDate);
+    cur.setDate(cur.getDate() - cur.getDay() + 1); // Segunda-feira
+    while (cur <= maxDate) {
+      const weekEnd = new Date(cur);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const overlapStart = cur < minDate ? minDate : new Date(cur);
+      const overlapEnd = weekEnd > maxDate ? maxDate : weekEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        const weekNum = Math.ceil((daysBetween(new Date(cur.getFullYear(), 0, 1), cur) + 1) / 7);
+        lower.push({ label: `S${String(weekNum).padStart(2, '0')}`, left, width });
+      }
+      cur.setDate(cur.getDate() + 7);
+    }
+
+    const upper: HeaderCell[] = [];
+    const monthCur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    while (monthCur <= maxDate) {
+      const monthStart = monthCur < minDate ? minDate : new Date(monthCur);
+      const monthEnd = new Date(monthCur.getFullYear(), monthCur.getMonth() + 1, 0);
+      const monthEndClamped = monthEnd > maxDate ? maxDate : monthEnd;
+      if (monthStart <= monthEndClamped) {
+        const left = daysBetween(minDate, monthStart) * pxPerDay;
+        const width = (daysBetween(monthStart, monthEndClamped) + 1) * pxPerDay;
+        upper.push({ label: `${MONTHS_PT[monthCur.getMonth()]} ${monthCur.getFullYear()}`, left, width });
+      }
+      monthCur.setMonth(monthCur.getMonth() + 1);
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'month') {
+    const lower: HeaderCell[] = [];
+    const cur = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    while (cur <= maxDate) {
+      const monthStart = cur < minDate ? minDate : new Date(cur);
+      const monthEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+      const monthEndClamped = monthEnd > maxDate ? maxDate : monthEnd;
+      if (monthStart <= monthEndClamped) {
+        const left = daysBetween(minDate, monthStart) * pxPerDay;
+        const width = (daysBetween(monthStart, monthEndClamped) + 1) * pxPerDay;
+        lower.push({ label: MONTHS_PT[cur.getMonth()], left, width });
+      }
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    const upper: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'quarter') {
+    const quarters = [{ start: 0, end: 2, label: 'Q1' }, { start: 3, end: 5, label: 'Q2' }, { start: 6, end: 8, label: 'Q3' }, { start: 9, end: 11, label: 'Q4' }];
+    const lower: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      quarters.forEach(q => {
+        const qStart = new Date(y, q.start, 1);
+        const qEnd = new Date(y, q.end + 1, 0);
+        const overlapStart = qStart < minDate ? minDate : qStart;
+        const overlapEnd = qEnd > maxDate ? maxDate : qEnd;
+        if (overlapStart <= overlapEnd) {
+          const left = daysBetween(minDate, overlapStart) * pxPerDay;
+          const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+          lower.push({ label: q.label, left, width });
+        }
+      });
+    }
+
+    const upper: HeaderCell[] = [];
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  if (scale === 'semester') {
+    const lower: HeaderCell[] = [];
+    const yearCur = minDate.getFullYear();
+    const yearMax = maxDate.getFullYear();
+    for (let y = yearCur; y <= yearMax; y++) {
+      [{ start: 0, end: 5, label: '1º Sem' }, { start: 6, end: 11, label: '2º Sem' }].forEach(s => {
+        const sStart = new Date(y, s.start, 1);
+        const sEnd = new Date(y, s.end + 1, 0);
+        const overlapStart = sStart < minDate ? minDate : sStart;
+        const overlapEnd = sEnd > maxDate ? maxDate : sEnd;
+        if (overlapStart <= overlapEnd) {
+          const left = daysBetween(minDate, overlapStart) * pxPerDay;
+          const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+          lower.push({ label: s.label, left, width });
+        }
+      });
+    }
+
+    const upper: HeaderCell[] = [];
+    for (let y = yearCur; y <= yearMax; y++) {
+      const yearStart = new Date(y, 0, 1);
+      const yearEnd = new Date(y, 11, 31);
+      const overlapStart = yearStart < minDate ? minDate : yearStart;
+      const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+      if (overlapStart <= overlapEnd) {
+        const left = daysBetween(minDate, overlapStart) * pxPerDay;
+        const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+        upper.push({ label: String(y), left, width });
+      }
+    }
+    return { upper, lower };
+  }
+
+  // year
+  const lower: HeaderCell[] = [];
+  const yearCur = minDate.getFullYear();
+  const yearMax = maxDate.getFullYear();
+  for (let y = yearCur; y <= yearMax; y++) {
+    const yearStart = new Date(y, 0, 1);
+    const yearEnd = new Date(y, 11, 31);
+    const overlapStart = yearStart < minDate ? minDate : yearStart;
+    const overlapEnd = yearEnd > maxDate ? maxDate : yearEnd;
+    if (overlapStart <= overlapEnd) {
+      const left = daysBetween(minDate, overlapStart) * pxPerDay;
+      const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+      lower.push({ label: String(y), left, width });
+    }
+  }
+
+  const upper: HeaderCell[] = [];
+  const decadeCur = Math.floor(yearCur / 10) * 10;
+  const decadeMax = Math.floor(yearMax / 10) * 10 + 10;
+  for (let d = decadeCur; d < decadeMax; d += 10) {
+    const decadeStart = new Date(d, 0, 1);
+    const decadeEnd = new Date(d + 9, 11, 31);
+    const overlapStart = decadeStart < minDate ? minDate : decadeStart;
+    const overlapEnd = decadeEnd > maxDate ? maxDate : decadeEnd;
+    if (overlapStart <= overlapEnd) {
+      const left = daysBetween(minDate, overlapStart) * pxPerDay;
+      const width = (daysBetween(overlapStart, overlapEnd) + 1) * pxPerDay;
+      upper.push({ label: `${d}s`, left, width });
+    }
+  }
+  return { upper, lower };
+}
+
+function barColor(actual: number, planned: number): string {
+  if (actual >= planned) return '#16803C';
+  if (actual >= planned - 15) return '#C47D0F';
+  return '#C9312F';
+}
+
+function badgeClass(actual: number, planned: number): string {
+  if (actual >= planned) return 'ao-badge ao-bg';
+  if (actual >= planned - 15) return 'ao-badge ao-ba';
+  return 'ao-badge ao-br';
+}
+
+function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
+  if (level === 0) return { background: 'var(--bg3)', fontWeight: 700, fontSize: 12 };
+  if (level === 1) return { background: hasChildren ? 'var(--bg2)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
+  if (level === 2) return { fontSize: 11, fontWeight: hasChildren ? 500 : 400 };
+  if (level === 3) return { fontSize: 10, color: 'var(--t2)' };
+  return { fontSize: 10, color: 'var(--t3)' };
+}
+
+function rowBg(level: number): string {
+  if (level === 0) return 'var(--bg3)';
+  if (level === 1) return 'var(--bg2)';
+  return 'transparent';
+}
+
+// ── FormState ─────────────────────────────────────────────────────────────────
+
+interface FormState {
+  name: string;
+  code: string;
+  level: number;
+  parentId: string;
+  startDate: string;
+  endDate: string;
+  durationDays: number;
+  plannedProgress: number;
+  actualProgress: number;
+  weight: number;
+  isCriticalPath: boolean;
+  responsible: string;
+}
+
+function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
+  const today = new Date().toISOString().split('T')[0];
+  const in30 = addDays(new Date(), 30);
+  if (parent) {
+    const siblings = all.filter((t) => t.parentId === parent.id);
+    return {
+      name: '', code: `${parent.code}.${siblings.length + 1}`,
+      level: parent.level + 1, parentId: parent.id,
+      startDate: today, endDate: in30, durationDays: 30,
+      plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+      responsible: '',
+    };
+  }
+  const roots = all.filter((t) => !t.parentId);
+  return {
+    name: '', code: String(roots.length + 1),
+    level: 0, parentId: '',
+    startDate: today, endDate: in30, durationDays: 30,
+    plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+    responsible: '',
+  };
+}
+
+function formFromTask(task: GanttTask): FormState {
+  const start = parseDate(task.startDate);
+  const end = parseDate(task.endDate);
+  return {
+    name: task.name,
+    code: task.code,
+    level: task.level,
+    parentId: task.parentId ?? '',
+    startDate: task.startDate.slice(0, 10),
+    endDate: task.endDate.slice(0, 10),
+    durationDays: task.durationDays ?? Math.max(1, daysBetween(start, end)),
+    plannedProgress: task.plannedProgress,
+    actualProgress: task.actualProgress,
+    weight: task.weight ?? 1,
+    isCriticalPath: task.isCriticalPath,
+    responsible: task.responsible ?? '',
+  };
+}
+
+// ── Helper functions for keyboard navigation ─────────────────────────────────
+
+function getCellRawValue(task: GanttTask, colKey: string): string {
+  switch (colKey) {
+    case 'name': return task.name;
+    case 'code': return task.code;
+    case 'duration': return String(task.durationDays ?? '');
+    case 'startDate': return task.startDate.slice(0, 10);
+    case 'endDate': return task.endDate.slice(0, 10);
+    case 'progress': return String(task.actualProgress);
+    case 'weight': return String(task.weight ?? '');
+    case 'responsible': return task.responsible ?? '';
+    default: return '';
+  }
+}
+
+function formatCellForFilter(task: GanttTask, colKey: string): string {
+  switch (colKey) {
+    case 'code': return task.code;
+    case 'name': return task.name;
+    case 'responsible': return task.responsible ?? '';
+    case 'startDate': return task.startDate.slice(0, 10);
+    case 'endDate': return task.endDate.slice(0, 10);
+    case 'duration': return String(task.durationDays ?? '');
+    case 'progress': return String(task.actualProgress);
+    case 'weight': return String(task.weight ?? '');
+    case 'predecessors': return '';
+    case 'successors': return '';
+    case 'critical': return task.isCriticalPath ? 'Sim' : 'Não';
+    default: return '';
+  }
+}
+
+// ── Shared input style ────────────────────────────────────────────────────────
+
+const inp: React.CSSProperties = {
+  padding: '5px 8px', fontSize: 12,
+  border: '0.5px solid var(--bd2)', borderRadius: 6,
+  background: 'var(--bg1)', color: 'var(--t1)',
+  width: '100%', boxSizing: 'border-box',
+};
+
+// ── ColFilterDropdown ────────────────────────────────────────────────────────
+
+interface ColFilterDropdownProps {
+  colKey: string;
+  label: string;
+  allValues: string[];
+  selected: string[];
+  sortDir: 'asc' | 'desc' | null;
+  onSortChange: (dir: 'asc' | 'desc' | null) => void;
+  onFilterChange: (values: string[]) => void;
+  onClose: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement>;
+}
+
+function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSortChange, onFilterChange, onClose, triggerRef }: ColFilterDropdownProps) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setCoords({ top: rect.bottom + 4, left: rect.left });
+    }
+  }, [triggerRef]);
+
+  const filtered = allValues.filter(v => v.toLowerCase().includes(searchTerm.toLowerCase()));
+  const allSelected = selected.length === allValues.length && allValues.length > 0;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: coords.top,
+        left: coords.left,
+        zIndex: 10000,
+        background: 'var(--bg1)',
+        border: '0.5px solid var(--bd)',
+        borderRadius: 6,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        width: 240,
+        maxHeight: 400,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: 8,
+        gap: 8,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Sort buttons */}
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button
+          onClick={() => onSortChange(sortDir === 'asc' ? null : 'asc')}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            fontSize: 11,
+            border: `0.5px solid ${sortDir === 'asc' ? '#2563EB' : 'var(--bd)'}`,
+            background: sortDir === 'asc' ? '#2563EB' : 'var(--bg2)',
+            color: sortDir === 'asc' ? '#fff' : 'var(--t1)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          ▲ A-Z
+        </button>
+        <button
+          onClick={() => onSortChange(sortDir === 'desc' ? null : 'desc')}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            fontSize: 11,
+            border: `0.5px solid ${sortDir === 'desc' ? '#2563EB' : 'var(--bd)'}`,
+            background: sortDir === 'desc' ? '#2563EB' : 'var(--bg2)',
+            color: sortDir === 'desc' ? '#fff' : 'var(--t1)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          ▼ Z-A
+        </button>
+      </div>
+
+      {/* Search */}
+      <input
+        type="text"
+        placeholder="Buscar..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        style={{
+          padding: '4px 6px',
+          fontSize: 11,
+          border: '0.5px solid var(--bd)',
+          borderRadius: 4,
+          background: 'var(--bg2)',
+          color: 'var(--t1)',
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      />
+
+      {/* Checkboxes */}
+      <div style={{ overflowY: 'auto', maxHeight: 250, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Select All */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', padding: '2px 4px', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={(e) => onFilterChange(e.target.checked ? allValues : [])}
+            style={{ cursor: 'pointer' }}
+          />
+          <span><strong>Selecionar todos</strong></span>
+        </label>
+
+        {filtered.map(val => (
+          <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', padding: '2px 4px', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={selected.includes(val)}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  onFilterChange([...selected, val]);
+                } else {
+                  onFilterChange(selected.filter(v => v !== val));
+                }
+              }}
+              style={{ cursor: 'pointer' }}
+            />
+            <span style={{ color: 'var(--t1)' }}>{val || '(vazio)'}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 4, fontSize: 10 }}>
+        <button
+          onClick={() => onFilterChange([])}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            border: '0.5px solid var(--bd)',
+            background: 'var(--bg2)',
+            color: 'var(--t2)',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          Limpar
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            border: '0.5px solid #2563EB',
+            background: '#2563EB',
+            color: '#fff',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── AdvancedFiltersPanel ────────────────────────────────────────────────────
+
+interface AdvancedFiltersPanelProps {
+  filters: { dateStart: string; dateEnd: string; progressMin: string; progressMax: string; onlyLate: boolean; onlyCritical: boolean; onlyDone: boolean; responsibles: string[] };
+  allResponsibles: string[];
+  onChange: (filters: any) => void;
+  onClose: () => void;
+}
+
+function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: AdvancedFiltersPanelProps) {
+  const activeCount = [
+    filters.dateStart ? 1 : 0,
+    filters.dateEnd ? 1 : 0,
+    filters.progressMin ? 1 : 0,
+    filters.progressMax ? 1 : 0,
+    filters.onlyLate ? 1 : 0,
+    filters.onlyCritical ? 1 : 0,
+    filters.onlyDone ? 1 : 0,
+    filters.responsibles.length > 0 ? 1 : 0,
+  ].filter(Boolean).length;
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 1999,
+          background: 'rgba(0,0,0,0.3)',
+        }}
+      />
+
+      {/* Panel */}
+      <div
+        style={{
+          position: 'fixed',
+          right: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 2000,
+          width: 320,
+          background: 'var(--bg1)',
+          border: '0.5px solid var(--bd)',
+          borderLeft: '1px solid var(--bd)',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
+          animation: 'slideIn 0.2s ease-out',
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: 12, borderBottom: '0.5px solid var(--bd)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Filtros avançados</span>
+            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#2563EB', fontWeight: 500 }}>({activeCount})</span>}
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--t2)', padding: 0, lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 16, fontSize: 12 }}>
+          {/* Date range */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Data de início</label>
+            <input
+              type="date"
+              value={filters.dateStart}
+              onChange={(e) => onChange({ ...filters, dateStart: e.target.value })}
+              style={inp}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Data de término</label>
+            <input
+              type="date"
+              value={filters.dateEnd}
+              onChange={(e) => onChange({ ...filters, dateEnd: e.target.value })}
+              style={inp}
+            />
+          </div>
+
+          {/* Progress range */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real mínimo</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={filters.progressMin}
+              onChange={(e) => onChange({ ...filters, progressMin: e.target.value })}
+              placeholder="0"
+              style={inp}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real máximo</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={filters.progressMax}
+              onChange={(e) => onChange({ ...filters, progressMax: e.target.value })}
+              placeholder="100"
+              style={inp}
+            />
+          </div>
+
+          {/* Checkboxes */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyLate}
+              onChange={(e) => onChange({ ...filters, onlyLate: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas atrasadas</span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyCritical}
+              onChange={(e) => onChange({ ...filters, onlyCritical: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas críticas</span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={filters.onlyDone}
+              onChange={(e) => onChange({ ...filters, onlyDone: e.target.checked })}
+              style={{ cursor: 'pointer' }}
+            />
+            <span>Apenas concluídas</span>
+          </label>
+
+          {/* Responsibles */}
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>Responsáveis</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {allResponsibles.map(resp => (
+                <label key={resp} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none', fontSize: 11 }}>
+                  <input
+                    type="checkbox"
+                    checked={filters.responsibles.includes(resp)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onChange({ ...filters, responsibles: [...filters.responsibles, resp] });
+                      } else {
+                        onChange({ ...filters, responsibles: filters.responsibles.filter(r => r !== resp) });
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>{resp}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: 12, borderTop: '0.5px solid var(--bd)', display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => onChange({ dateStart: '', dateEnd: '', progressMin: '', progressMax: '', onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: [] })}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '0.5px solid var(--bd)', background: 'var(--bg2)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
+          >
+            Limpar tudo
+          </button>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#2563EB', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes slideIn {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+      `}</style>
+    </>
+  );
+}
+
+// ── TaskModal ─────────────────────────────────────────────────────────────────
+
+interface TaskModalProps {
+  open: boolean;
+  editingTask: GanttTask | null;
+  parentTask: GanttTask | null;
+  allTasks: GanttTask[];
+  projectId: string;
+  addToast: (t: { type: string; title: string; description?: string }) => void;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
+  const [form, setForm] = useState<FormState>(() =>
+    editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks)
+  );
+  const [saving, setSaving] = useState(false);
+  const [deps, setDeps] = useState<ScheduleDependencyItem[]>([]);
+  const [loadingDeps, setLoadingDeps] = useState(false);
+  const [addingDep, setAddingDep] = useState(false);
+  const [addDepRole, setAddDepRole] = useState<'predecessor' | 'successor'>('predecessor');
+  const [depSearch, setDepSearch] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setForm(editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks));
+    setDeps([]);
+    setAddingDep(false);
+    setDepSearch('');
+    if (editingTask) {
+      setLoadingDeps(true);
+      scheduleApi.getDependencies(editingTask.id)
+        .then(setDeps)
+        .catch(() => setDeps([]))
+        .finally(() => setLoadingDeps(false));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  function change<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'startDate' || key === 'endDate') {
+        const s = parseDate((key === 'startDate' ? value : prev.startDate) as string);
+        const e = parseDate((key === 'endDate' ? value : prev.endDate) as string);
+        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e > s) {
+          next.durationDays = daysBetween(s, e);
+        }
+      } else if (key === 'durationDays' && (value as number) > 0) {
+        const s = parseDate(prev.startDate);
+        if (!isNaN(s.getTime())) next.endDate = addDays(s, value as number);
+      }
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    if (!form.name.trim()) {
+      addToast({ type: 'error', title: 'Nome obrigatório' });
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        name: form.name.trim(), code: form.code.trim(),
+        level: form.level, parentId: form.parentId || undefined,
+        startDate: form.startDate, endDate: form.endDate,
+        durationDays: form.durationDays,
+        plannedProgress: form.plannedProgress, actualProgress: form.actualProgress,
+        weight: form.weight, isCriticalPath: form.isCriticalPath,
+        responsible: form.responsible.trim() || undefined,
+      };
+      if (editingTask) {
+        await scheduleApi.update(editingTask.id, payload);
+        addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+      } else {
+        await scheduleApi.create(projectId, payload);
+        addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
+      }
+      onSaved();
+      onClose();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAddDep(targetId: string) {
+    if (!editingTask) return;
+    try {
+      let dep: ScheduleDependencyItem;
+      if (addDepRole === 'predecessor') {
+        dep = await scheduleApi.addDependency(editingTask.id, { predecessorId: targetId });
+      } else {
+        dep = await scheduleApi.addDependency(targetId, { predecessorId: editingTask.id });
+      }
+      setDeps((prev) => [...prev, dep]);
+      setAddingDep(false);
+      setDepSearch('');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({ type: 'error', title: 'Erro', description: msg ?? 'Não foi possível adicionar.' });
+    }
+  }
+
+  async function handleRemoveDep(depId: string) {
+    try {
+      await scheduleApi.removeDependency(depId);
+      setDeps((prev) => prev.filter((d) => d.id !== depId));
+    } catch {
+      addToast({ type: 'error', title: 'Erro', description: 'Não foi possível remover dependência.' });
+    }
+  }
+
+  const predecessors = deps.filter((d) => d.successorId === editingTask?.id);
+  const successors = deps.filter((d) => d.predecessorId === editingTask?.id);
+
+  const depCandidates = useMemo(() => {
+    if (!addingDep) return [];
+    const usedIds = new Set([
+      ...deps.map((d) => d.predecessorId),
+      ...deps.map((d) => d.successorId),
+      editingTask?.id ?? '',
+    ]);
+    const q = depSearch.toLowerCase();
+    return allTasks
+      .filter((t) => !usedIds.has(t.id) && (!q || t.name.toLowerCase().includes(q) || t.code.includes(q)))
+      .slice(0, 25);
+  }, [addingDep, deps, depSearch, allTasks, editingTask]);
+
+  if (!open) return null;
+
+  const depRow = (dep: ScheduleDependencyItem, side: 'pred' | 'succ') => {
+    const item = side === 'pred' ? dep.predecessor : dep.successor;
+    return (
+      <div key={dep.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 11 }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{item?.code}</span>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--t1)' }}>{item?.name}</span>
+        <span style={{ color: 'var(--t3)', fontSize: 9, background: 'var(--bg2)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>
+          {dep.type}{dep.lagDays ? `+${dep.lagDays}d` : ''}
+        </span>
+        <button onClick={() => handleRemoveDep(dep.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 14, padding: '1.25rem', width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>
+            {editingTask ? 'Editar atividade' : parentTask ? `Nova atividade em "${parentTask.name}"` : 'Nova atividade'}
+          </span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>✕</button>
+        </div>
+
+        {/* Form grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Nome *</label>
+            <input style={inp} value={form.name} onChange={(e) => change('name', e.target.value)} placeholder="Nome da atividade" autoFocus />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Código WBS</label>
+            <input style={inp} value={form.code} onChange={(e) => change('code', e.target.value)} placeholder="Ex: 1.2.3" />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Nível hierárquico</label>
+            <input style={inp} type="number" min={0} max={10} value={form.level} onChange={(e) => change('level', parseInt(e.target.value) || 0)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de início</label>
+            <input style={inp} type="date" value={form.startDate} onChange={(e) => change('startDate', e.target.value)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de término</label>
+            <input style={inp} type="date" value={form.endDate} onChange={(e) => change('endDate', e.target.value)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Duração (dias)</label>
+            <input style={inp} type="number" min={1} value={form.durationDays} onChange={(e) => change('durationDays', parseInt(e.target.value) || 1)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Peso</label>
+            <input style={inp} type="number" min={0} step={0.01} value={form.weight} onChange={(e) => change('weight', parseFloat(e.target.value) || 0)} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Responsável</label>
+            <input style={inp} value={form.responsible} onChange={(e) => change('responsible', e.target.value)} placeholder="Nome do responsável" />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Prog. Planejado (%)</label>
+            <input style={inp} type="number" min={0} max={100} value={form.plannedProgress} onChange={(e) => change('plannedProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Prog. Realizado (%)</label>
+            <input style={inp} type="number" min={0} max={100} value={form.actualProgress} onChange={(e) => change('actualProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+          </div>
+
+          <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" id="cp-chk" checked={form.isCriticalPath} onChange={(e) => change('isCriticalPath', e.target.checked)} style={{ cursor: 'pointer', accentColor: '#C9312F' }} />
+            <label htmlFor="cp-chk" style={{ fontSize: 12, color: 'var(--t1)', cursor: 'pointer' }}>Caminho crítico</label>
+          </div>
+        </div>
+
+        {/* Dependencies — only when editing */}
+        {editingTask && (
+          <div style={{ borderTop: '0.5px solid var(--bd)', paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', marginBottom: 10 }}>Dependências</div>
+
+            {loadingDeps ? (
+              <div style={{ fontSize: 11, color: 'var(--t2)', padding: '4px 0' }}>Carregando...</div>
+            ) : (
+              <>
+                {/* Predecessoras */}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', marginBottom: 4 }}>Predecessoras (devem terminar antes desta iniciar)</div>
+                  {predecessors.length === 0
+                    ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Nenhuma</div>
+                    : predecessors.map((d) => depRow(d, 'pred'))
+                  }
+                </div>
+
+                {/* Sucessoras */}
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', marginBottom: 4 }}>Sucessoras (iniciam após esta terminar)</div>
+                  {successors.length === 0
+                    ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>Nenhuma</div>
+                    : successors.map((d) => depRow(d, 'succ'))
+                  }
+                </div>
+
+                {/* Add dependency panel */}
+                {!addingDep ? (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="ao-btn ao-btn-sm" onClick={() => { setAddingDep(true); setAddDepRole('predecessor'); }}>+ Predecessora</button>
+                    <button className="ao-btn ao-btn-sm" onClick={() => { setAddingDep(true); setAddDepRole('successor'); }}>+ Sucessora</button>
+                  </div>
+                ) : (
+                  <div style={{ background: 'var(--bg2)', borderRadius: 8, padding: 10, border: '0.5px solid var(--bd)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 6 }}>
+                      Selecionar {addDepRole === 'predecessor' ? 'predecessora' : 'sucessora'}:
+                    </div>
+                    <input
+                      style={{ ...inp, marginBottom: 6 }}
+                      placeholder="Buscar por nome ou código..."
+                      value={depSearch}
+                      onChange={(e) => setDepSearch(e.target.value)}
+                      autoFocus
+                    />
+                    <div style={{ maxHeight: 140, overflowY: 'auto', marginBottom: 6 }}>
+                      {depCandidates.length === 0
+                        ? <div style={{ fontSize: 11, color: 'var(--t3)', fontStyle: 'italic', padding: '4px 0' }}>Nenhuma atividade encontrada</div>
+                        : depCandidates.map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => handleAddDep(t.id)}
+                            style={{ cursor: 'pointer', padding: '4px 6px', borderRadius: 4, fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg3)'; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ''; }}
+                          >
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{t.code}</span>
+                            <span style={{ color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                          </div>
+                        ))
+                      }
+                    </div>
+                    <button className="ao-btn ao-btn-sm" onClick={() => { setAddingDep(false); setDepSearch(''); }}>Cancelar</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '0.5px solid var(--bd)', paddingTop: 12 }}>
+          <button className="ao-btn ao-btn-sm" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button
+            className="ao-btn ao-btn-sm"
+            style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: saving || !form.name.trim() ? 0.6 : 1 }}
+            onClick={handleSave}
+            disabled={saving || !form.name.trim()}
+          >
+            {saving ? 'Salvando...' : editingTask ? 'Atualizar' : 'Criar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DeleteConfirm ─────────────────────────────────────────────────────────────
+
+interface DeleteConfirmProps {
+  task: GanttTask | null;
+  allTasks: GanttTask[];
+  loading: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteConfirmProps) {
+  if (!task) return null;
+
+  const childCount = allTasks.filter((t) => {
+    let pid = t.parentId;
+    while (pid) {
+      if (pid === task.id) return true;
+      pid = allTasks.find((x) => x.id === pid)?.parentId;
+    }
+    return false;
+  }).length;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 360 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 8 }}>Excluir atividade</div>
+        <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: childCount > 0 ? 6 : 16 }}>
+          Tem certeza que deseja excluir <strong style={{ color: 'var(--t1)' }}>"{task.name}"</strong>?
+        </p>
+        {childCount > 0 && (
+          <p style={{ fontSize: 12, color: '#C9312F', marginBottom: 16 }}>
+            ⚠ {childCount} atividade{childCount > 1 ? 's filha' : ' filha'} também {childCount > 1 ? 'serão excluídas' : 'será excluída'}.
+          </p>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="ao-btn ao-btn-sm" onClick={onCancel} disabled={loading}>Cancelar</button>
+          <button
+            className="ao-btn ao-btn-sm"
+            style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: loading ? 0.6 : 1 }}
+            onClick={onConfirm}
+            disabled={loading}
+          >
+            {loading ? 'Excluindo...' : 'Excluir'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Import Modal ──────────────────────────────────────────────────────────────
+
+interface ImportModalProps {
+  open: boolean;
+  step: 1 | 2 | 3;
+  file: File | null;
+  preview: Record<string, unknown>[];
+  importing: boolean;
+  projectId: string;
+  onClose: () => void;
+  setStep: (s: 1 | 2 | 3) => void;
+  setFile: (f: File | null) => void;
+  setPreview: (p: Record<string, unknown>[]) => void;
+  setImporting: (b: boolean) => void;
+  addToast: (t: any) => void;
+  onImportSuccess: () => void;
+}
+
+function ImportModal({ open, step, file, preview, importing, projectId, onClose, setStep, setFile, setPreview, setImporting, addToast, onImportSuccess }: ImportModalProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!open) return null;
+
+  const generateTemplate = () => {
+    const templateData = [
+      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Real', 'Caminho Crítico', 'Peso'],
+      ['1', 'OBRA - Projeto Exemplo', '0', '2026-01-15', '2027-01-15', '365', '0', '0', 'N', '1'],
+      ['1.1', 'ESTRUTURA', '1', '2026-01-15', '2026-07-15', '180', '10', '5', 'Y', '0.4'],
+      ['1.1.1', 'Fundação', '2', '2026-01-15', '2026-03-15', '60', '100', '100', 'Y', '0.2'],
+      ['1.1.1.1', 'Estacas', '3', '2026-01-15', '2026-02-28', '45', '100', '100', 'Y', '0.1'],
+      ['1.1.1.2', 'Blocos', '3', '2026-03-01', '2026-03-15', '15', '100', '90', 'Y', '0.1'],
+      ['1.1.2', 'Pilares e Lajes', '2', '2026-03-16', '2026-07-15', '120', '5', '0', 'Y', '0.2'],
+      ['1.2', 'ALVENARIA', '1', '2026-05-15', '2026-09-15', '120', '0', '0', 'N', '0.3'],
+      ['1.2.1', 'Vedação interna', '2', '2026-05-15', '2026-08-15', '90', '0', '0', 'N', '0.15'],
+      ['1.2.2', 'Vedação externa', '2', '2026-07-15', '2026-09-15', '60', '0', '0', 'N', '0.15'],
+      ['1.3', 'ACABAMENTO', '1', '2026-09-16', '2027-01-15', '120', '0', '0', 'N', '0.3'],
+      ['1.3.1', 'Revestimento', '2', '2026-09-16', '2026-12-15', '90', '0', '0', 'N', '0.15'],
+      ['1.3.2', 'Pintura', '2', '2026-12-01', '2027-01-15', '45', '0', '0', 'N', '0.15'],
+    ];
+
+    const ws = xlsx.utils.aoa_to_sheet(templateData);
+    ws['!cols'] = [
+      { wch: 12 }, // Código
+      { wch: 25 }, // Nome
+      { wch: 8 },  // Nível
+      { wch: 12 }, // Início
+      { wch: 12 }, // Término
+      { wch: 10 }, // Duração
+      { wch: 8 },  // % Plan
+      { wch: 8 },  // % Real
+      { wch: 16 }, // Caminho Crítico
+      { wch: 8 },  // Peso
+    ];
+
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Cronograma');
+    xlsx.writeFile(wb, 'template-cronograma.xlsx');
+
+    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo e adapte aos seus dados.' });
+  };
+
+  const handleFileInput = (f: File | null) => {
+    if (!f) return;
+    if (!/\.(csv|xlsx|xls)$/i.test(f.name)) {
+      addToast({ type: 'error', title: 'Arquivo inválido', description: 'Selecione um arquivo CSV, XLSX ou XLS.' });
+      return;
+    }
+    setFile(f);
+    handlePreview(f);
+  };
+
+  const handlePreview = (f: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = xlsx.read(data, { type: 'array', cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+        setPreview(rows.slice(0, 5));
+      } catch (err) {
+        addToast({ type: 'error', title: 'Erro ao ler arquivo', description: 'Não foi possível processar o arquivo.' });
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const handleImport = async () => {
+    if (!file || !projectId) return;
+    setImporting(true);
+    try {
+      const result = await scheduleApi.import(projectId, file);
+      addToast({
+        type: result.imported > 0 ? 'success' : 'warning',
+        title: `Importação completa`,
+        description: `${result.imported} atividades importadas.${result.skipped > 0 ? ` ${result.skipped} linhas puladas.` : ''}`,
+      });
+      if (result.errors.length > 0) {
+        console.log('Erros na importação:', result.errors);
+      }
+      onImportSuccess();
+      onClose();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({
+        type: 'error',
+        title: 'Erro ao importar',
+        description: msg ?? 'Tente novamente com outro arquivo.',
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1002, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
+
+        {/* Step 1: File selection */}
+        {step === 1 && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Importar CSV/XLSX</span>
+              <button
+                onClick={generateTemplate}
+                style={{
+                  fontSize: 11,
+                  padding: '5px 10px',
+                  border: '0.5px solid #3B82F6',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  color: '#3B82F6',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                }}
+              >
+                📥 Baixar template
+              </button>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
+              Selecione um arquivo CSV ou XLSX com o formato correto. Clique em "Baixar template" para um exemplo de estrutura. O cronograma existente será substituído.
+            </p>
+
+            {/* Colunas esperadas */}
+            <div style={{ background: 'var(--bg2)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+                <div><strong>Código</strong></div>
+                <div>WBS: 1, 1.1, 1.1.1 (obrigatório)</div>
+
+                <div><strong>Nome</strong></div>
+                <div>Descrição da atividade (obrigatório)</div>
+
+                <div><strong>Nível</strong></div>
+                <div>0-9 (opcional, derivado do código)</div>
+
+                <div><strong>Início</strong></div>
+                <div>YYYY-MM-DD (obrigatório)</div>
+
+                <div><strong>Término</strong></div>
+                <div>YYYY-MM-DD (obrigatório)</div>
+
+                <div><strong>Duração</strong></div>
+                <div>Dias (opcional, calculado se omitido)</div>
+
+                <div><strong>% Plan</strong></div>
+                <div>0-100 (opcional)</div>
+
+                <div><strong>% Real</strong></div>
+                <div>0-100 (opcional)</div>
+
+                <div><strong>Caminho Crítico</strong></div>
+                <div>Y/N (opcional)</div>
+
+                <div><strong>Peso</strong></div>
+                <div>Número (opcional, padrão 1)</div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: '2px dashed var(--bd)',
+                borderRadius: 8,
+                padding: '2rem',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: 'var(--bg2)',
+                marginBottom: 12,
+                transition: 'all 0.2s',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.background = 'var(--bg3)';
+                e.currentTarget.style.borderColor = '#2563EB';
+              }}
+              onDragLeave={(e) => {
+                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.borderColor = 'var(--bd)';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.borderColor = 'var(--bd)';
+                const f = e.dataTransfer.files[0];
+                handleFileInput(f);
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--t1)', marginBottom: 6 }}>
+                {file ? `📁 ${file.name}` : '📤 Arraste um arquivo aqui'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>
+                ou clique para selecionar
+              </div>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={(e) => handleFileInput(e.target.files?.[0] ?? null)}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
+                disabled={!file || preview.length === 0}
+                onClick={() => setStep(2)}
+              >
+                {preview.length > 0 ? 'Avançar →' : 'Carregando...'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 2: Preview */}
+        {step === 2 && (
+          <>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 12 }}>Pré-visualização</div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 12 }}>
+              {file?.name} — {preview.length > 0 ? `Primeiras ${preview.length} linhas` : 'Nenhuma linha'}
+            </p>
+            {preview.length > 0 ? (
+              <div style={{ overflowX: 'auto', marginBottom: 16, border: '0.5px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)' }}>
+                <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      {Object.keys(preview[0]).map((key) => (
+                        <th key={key} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500, color: 'var(--t2)', borderRight: '0.5px solid var(--bd)' }}>
+                          {key}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row, idx) => (
+                      <tr key={idx} style={{ borderTop: '0.5px solid var(--bd)' }}>
+                        {Object.values(row).map((val, colIdx) => (
+                          <td key={colIdx} style={{ padding: '6px 8px', color: 'var(--t1)', borderRight: '0.5px solid var(--bd)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {String(val)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
+              <button className="ao-btn ao-btn-sm" onClick={() => setStep(1)}>← Voltar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+                onClick={() => setStep(3)}
+              >
+                Avançar →
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Confirmation */}
+        {step === 3 && (
+          <>
+            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 12 }}>Confirmar importação</div>
+            <div style={{ padding: '12px', background: '#FEF3C7', border: '0.5px solid #F59E0B', borderRadius: 6, marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: '#92400E', margin: 0 }}>
+                ⚠ <strong>Atenção:</strong> Isso substituirá <strong>todas as atividades</strong> do cronograma atual. Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
+              {file?.name}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="ao-btn ao-btn-sm" onClick={onClose} disabled={importing}>Cancelar</button>
+              <button className="ao-btn ao-btn-sm" onClick={() => setStep(2)} disabled={importing}>← Voltar</button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
+                onClick={handleImport}
+                disabled={importing}
+              >
+                {importing ? 'Importando...' : 'Importar cronograma'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
+export default function Cronograma() {
+  const { currentProject, addToast } = useStore();
+  const projectId = currentProject?.id;
+
+  const [tasks, setTasks] = useState<GanttTask[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [outlineLevel, setOutlineLevel] = useState<number | 'all'>('all');
+  const [searchRaw, setSearchRaw] = useState('');
+  const [search, setSearch] = useState('');
+  const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<GanttTask | null>(null);
+  const [parentTask, setParentTask] = useState<GanttTask | null>(null);
+
+  // Delete state
+  const [deleteTarget, setDeleteTarget] = useState<GanttTask | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Import modal state
+  const [showImport, setShowImport] = useState(false);
+  const [importStep, setImportStep] = useState<1 | 2 | 3>(1);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<Record<string, unknown>[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+
+  // Column visibility state
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set(COL_DEFS.map(c => c.key));
+    const saved = localStorage.getItem('cronograma_cols');
+    return saved ? new Set(JSON.parse(saved)) : new Set(COL_DEFS.map(c => c.key));
+  });
+  const [showColPicker, setShowColPicker] = useState(false);
+
+  // Inline edit state
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<{ taskId: string; colKey: string; value: string } | null>(null);
+  const inlineInputRef = useRef<HTMLInputElement | null>(null);
+  const inlineEditIdRef = useRef<string | null>(null);
+
+  // Keyboard navigation state
+  const [selectedColIdx, setSelectedColIdx] = useState<number>(0);
+  const [clipboard, setClipboard] = useState<{ colKey: string; value: string } | null>(null);
+  const afterCommitRef = useRef<'enter' | 'tab' | 'blur'>('blur');
+  const rowRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // Filter state
+  const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  const [sortConfig, setSortConfig] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
+  const [filterDropdownCol, setFilterDropdownCol] = useState<string | null>(null);
+
+  // Advanced filters state
+  interface AdvancedFilters {
+    dateStart: string;
+    dateEnd: string;
+    progressMin: string;
+    progressMax: string;
+    onlyLate: boolean;
+    onlyCritical: boolean;
+    onlyDone: boolean;
+    responsibles: string[];
+  }
+  const [advFilters, setAdvFilters] = useState<AdvancedFilters>({
+    dateStart: '', dateEnd: '', progressMin: '', progressMax: '',
+    onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: []
+  });
+  const [showAdvFilters, setShowAdvFilters] = useState(false);
+
+  // Column widths state
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return {};
+    const saved = localStorage.getItem('cronograma_col_widths');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // Time scale state
+  const [timeScale, setTimeScale] = useState<TimeScale>('month');
+  const pxPerDay = PX_PER_DAY_BY_SCALE[timeScale];
+
+  // Splitter state
+  const [splitterWidth, setSplitterWidth] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const saved = localStorage.getItem('cronograma_splitter');
+    return saved ? Number(saved) : null;
+  });
+
+  // Calculate visible column widths early
+  const visibleColDefs = useMemo(() => COL_DEFS.filter(c => visibleCols.has(c.key)), [visibleCols]);
+  const effectiveWidth = (col: ColDef) => colWidths[col.key] ?? col.width;
+  const leftPanelWidth = useMemo(() => visibleColDefs.reduce((sum, c) => sum + effectiveWidth(c), 0), [visibleColDefs, colWidths]);
+  const finalLeftWidth = splitterWidth ?? leftPanelWidth;
+
+  // Scroll refs
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const hdrRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+  const dragRef = useRef<{ colKey: string; startX: number; startWidth: number } | null>(null);
+  const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchRaw.trim().toLowerCase()), 250);
+    return () => clearTimeout(t);
+  }, [searchRaw]);
+
+  const loadData = useCallback(() => {
+    if (!projectId) return;
+    setLoading(true);
+    scheduleApi.ganttData(projectId)
+      .then((data) => {
+        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
+        setTasks(sorted);
+        const ids = sorted.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        setExpanded(new Set(ids));
+      })
+      .catch(() => {
+        const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
+        setTasks(mock);
+        const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        setExpanded(new Set(ids));
+      })
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId) loadData();
+    else {
+      const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
+        .map((t, i) => ({ ...t, rowId: i + 1 }));
+      setTasks(mock);
+      const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+      setExpanded(new Set(ids));
+    }
+  }, [loadData, projectId]);
+
+  // Ancestor set for search filtering
+  const ancestorIds = useMemo((): Set<string> => {
+    if (!search) return new Set();
+    const idToParent: Record<string, string> = {};
+    tasks.forEach((t) => { if (t.parentId) idToParent[t.id] = t.parentId; });
+    const matched = tasks.filter((t) => t.name.toLowerCase().includes(search));
+    const ancestors = new Set<string>();
+    matched.forEach((t) => {
+      let pid = t.parentId;
+      while (pid) { ancestors.add(pid); pid = idToParent[pid]; }
+    });
+    return ancestors;
+  }, [search, tasks]);
+
+  // Unique values per column (for filter dropdowns)
+  const colUniqueValues = useMemo<Record<string, string[]>>(() => {
+    const result: Record<string, string[]> = {};
+    COL_DEFS.forEach(col => {
+      const vals = new Set(tasks.map(t => formatCellForFilter(t, col.key)).filter(v => v !== ''));
+      result[col.key] = Array.from(vals).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    });
+    return result;
+  }, [tasks]);
+
+  // Unique responsibles (for advanced filters)
+  const uniqueResponsibles = useMemo(() => {
+    const set = new Set(tasks.map(t => t.responsible).filter(Boolean) as string[]);
+    return Array.from(set).sort();
+  }, [tasks]);
+
+  // Visible tasks (with filters and sorting)
+  const visibleTasks = useMemo(() => {
+    // Step 1: Apply search and expand
+    let result: GanttTask[] = [];
+    if (search) {
+      const matchedIds = new Set(tasks.filter((t) => t.name.toLowerCase().includes(search)).map((t) => t.id));
+      result = tasks.filter((t) => matchedIds.has(t.id) || ancestorIds.has(t.id));
+    } else {
+      const hidden = new Set<string>();
+      tasks.forEach((t) => {
+        if (!t.parentId) return;
+        let pid: string | undefined = t.parentId;
+        while (pid) {
+          const parent = tasks.find((x) => x.id === pid);
+          if (!parent) break;
+          if (parent.hasChildren && !expanded.has(parent.id)) { hidden.add(t.id); break; }
+          pid = parent.parentId;
+        }
+      });
+      result = tasks.filter((t) => !hidden.has(t.id));
+    }
+
+    // Step 2: Apply column filters
+    Object.entries(colFilters).forEach(([key, vals]) => {
+      if (!vals || vals.length === 0) return;
+      result = result.filter(t => vals.includes(formatCellForFilter(t, key)));
+    });
+
+    // Step 3: Apply advanced filters
+    if (advFilters.onlyLate) result = result.filter(t => t.actualProgress < t.plannedProgress);
+    if (advFilters.onlyCritical) result = result.filter(t => t.isCriticalPath);
+    if (advFilters.onlyDone) result = result.filter(t => t.actualProgress === 100);
+    if (advFilters.responsibles.length > 0) {
+      result = result.filter(t => advFilters.responsibles.includes(t.responsible ?? ''));
+    }
+    if (advFilters.progressMin !== '') {
+      result = result.filter(t => t.actualProgress >= parseFloat(advFilters.progressMin));
+    }
+    if (advFilters.progressMax !== '') {
+      result = result.filter(t => t.actualProgress <= parseFloat(advFilters.progressMax));
+    }
+    if (advFilters.dateStart) {
+      result = result.filter(t => t.startDate >= advFilters.dateStart);
+    }
+    if (advFilters.dateEnd) {
+      result = result.filter(t => t.endDate <= advFilters.dateEnd);
+    }
+
+    // Step 4: Apply sorting (respecting hierarchy)
+    if (sortConfig) {
+      const childrenMap = new Map<string | undefined, GanttTask[]>();
+      result.forEach(t => {
+        const pid = t.parentId as string | undefined;
+        if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+        childrenMap.get(pid)!.push(t);
+      });
+      const sortSiblings = (group: GanttTask[]) => {
+        return [...group].sort((a, b) => {
+          const va = getCellRawValue(a, sortConfig.key);
+          const vb = getCellRawValue(b, sortConfig.key);
+          const cmp = va.localeCompare(vb, undefined, { numeric: true });
+          return sortConfig.dir === 'asc' ? cmp : -cmp;
+        });
+      };
+      const sorted: GanttTask[] = [];
+      const dfs = (parentId: string | undefined) => {
+        const children = childrenMap.get(parentId) ?? [];
+        sortSiblings(children).forEach(t => {
+          sorted.push(t);
+          dfs(t.id);
+        });
+      };
+      dfs(undefined);
+      result = sorted;
+    }
+
+    return result;
+  }, [tasks, expanded, search, ancestorIds, colFilters, advFilters, sortConfig]);
+
+  // Date range
+  const { minDate, maxDate, totalWidth } = useMemo(() => {
+    if (tasks.length === 0) {
+      const now = new Date();
+      const min = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const max = new Date(now.getFullYear(), now.getMonth() + 6, 1);
+      return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * pxPerDay };
+    }
+    const dates = tasks.flatMap((t) => [parseDate(t.startDate), parseDate(t.endDate)]);
+    const min = new Date(Math.min(...dates.map((d) => d.getTime())));
+    const max = new Date(Math.max(...dates.map((d) => d.getTime())));
+    min.setMonth(min.getMonth() - 1);
+    max.setMonth(max.getMonth() + 1);
+    return { minDate: min, maxDate: max, totalWidth: daysBetween(min, max) * pxPerDay };
+  }, [tasks, pxPerDay]);
+
+  const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * pxPerDay, [minDate, pxPerDay]);
+
+  // Inline edit handlers
+  function startInlineEdit(task: GanttTask, colKey: string, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    if (['successors', 'critical'].includes(colKey)) {
+      openEdit(task, { stopPropagation: () => {} } as any);
+      return;
+    }
+
+    let value: string;
+    switch (colKey) {
+      case 'name': value = task.name; break;
+      case 'code': value = task.code; break;
+      case 'duration': value = String(task.durationDays ?? ''); break;
+      case 'startDate': value = task.startDate.slice(0, 10); break;
+      case 'endDate': value = task.endDate.slice(0, 10); break;
+      case 'progress': value = String(task.actualProgress); break;
+      case 'weight': value = String(task.weight ?? '0'); break;
+      case 'responsible': value = task.responsible ?? ''; break;
+      case 'predecessors': value = formatDepsAsText(task, tasks); break;
+      default: return;
+    }
+    setSelectedTaskId(task.id);
+    setInlineEdit({ taskId: task.id, colKey, value });
+  }
+
+  async function commitInlineEdit() {
+    if (!inlineEdit) return;
+    const task = tasks.find(t => t.id === inlineEdit.taskId);
+    if (!task) { setInlineEdit(null); return; }
+
+    const form = formFromTask(task);
+    try {
+      switch (inlineEdit.colKey) {
+        case 'name':
+          form.name = inlineEdit.value.trim();
+          break;
+        case 'code':
+          form.code = inlineEdit.value.trim();
+          break;
+        case 'duration': {
+          const days = parseInt(inlineEdit.value) || 1;
+          if (days < 1) return;
+          form.durationDays = days;
+          const s = parseDate(task.startDate);
+          if (!isNaN(s.getTime())) form.endDate = addDays(s, days);
+          break;
+        }
+        case 'startDate': {
+          form.startDate = inlineEdit.value;
+          const s = parseDate(inlineEdit.value);
+          const e = parseDate(form.endDate);
+          if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+            form.durationDays = Math.max(1, daysBetween(s, e));
+          }
+          break;
+        }
+        case 'endDate': {
+          form.endDate = inlineEdit.value;
+          const s = parseDate(form.startDate);
+          const e = parseDate(inlineEdit.value);
+          if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+            form.durationDays = Math.max(1, daysBetween(s, e));
+          }
+          break;
+        }
+        case 'progress': {
+          form.actualProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
+          break;
+        }
+        case 'weight': {
+          form.weight = Math.max(0, parseFloat(inlineEdit.value) || 0);
+          break;
+        }
+        case 'responsible': {
+          form.responsible = inlineEdit.value.trim();
+          break;
+        }
+        case 'predecessors': {
+          setInlineEdit(null);
+          await commitPredecessors(task, inlineEdit.value);
+          return;
+        }
+      }
+
+      if (!form.name.trim()) {
+        setInlineEdit(null);
+        return;
+      }
+
+      const payload = {
+        name: form.name,
+        code: form.code,
+        level: form.level,
+        parentId: form.parentId || undefined,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        durationDays: form.durationDays,
+        plannedProgress: form.plannedProgress,
+        actualProgress: form.actualProgress,
+        weight: form.weight,
+        isCriticalPath: form.isCriticalPath,
+        responsible: form.responsible || undefined,
+      };
+
+      if (projectId) {
+        await scheduleApi.update(task.id, payload);
+      }
+
+      setTasks(prev => prev.map(t => t.id === task.id ? {
+        ...t,
+        name: form.name,
+        code: form.code,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        durationDays: form.durationDays,
+        actualProgress: form.actualProgress,
+        weight: form.weight,
+        responsible: form.responsible || undefined,
+      } : t));
+
+      addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
+    }
+
+    const mode = afterCommitRef.current;
+    afterCommitRef.current = 'blur';
+    setInlineEdit(null);
+
+    // Move to next row if Enter was pressed
+    if (mode === 'enter' && task) {
+      const rowIdx = visibleTasks.findIndex(t => t.id === task.id);
+      const next = visibleTasks[rowIdx + 1];
+      if (next) {
+        setSelectedTaskId(next.id);
+        setTimeout(() => scrollToRow(rowIdx + 1), 0);
+      }
+    }
+  }
+
+  function cancelInlineEdit() {
+    setInlineEdit(null);
+  }
+
+  // Focus on inline input when edit starts
+  useEffect(() => {
+    if (inlineEdit && inlineInputRef.current) {
+      const editId = `${inlineEdit.taskId}-${inlineEdit.colKey}`;
+      const isNewEdit = inlineEditIdRef.current !== editId;
+      inlineEditIdRef.current = editId;
+
+      inlineInputRef.current.focus();
+      if (isNewEdit && inlineEdit.colKey !== 'duration' && inlineEdit.colKey !== 'progress' && inlineEdit.colKey !== 'startDate' && inlineEdit.colKey !== 'endDate') {
+        inlineInputRef.current.select();
+      }
+    } else {
+      inlineEditIdRef.current = null;
+    }
+  }, [inlineEdit?.taskId, inlineEdit?.colKey]);
+
+  // Focus on selected row
+  useEffect(() => {
+    if (selectedTaskId && !inlineEdit) {
+      const el = leftRef.current?.querySelector<HTMLDivElement>(`[data-task-id="${selectedTaskId}"]`);
+      if (el && document.activeElement !== el) {
+        el.focus({ preventScroll: true });
+      }
+    }
+  }, [selectedTaskId, inlineEdit]);
+
+  // Scroll sync
+  function onLeftScroll() {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    if (rightRef.current && leftRef.current) rightRef.current.scrollTop = leftRef.current.scrollTop;
+    syncingRef.current = false;
+  }
+  function onRightScroll() {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    if (leftRef.current && rightRef.current) leftRef.current.scrollTop = rightRef.current.scrollTop;
+    if (hdrRef.current && rightRef.current) hdrRef.current.scrollLeft = rightRef.current.scrollLeft;
+    syncingRef.current = false;
+  }
+
+  function scrollToRow(rowIdx: number) {
+    const el = leftRef.current;
+    if (!el) return;
+    const top = rowIdx * ROW_H;
+    if (top < el.scrollTop) {
+      el.scrollTop = top;
+    } else if (top + ROW_H > el.scrollTop + el.clientHeight) {
+      el.scrollTop = top + ROW_H - el.clientHeight;
+    }
+  }
+
+  function onGanttWheel(e: React.WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setTimeScale(prev => {
+      const idx = SCALE_ORDER.indexOf(prev);
+      if (e.deltaY < 0) return SCALE_ORDER[Math.max(0, idx - 1)];
+      return SCALE_ORDER[Math.min(SCALE_ORDER.length - 1, idx + 1)];
+    });
+  }
+
+  function startSplitterResize(e: React.MouseEvent) {
+    e.preventDefault();
+    splitterDragRef.current = { startX: e.clientX, startWidth: finalLeftWidth };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onSplitterResizeMove);
+    document.addEventListener('mouseup', onSplitterResizeEnd);
+  }
+
+  function onSplitterResizeMove(e: MouseEvent) {
+    if (!splitterDragRef.current) return;
+    const delta = e.clientX - splitterDragRef.current.startX;
+    const newWidth = Math.max(100, splitterDragRef.current.startWidth + delta);
+    setSplitterWidth(newWidth);
+  }
+
+  function onSplitterResizeEnd() {
+    if (!splitterDragRef.current) return;
+    setSplitterWidth(prev => {
+      localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      return prev;
+    });
+    splitterDragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onSplitterResizeMove);
+    document.removeEventListener('mouseup', onSplitterResizeEnd);
+  }
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function expandAll() { setExpanded(new Set(tasks.filter((t) => t.hasChildren).map((t) => t.id))); }
+  function collapseAll() { setExpanded(new Set()); }
+
+  async function indentTask(taskId: string) {
+    const idx = tasks.findIndex(t => t.id === taskId);
+    if (idx <= 0) return;
+    const task = tasks[idx];
+    const prev = tasks[idx - 1];
+    const levelDelta = (prev.level + 1) - task.level;
+    const descendants = getAllDescendants(taskId, tasks);
+    let updated = tasks.map(t => {
+      if (t.id === taskId) return { ...t, parentId: prev.id, level: prev.level + 1 };
+      if (descendants.some(d => d.id === t.id)) return { ...t, level: t.level + levelDelta };
+      return t;
+    });
+    updated = updated.map(t => ({ ...t, hasChildren: updated.some(o => o.parentId === t.id) }));
+    const recalculated = recalculateWbs(updated).map((t, i) => ({ ...t, rowId: i + 1 }));
+    setTasks(recalculated);
+    const changed = recalculated.filter(t => {
+      const orig = tasks.find(o => o.id === t.id);
+      return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
+    });
+    await Promise.all(changed.map(t =>
+      scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
+    ));
+  }
+
+  async function outdentTask(taskId: string) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task?.parentId) return;
+    const parent = tasks.find(t => t.id === task.parentId);
+    if (!parent) return;
+    const levelDelta = -1;
+    const descendants = getAllDescendants(taskId, tasks);
+    let updated = tasks.map(t => {
+      if (t.id === taskId) return { ...t, parentId: parent.parentId, level: parent.level };
+      if (descendants.some(d => d.id === t.id)) return { ...t, level: t.level + levelDelta };
+      return t;
+    });
+    updated = updated.map(t => ({ ...t, hasChildren: updated.some(o => o.parentId === t.id) }));
+    const recalculated = recalculateWbs(updated).map((t, i) => ({ ...t, rowId: i + 1 }));
+    setTasks(recalculated);
+    const changed = recalculated.filter(t => {
+      const orig = tasks.find(o => o.id === t.id);
+      return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
+    });
+    await Promise.all(changed.map(t =>
+      scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
+    ));
+  }
+
+  function handleOutlineLevelChange(newLevel: number | 'all') {
+    setOutlineLevel(newLevel);
+    if (newLevel === 'all') {
+      setExpanded(new Set(tasks.filter(t => t.hasChildren).map(t => t.id)));
+    } else {
+      setExpanded(new Set(tasks.filter(t => t.hasChildren && t.level <= (newLevel as number) - 2).map(t => t.id)));
+    }
+  }
+
+  async function commitPredecessors(task: GanttTask, text: string) {
+    const { deps: parsed, errors } = parsePredecessorText(text, tasks);
+    if (errors.length) {
+      addToast({ type: 'error', title: 'Erro nas predecessoras', description: errors.join('\n') });
+      return;
+    }
+    const existing = task.predecessorDeps ?? [];
+    try {
+      await Promise.all(existing.map(d => scheduleApi.removeDependency(d.id)));
+      const created = [];
+      for (const p of parsed) {
+        const predTask = tasks.find(t => t.rowId === p.rowId);
+        if (!predTask) continue;
+        if (wouldCreateLoop(task.id, predTask.id, tasks)) {
+          addToast({ type: 'error', title: 'Dependência circular', description: `Vínculo com tarefa ${p.rowId} criaria um loop.` });
+          continue;
+        }
+        const dep = await scheduleApi.addDependency(task.id, { predecessorId: predTask.id, lagDays: p.lag, type: p.type });
+        created.push({ id: dep.id, predecessorId: dep.predecessorId, successorId: dep.successorId, lagDays: dep.lagDays, type: dep.type });
+      }
+      let updatedTasks = tasks.map(t => {
+        if (t.id === task.id) return { ...t, predecessorDeps: created };
+        const wasSuccessor = existing.some(d => d.predecessorId === t.id);
+        const isSuccessor = created.some(d => d.predecessorId === t.id);
+        if (wasSuccessor || isSuccessor) {
+          const newSuccDeps = [
+            ...(t.successorDeps ?? []).filter(d => d.successorId !== task.id),
+            ...created.filter(d => d.predecessorId === t.id),
+          ];
+          return { ...t, successorDeps: newSuccDeps };
+        }
+        return t;
+      });
+      updatedTasks = propagateDates(updatedTasks);
+      setTasks(updatedTasks);
+      const dateChanged = updatedTasks.filter(t => {
+        const orig = tasks.find(o => o.id === t.id);
+        return orig && (orig.startDate.slice(0,10) !== t.startDate.slice(0,10) || orig.endDate.slice(0,10) !== t.endDate.slice(0,10));
+      });
+      await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
+        startDate: t.startDate.slice(0,10),
+        endDate: t.endDate.slice(0,10),
+      })));
+      addToast({ type: 'success', title: 'Predecessoras atualizadas', description: `${created.length} vínculo(s) criado(s).` });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao salvar', description: String(err) });
+    }
+  }
+
+  function handleExport() {
+    if (tasks.length === 0) return;
+    const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
+    const rows = tasks.map((t) =>
+      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.actualProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
+    );
+    const csv = [header, ...rows].join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'cronograma.csv'; a.click();
+    URL.revokeObjectURL(url);
+    addToast({ type: 'success', title: 'Exportado', description: 'CSV gerado com sucesso.' });
+  }
+
+  // Column resize handlers
+  function startResize(e: React.MouseEvent, colKey: string) {
+    e.preventDefault();
+    const currentWidth = effectiveWidth(COL_DEFS.find(c => c.key === colKey)!);
+    dragRef.current = { colKey, startX: e.clientX, startWidth: currentWidth };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeEnd);
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!dragRef.current) return;
+    const delta = e.clientX - dragRef.current.startX;
+    const newWidth = Math.max(40, dragRef.current.startWidth + delta);
+    setColWidths(prev => ({ ...prev, [dragRef.current!.colKey]: newWidth }));
+  }
+
+  function onResizeEnd() {
+    if (!dragRef.current) return;
+    setColWidths(prev => {
+      localStorage.setItem('cronograma_col_widths', JSON.stringify(prev));
+      return prev;
+    });
+    dragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeEnd);
+  }
+
+  // Column toggle handler
+  function toggleCol(key: string) {
+    const col = COL_DEFS.find(c => c.key === key);
+    if (col?.fixed) return;
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      localStorage.setItem('cronograma_cols', JSON.stringify(Array.from(next)));
+      return next;
+    });
+  }
+
+  // Modal handlers
+  function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
+  function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
+  function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setModalOpen(true); }
+  function openDelete(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setDeleteTarget(task); }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await scheduleApi.delete(deleteTarget.id);
+      addToast({ type: 'success', title: 'Excluído', description: `"${deleteTarget.name}" removido.` });
+      setDeleteTarget(null);
+      loadData();
+    } catch {
+      addToast({ type: 'error', title: 'Erro', description: 'Não foi possível excluir.' });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function barLeft(task: GanttTask) { return daysBetween(minDate, parseDate(task.startDate)) * pxPerDay; }
+  function barWidth(task: GanttTask) { return Math.max(4, daysBetween(parseDate(task.startDate), parseDate(task.endDate)) * pxPerDay); }
+
+  // ── No project selected ──────────────────────────────────────────────────────
+
+  if (!currentProject) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
+        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
+          <p>Escolha um projeto no seletor acima para visualizar o cronograma.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────────
+
+  return (
+    <>
+      <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0 }}>
+
+        {/* Toolbar */}
+        <div className="ao-card-hdr" style={{ marginBottom: 8 }}>
+          <span className="ao-card-title">EAP — Cronograma completo</span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              placeholder="Buscar atividade..."
+              value={searchRaw}
+              onChange={(e) => setSearchRaw(e.target.value)}
+              style={{ padding: '5px 9px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', width: 160 }}
+            />
+            <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
+            <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
+            <select
+              value={timeScale}
+              onChange={(e) => setTimeScale(e.target.value as TimeScale)}
+              style={{
+                padding: '5px 8px',
+                fontSize: 11,
+                border: '0.5px solid var(--bd2)',
+                borderRadius: 6,
+                background: 'var(--bg1)',
+                color: 'var(--t1)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {SCALE_ORDER.map(scale => <option key={scale} value={scale}>{SCALE_LABELS[scale]}</option>)}
+            </select>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
+              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
+              title="Adicionar recuo (tornar filho da tarefa acima)"
+            >→ Recuo</button>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
+              onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
+              title="Remover recuo (subir um nível)"
+            >← Recuo</button>
+            <select
+              value={outlineLevel}
+              onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              style={{ padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
+              title="Mostrar até este nível hierárquico"
+            >
+              <option value="all">Todos os níveis</option>
+              {[1,2,3,4,5].map(n => <option key={n} value={n}>Nível {n}</option>)}
+            </select>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
+              {showColPicker && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  {COL_DEFS.map(col => (
+                    <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
+                      <input
+                        type="checkbox"
+                        checked={visibleCols.has(col.key)}
+                        disabled={col.fixed}
+                        onChange={() => toggleCol(col.key)}
+                        style={{ cursor: col.fixed ? 'not-allowed' : 'pointer' }}
+                      />
+                      <span>{col.label}</span>
+                      {col.fixed && <span style={{ fontSize: 9, color: 'var(--t3)', marginLeft: 'auto' }}>obrigatória</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={() => setShowAdvFilters(!showAdvFilters)}
+              style={{
+                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#2563EB' : undefined,
+                color: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#fff' : undefined,
+              }}
+            >
+              🔍 Filtros avançados
+            </button>
+            <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
+            <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
+            <button
+              className="ao-btn ao-btn-sm"
+              style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+              onClick={openNew}
+            >
+              + Nova atividade
+            </button>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 8, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 10, height: 5, background: 'rgba(55,138,221,.3)', borderRadius: 2, display: 'inline-block' }} />Planejado
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 10, height: 5, background: '#3B6D11', borderRadius: 2, display: 'inline-block' }} />No prazo
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 10, height: 5, background: '#C47D0F', borderRadius: 2, display: 'inline-block' }} />Leve atraso
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 10, height: 5, background: '#E24B4A', borderRadius: 2, display: 'inline-block' }} />Crítico
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 1, height: 12, background: '#E24B4A', display: 'inline-block' }} />Hoje
+          </span>
+          <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
+        </div>
+
+        {/* Gantt wrap */}
+        <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
+
+          {/* ── Left panel: Multi-column ── */}
+          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
+            {/* Header row */}
+            <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
+              {visibleColDefs.map((col, colIdx) => {
+                const colRef = useRef<HTMLButtonElement>(null);
+                const hasFilter = colFilters[col.key]?.length > 0;
+                const isFiltered = sortConfig?.key === col.key || hasFilter;
+
+                return (
+                <div
+                  key={col.key}
+                  style={{
+                    width: effectiveWidth(col),
+                    flexShrink: 0,
+                    padding: '0 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--t2)',
+                    borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    position: 'relative',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>{col.label}</span>
+                  <button
+                    ref={colRef}
+                    onClick={() => setFilterDropdownCol(filterDropdownCol === col.key ? null : col.key)}
+                    title="Filtrar coluna"
+                    style={{
+                      background: isFiltered ? '#2563EB' : 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      padding: '2px 4px',
+                      color: isFiltered ? '#fff' : 'var(--t3)',
+                      borderRadius: 3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    ⊕
+                  </button>
+                  {filterDropdownCol === col.key && (
+                    <ColFilterDropdown
+                      colKey={col.key}
+                      label={col.label}
+                      allValues={colUniqueValues[col.key] ?? []}
+                      selected={colFilters[col.key] ?? []}
+                      sortDir={sortConfig?.key === col.key ? sortConfig.dir : null}
+                      onSortChange={(dir) => setSortConfig(dir ? { key: col.key, dir } : null)}
+                      onFilterChange={(vals) => setColFilters(prev => ({ ...prev, [col.key]: vals }))}
+                      onClose={() => setFilterDropdownCol(null)}
+                      triggerRef={colRef}
+                    />
+                  )}
+                  {colIdx < visibleColDefs.length - 1 && (
+                    <div
+                      onMouseDown={(e) => startResize(e, col.key)}
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        width: 6,
+                        height: '100%',
+                        cursor: 'col-resize',
+                        zIndex: 2,
+                        userSelect: 'none',
+                      }}
+                    />
+                  )}
+                </div>
+                );
+              })}
+            </div>
+
+            {/* Rows */}
+            <div ref={leftRef} onScroll={onLeftScroll} style={{ overflowY: 'scroll', overflowX: 'hidden', flex: 1 }}>
+              {loading
+                ? Array.from({ length: 12 }).map((_, i) => (
+                    <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
+                      {visibleColDefs.map((col, colIdx) => (
+                        <div key={col.key} style={{ width: effectiveWidth(col), flexShrink: 0, borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
+                          <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '60%' }} />
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                : visibleTasks.map((task) => {
+                    const lvStyle = levelStyle(task.level, task.hasChildren);
+                    const isExpanded = expanded.has(task.id) || !!search;
+                    const isHov = hoveredRow === task.id;
+                    const isSelected = selectedTaskId === task.id;
+
+                    function handleRowKeyDown(e: React.KeyboardEvent) {
+                      if (inlineEdit) return; // keyboard is captured by cell input
+                      const rowIdx = visibleTasks.findIndex(t => t.id === task.id);
+
+                      switch (e.key) {
+                        case 'ArrowDown': {
+                          e.preventDefault();
+                          const next = visibleTasks[rowIdx + 1];
+                          if (next) {
+                            setSelectedTaskId(next.id);
+                            setTimeout(() => scrollToRow(rowIdx + 1), 0);
+                          }
+                          break;
+                        }
+                        case 'ArrowUp': {
+                          e.preventDefault();
+                          const prev = visibleTasks[rowIdx - 1];
+                          if (prev) {
+                            setSelectedTaskId(prev.id);
+                            setTimeout(() => scrollToRow(rowIdx - 1), 0);
+                          }
+                          break;
+                        }
+                        case 'ArrowRight': {
+                          e.preventDefault();
+                          const nextIdx = Math.min(selectedColIdx + 1, visibleColDefs.length - 1);
+                          setSelectedColIdx(nextIdx);
+                          break;
+                        }
+                        case 'ArrowLeft': {
+                          e.preventDefault();
+                          setSelectedColIdx(Math.max(0, selectedColIdx - 1));
+                          break;
+                        }
+                        case 'Enter': {
+                          e.preventDefault();
+                          const colKey = visibleColDefs[selectedColIdx]?.key;
+                          if (colKey) {
+                            afterCommitRef.current = 'enter';
+                            startInlineEdit(task, colKey);
+                          }
+                          break;
+                        }
+                        case 'F2': {
+                          e.preventDefault();
+                          const colKey = visibleColDefs[selectedColIdx]?.key ?? 'name';
+                          startInlineEdit(task, colKey);
+                          break;
+                        }
+                        case 'Escape': {
+                          e.preventDefault();
+                          cancelInlineEdit();
+                          break;
+                        }
+                        case 'c':
+                        case 'C': {
+                          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            const colKey = visibleColDefs[selectedColIdx]?.key;
+                            if (colKey) {
+                              const value = getCellRawValue(task, colKey);
+                              setClipboard({ colKey, value });
+                              addToast({ type: 'success', title: `Copiado: ${value}` });
+                            }
+                          }
+                          break;
+                        }
+                        case 'v':
+                        case 'V': {
+                          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            if (clipboard) {
+                              const colKey = visibleColDefs[selectedColIdx]?.key;
+                              if (colKey && colKey === clipboard.colKey && ['name','code','duration','startDate','endDate','progress','weight','responsible'].includes(colKey)) {
+                                afterCommitRef.current = 'blur';
+                                setInlineEdit({ taskId: task.id, colKey, value: clipboard.value });
+                                setTimeout(() => commitInlineEdit(), 0);
+                              }
+                            }
+                          }
+                          break;
+                        }
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={task.id}
+                        data-task-id={task.id}
+                        tabIndex={0}
+                        onMouseEnter={() => setHoveredRow(task.id)}
+                        onMouseLeave={() => setHoveredRow(null)}
+                        onClick={() => setSelectedTaskId(task.id)}
+                        onKeyDown={handleRowKeyDown}
+                        style={{
+                          height: ROW_H,
+                          display: 'flex',
+                          borderBottom: '0.5px solid var(--bd)',
+                          background: isHov ? 'var(--bg2)' : (lvStyle.background as string ?? ''),
+                          userSelect: 'none',
+                          outline: isSelected ? '1px solid #2563EB' : 'none',
+                          outlineOffset: '-1px',
+                        }}
+                      >
+                        {visibleColDefs.map((col, colIdx) => {
+                          const isNameCol = col.key === 'name';
+                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key);
+                          const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.colKey === col.key;
+                          const isCellSelected = isSelected && colIdx === selectedColIdx;
+
+                          function handleCellKeyDown(e: React.KeyboardEvent) {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              afterCommitRef.current = 'enter';
+                              commitInlineEdit();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelInlineEdit();
+                            } else if (e.key === 'Tab') {
+                              e.preventDefault();
+                              afterCommitRef.current = 'tab';
+                              const editableCols = ['name', 'code', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible'];
+                              const currentIdx = editableCols.indexOf(col.key);
+                              if (e.shiftKey) {
+                                const prevIdx = currentIdx <= 0 ? editableCols.length - 1 : currentIdx - 1;
+                                setTimeout(() => startInlineEdit(task, editableCols[prevIdx]), 0);
+                              } else {
+                                const nextIdx = currentIdx >= editableCols.length - 1 ? 0 : currentIdx + 1;
+                                setTimeout(() => startInlineEdit(task, editableCols[nextIdx]), 0);
+                              }
+                            }
+                          }
+
+                          return (
+                            <div
+                              key={col.key}
+                              onDoubleClick={isEditable ? (e) => startInlineEdit(task, col.key, e) : undefined}
+                              title={isEditable ? 'Duplo clique para editar' : ''}
+                              style={{
+                                width: effectiveWidth(col),
+                                flexShrink: 0,
+                                padding: isEditing ? '0 4px' : '0 8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: isNameCol && !isEditing ? 4 : 0,
+                                borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
+                                cursor: isEditable ? 'text' : 'default',
+                                overflow: 'hidden',
+                                backgroundColor: isEditing ? '#fff' : undefined,
+                                border: isEditing ? '2px solid #2563EB' : (isCellSelected ? '1.5px solid #2563EB' : undefined),
+                                borderRadius: isEditing || isCellSelected ? 4 : 0,
+                                ...(isNameCol && !isEditing ? lvStyle : { fontSize: 11 }),
+                              }}
+                            >
+                              {isEditing && (
+                                <input
+                                  ref={inlineInputRef}
+                                  type={col.key === 'duration' || col.key === 'progress' || col.key === 'weight' ? 'number' : col.key === 'startDate' || col.key === 'endDate' ? 'date' : 'text'}
+                                  min={col.key === 'duration' ? 1 : col.key === 'progress' || col.key === 'weight' ? 0 : undefined}
+                                  max={col.key === 'progress' ? 100 : undefined}
+                                  step={col.key === 'weight' ? 0.01 : undefined}
+                                  value={inlineEdit.value}
+                                  onChange={(e) => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                  onKeyDown={handleCellKeyDown}
+                                  onBlur={commitInlineEdit}
+                                  style={{
+                                    border: 'none',
+                                    outline: 'none',
+                                    width: '100%',
+                                    height: '100%',
+                                    padding: '4px 6px',
+                                    fontSize: 11,
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--t1)',
+                                    fontFamily: col.key === 'code' ? 'var(--mono)' : 'inherit',
+                                  }}
+                                />
+                              )}
+                              {!isEditing && <>
+                                {col.key === 'code' && (
+                                  <span style={{ fontFamily: 'var(--mono)', fontSize: 9, opacity: 0.55, whiteSpace: 'nowrap' }}>
+                                    {task.code}
+                                  </span>
+                                )}
+                                {col.key === 'name' && (
+                                  <>
+                                    {task.hasChildren ? (
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                        style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                      >▶</button>
+                                    ) : (
+                                      <span style={{ width: 16, flexShrink: 0 }} />
+                                    )}
+                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: task.level * 16 }} title={task.name}>
+                                      {task.name}
+                                    </span>
+                                    {isHov && (
+                                      <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
+                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
+                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
+                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                {col.key === 'startDate' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {fmtDate(task.startDate)}
+                                  </span>
+                                )}
+                                {col.key === 'endDate' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {fmtDate(task.endDate)}
+                                  </span>
+                                )}
+                                {col.key === 'duration' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.durationDays ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'progress' && (
+                                  <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
+                                    {task.actualProgress}%
+                                  </span>
+                                )}
+                                {col.key === 'predecessors' && (
+                                  <span style={{ fontSize: 11, fontFamily: 'var(--mono)', whiteSpace: 'nowrap', color: task.predecessorDeps?.length ? 'var(--t1)' : 'var(--t3)' }}>
+                                    {formatDepsAsText(task, tasks) || '—'}
+                                  </span>
+                                )}
+                                {col.key === 'successors' && (
+                                  <span style={{ fontSize: 11, fontFamily: 'var(--mono)', whiteSpace: 'nowrap', color: task.successorDeps?.length ? 'var(--t1)' : 'var(--t3)' }}>
+                                    {formatSuccessorsText(task, tasks) || '—'}
+                                  </span>
+                                )}
+                                {col.key === 'rowId' && (
+                                  <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'var(--mono)' }}>
+                                    {task.rowId}
+                                  </span>
+                                )}
+                                {col.key === 'weight' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.weight ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'responsible' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {task.responsible ?? '—'}
+                                  </span>
+                                )}
+                                {col.key === 'critical' && (
+                                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                                    {task.isCriticalPath ? 'Sim' : 'Não'}
+                                  </span>
+                                )}
+                              </>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+            </div>
+          </div>
+
+          {/* Splitter */}
+          <div
+            onMouseDown={startSplitterResize}
+            style={{
+              width: 6,
+              flexShrink: 0,
+              cursor: 'col-resize',
+              background: '0.5px solid var(--bd)',
+              borderLeft: '0.5px solid var(--bd)',
+              borderRight: '0.5px solid var(--bd)',
+              userSelect: 'none',
+              transition: 'background-color 0.15s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '')}
+          />
+
+          {/* ── Right Gantt panel ── */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }} onWheel={onGanttWheel}>
+
+            {/* Header with upper and lower rows */}
+            <div
+              ref={hdrRef}
+              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
+            >
+              {/* Upper header */}
+              <div style={{ flex: 1, position: 'relative', borderBottom: '0.5px solid var(--bd)' }}>
+                <div style={{ position: 'relative', width: totalWidth, height: '100%' }}>
+                  {generateHeaderCells(timeScale, minDate, maxDate, pxPerDay).upper.map((cell, i) => (
+                    <div key={i} style={{ position: 'absolute', left: cell.left, top: 0, width: cell.width, height: '100%', borderLeft: '0.5px solid var(--bd)', padding: '0 4px', fontSize: 10, color: 'var(--t2)', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                      {cell.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Lower header */}
+              <div style={{ flex: 1, position: 'relative' }}>
+                <div style={{ position: 'relative', width: totalWidth, height: '100%' }}>
+                  {generateHeaderCells(timeScale, minDate, maxDate, pxPerDay).lower.map((cell, i) => (
+                    <div key={i} style={{ position: 'absolute', left: cell.left, top: 0, width: cell.width, height: '100%', borderLeft: '0.5px solid var(--bd)', padding: '0 4px', fontSize: 9, color: 'var(--t2)', display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap' }}>
+                      {cell.label}
+                    </div>
+                  ))}
+                  <div style={{ position: 'absolute', left: todayLeft, top: 0, width: 1, background: '#E24B4A', height: '100%', zIndex: 2 }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Scrollable bar body */}
+            <div ref={rightRef} onScroll={onRightScroll} style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}>
+              <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
+                <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
+
+                {!loading && visibleTasks.map((task, rowIdx) => {
+                  const left = barLeft(task);
+                  const width = barWidth(task);
+                  const barH = task.level <= 1 ? 12 : 8;
+                  const barTop = Math.round((ROW_H - barH) / 2);
+                  const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
+                  const color = barColor(task.actualProgress, task.plannedProgress);
+                  const top = rowIdx * ROW_H;
+                  const bg = hoveredRow === task.id ? 'var(--bg2)' : rowBg(task.level);
+
+                  return (
+                    <div
+                      key={task.id}
+                      style={{ position: 'absolute', top, left: 0, width: totalWidth, height: ROW_H, background: bg, borderBottom: '0.5px solid var(--bd)' }}
+                    >
+                      {/* Planned bar */}
+                      <div style={{ position: 'absolute', left, width, height: barH, top: barTop, background: 'rgba(55,138,221,.35)', borderRadius: 3 }} />
+                      {/* Actual bar */}
+                      <div style={{ position: 'absolute', left, width: actualW, height: barH, top: barTop, background: color, borderRadius: 3, opacity: task.level <= 1 ? 1 : 0.85 }} />
+                      {task.level <= 2 && actualW > 20 && (
+                        <span style={{ position: 'absolute', left: left + actualW + 3, top: barTop - 1, fontSize: 9, color, whiteSpace: 'nowrap' }}>
+                          {task.actualProgress}%
+                        </span>
+                      )}
+                      {/* Tooltip on bar hover */}
+                      <div
+                        style={{ position: 'absolute', left, width, height: ROW_H, top: 0, cursor: 'pointer', zIndex: 2 }}
+                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${task.plannedProgress}% | Realizado: ${task.actualProgress}%`}
+                      />
+                    </div>
+                  );
+                })}
+
+                {/* Dependency arrows */}
+                <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible', zIndex: 0 }}>
+                  <defs>
+                    <marker id="depArrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L6,3 z" fill="#94a3b8" />
+                    </marker>
+                  </defs>
+                  {visibleTasks.flatMap((task, rowIdx) =>
+                    (task.predecessorDeps ?? []).map(dep => {
+                      const predTask = visibleTasks.find(t => t.id === dep.predecessorId);
+                      if (!predTask) return null;
+                      const predRowIdx = visibleTasks.indexOf(predTask);
+                      const y1 = predRowIdx * ROW_H + ROW_H / 2;
+                      const y2 = rowIdx * ROW_H + ROW_H / 2;
+                      let x1: number, x2: number;
+                      switch (dep.type) {
+                        case 'FS': x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task); break;
+                        case 'SS': x1 = barLeft(predTask); x2 = barLeft(task); break;
+                        case 'FF': x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task) + barWidth(task); break;
+                        case 'SF': x1 = barLeft(predTask); x2 = barLeft(task) + barWidth(task); break;
+                        default: x1 = barLeft(predTask) + barWidth(predTask); x2 = barLeft(task);
+                      }
+                      const midX = x1 + 8;
+                      const pathD = `M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`;
+                      return (
+                        <path key={dep.id} d={pathD} fill="none" stroke="#94a3b8" strokeWidth={1.5}
+                          strokeDasharray={dep.lagDays !== 0 ? '4,2' : undefined}
+                          markerEnd="url(#depArrow)" />
+                      );
+                    }).filter(Boolean)
+                  )}
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal create/edit */}
+      <TaskModal
+        open={modalOpen}
+        editingTask={editingTask}
+        parentTask={parentTask}
+        allTasks={tasks}
+        projectId={projectId!}
+        addToast={addToast as any}
+        onClose={() => setModalOpen(false)}
+        onSaved={loadData}
+      />
+
+      {/* Import modal */}
+      <ImportModal
+        open={showImport}
+        step={importStep}
+        file={importFile}
+        preview={importPreview}
+        importing={importing}
+        projectId={projectId!}
+        onClose={() => setShowImport(false)}
+        setStep={setImportStep}
+        setFile={setImportFile}
+        setPreview={setImportPreview}
+        setImporting={setImporting}
+        addToast={addToast as any}
+        onImportSuccess={loadData}
+      />
+
+      {/* Delete confirmation */}
+      <DeleteConfirm
+        task={deleteTarget}
+        allTasks={tasks}
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* Advanced Filters Panel */}
+      {showAdvFilters && (
+        <AdvancedFiltersPanel
+          filters={advFilters}
+          allResponsibles={uniqueResponsibles}
+          onChange={setAdvFilters}
+          onClose={() => setShowAdvFilters(false)}
+        />
+      )}
+    </>
+  );
+}

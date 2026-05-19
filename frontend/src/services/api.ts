@@ -3,8 +3,9 @@ import type {
   AuthResponse, User, Project, ProjectMember, Tower, Floor, Unit,
   ActivityType, ScheduleItem, GanttTask, CurvaSPoint, Measurement,
   WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
-  PPCHistoryPoint, BuildingData, Upload,
+  PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
 } from '../types';
+import { useStore } from '../store';
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -37,8 +38,10 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('avanco-obras-storage');
-      window.location.href = '/login';
+      const isLoginRequest = error.config?.url?.includes('/auth/login') || error.config?.url?.includes('/auth/register');
+      if (!isLoginRequest) {
+        useStore.getState().clearAuth();
+      }
     }
     return Promise.reject(error);
   },
@@ -71,7 +74,7 @@ export const projectsApi = {
   update: (id: string, data: Partial<Project>) =>
     api.patch<Project>(`/projects/${id}`, data).then((r) => r.data),
   delete: (id: string) => api.delete(`/projects/${id}`).then((r) => r.data),
-  addMember: (id: string, data: { userId: string; role: string }) =>
+  addMember: (id: string, data: { email: string; role: string }) =>
     api.post<ProjectMember>(`/projects/${id}/members`, data).then((r) => r.data),
 };
 
@@ -116,6 +119,21 @@ export const scheduleApi = {
     api.get<GanttTask[]>(`/projects/${projectId}/schedule/gantt-data`).then((r) => r.data),
   curvaS: (projectId: string) =>
     api.get<CurvaSPoint[]>(`/projects/${projectId}/schedule/curva-s`).then((r) => r.data),
+  addDependency: (successorId: string, data: { predecessorId: string; lagDays?: number; type?: string }) =>
+    api.post<ScheduleDependencyItem>(`/schedule/${successorId}/predecessors`, data).then((r) => r.data),
+  removeDependency: (depId: string) =>
+    api.delete(`/schedule/dependencies/${depId}`).then((r) => r.data),
+  getDependencies: (itemId: string) =>
+    api.get<ScheduleDependencyItem[]>(`/schedule/${itemId}/dependencies`).then((r) => r.data),
+  import: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<{ imported: number; skipped: number; errors: string[] }>(
+      `/projects/${projectId}/schedule/import`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    ).then((r) => r.data);
+  },
 };
 
 // ── Measurements ──────────────────────────────────────────────────
@@ -177,6 +195,18 @@ export const uploadsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then((r) => r.data),
   delete: (id: string) => api.delete(`/uploads/${id}`).then((r) => r.data),
+};
+
+// ── AI Import ─────────────────────────────────────────────────────
+export const aiImportApi = {
+  analyzePdf: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/projects/${projectId}/ai-import`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000, // 2 min — Gemini pode demorar em PDFs grandes
+    }).then((r) => r.data);
+  },
 };
 
 export default api;

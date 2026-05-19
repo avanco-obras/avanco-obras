@@ -13,6 +13,7 @@ import { MeasurementsModule } from './measurements/measurements.module';
 import { WeeklyPlanningModule } from './weekly-planning/weekly-planning.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { AiImportModule } from './ai-import/ai-import.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { UploadsModule } from './uploads/uploads.module';
     WeeklyPlanningModule,
     DashboardModule,
     UploadsModule,
+    AiImportModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],
