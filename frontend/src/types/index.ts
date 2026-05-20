@@ -299,3 +299,110 @@ export interface Upload {
   metadata?: Record<string, unknown>;
   createdAt: string;
 }
+
+// Baseline types
+export interface ProjectBaseline {
+  id: string;
+  projectId: string;
+  version: number;
+  createdAt: string;
+  user: {
+    id: string;
+    email: string;
+    username: string;
+    fullName: string;
+  };
+  description?: string;
+  itemCount: number;
+  dependencyCount: number;
+}
+
+export interface BaselineComparison {
+  baselineVersion: number;
+  baselineDate: string;
+  summary: {
+    totalItems: number;
+    itemsChanged: number;
+    datesChanged: number;
+    durationChanged: number;
+    progressChanged: number;
+  };
+  changes: Array<{
+    itemId: string;
+    code: string;
+    name: string;
+    changeType: 'NEW_ITEM' | 'MODIFIED' | 'DELETED_ITEM';
+    changes?: string[];
+    baseline?: {
+      startDate: string;
+      endDate: string;
+      durationDays: number;
+      actualProgress: number;
+    };
+    current?: {
+      startDate: string;
+      endDate: string;
+      durationDays: number;
+      actualProgress: number;
+    };
+  }>;
+}
+
+// Physical Progress types
+export interface ProjectReport {
+  id: string;
+  projectId: string;
+  reportNumber: number;
+  createdAt: string;
+  user: {
+    id: string;
+    email: string;
+    username: string;
+    fullName: string;
+  };
+  physicalProgress: number;
+  baselineVersion: number;
+  description?: string;
+  itemCount?: number;
+}
+
+export interface ProjectMetrics {
+  physicalProgress: number;
+  lastReportDate: string | null;
+  lastReportNumber: number;
+  activeBaselineVersion: number;
+  totalTasks: number;
+  completedTasks: number;
+}
+
+export interface ReportComparison {
+  reportNumber: number;
+  reportDate: string;
+  physicalProgress: number;
+  baselineVersion: number;
+  summary: {
+    onSchedule: number;
+    delayed: number;
+    advanced: number;
+    progressAbove: number;
+    progressBelow: number;
+  };
+  changes: Array<{
+    itemId: string;
+    code: string;
+    name: string;
+    status: 'onSchedule' | 'delayed' | 'advanced';
+    baseline: {
+      endDate: string;
+      progress: number;
+    };
+    report: {
+      endDate: string;
+      progress: number;
+    };
+    deviation: {
+      days: number;
+      progressDelta: number;
+    };
+  }>;
+}
