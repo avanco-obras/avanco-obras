@@ -7,7 +7,18 @@
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\usuario1\\\\Documents\\\\avanco-obras\" -Recurse -Force | Where-Object { $_.PSIsContainer -eq $false } | ForEach-Object { $_.FullName } | Sort-Object)",
       "Bash(npx tsc *)",
       "Bash(npx skills *)",
-      "Bash(npx prisma *)"
+      "Bash(npx prisma *)",
+      "Bash(git rm *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git rebase *)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(git am *)",
+      "PowerShell($env:GIT_EDITOR = \"true\"; git rebase --continue)",
+      "Bash(rm .git/AUTO_MERGE 2>&1 && git rebase --continue 2>&1)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Tamai\\Documents\\Projetos\\avanco-obras\\.git"
     ]
   }
 }

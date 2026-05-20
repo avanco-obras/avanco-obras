@@ -4,6 +4,7 @@ import type {
   ActivityType, ScheduleItem, GanttTask, CurvaSPoint, Measurement,
   WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
   PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
+  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison,
 } from '../types';
 import { useStore } from '../store';
 
@@ -195,6 +196,32 @@ export const uploadsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then((r) => r.data),
   delete: (id: string) => api.delete(`/uploads/${id}`).then((r) => r.data),
+};
+
+// ── Baselines ─────────────────────────────────────────────────────
+export const baselineApi = {
+  create: (projectId: string, description?: string) =>
+    api.post<ProjectBaseline>(`/projects/${projectId}/baselines`, { description }).then((r) => r.data),
+  list: (projectId: string) =>
+    api.get<ProjectBaseline[]>(`/projects/${projectId}/baselines`).then((r) => r.data),
+  get: (projectId: string, baselineId: string) =>
+    api.get<ProjectBaseline>(`/projects/${projectId}/baselines/${baselineId}`).then((r) => r.data),
+  compare: (projectId: string, baselineId: string) =>
+    api.get<BaselineComparison>(`/projects/${projectId}/baselines/${baselineId}/comparison`).then((r) => r.data),
+  delete: (projectId: string, baselineId: string) =>
+    api.delete(`/projects/${projectId}/baselines/${baselineId}`).then((r) => r.data),
+};
+
+// ── Physical Progress ─────────────────────────────────────────────
+export const progressApi = {
+  metrics: (projectId: string) =>
+    api.get<ProjectMetrics>(`/projects/${projectId}/physical-progress/metrics`).then((r) => r.data),
+  createReport: (projectId: string, description?: string) =>
+    api.post<ProjectReport>(`/projects/${projectId}/physical-progress/report`, { description }).then((r) => r.data),
+  listReports: (projectId: string) =>
+    api.get<ProjectReport[]>(`/projects/${projectId}/physical-progress/reports`).then((r) => r.data),
+  getReport: (projectId: string, reportId: string) =>
+    api.get<ReportComparison>(`/projects/${projectId}/physical-progress/reports/${reportId}`).then((r) => r.data),
 };
 
 // ── AI Import ─────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '@/store';
-import { scheduleApi } from '@/services/api';
+import { scheduleApi, baselineApi, progressApi } from '@/services/api';
 import * as xlsx from 'xlsx';
-import type { GanttTask, ScheduleDependencyItem } from '@/types';
+import type { GanttTask, ScheduleDependencyItem, ProjectMetrics, ProjectReport, ReportComparison } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -160,21 +160,25 @@ function calculateScheduledStart(task: GanttTask, tasks: GanttTask[]): { start: 
     const predEnd = parseDate(pred.endDate);
     switch (dep.type) {
       case 'FS': {
-        const candidate = addWorkDays(predEnd, dep.lagDays);
+        // FS: successor starts 1 day after predecessor ends + lag
+        const candidate = addWorkDays(predEnd, 1 + dep.lagDays);
         if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
         break;
       }
       case 'SS': {
+        // SS: successor starts when predecessor starts + lag
         const candidate = addWorkDays(predStart, dep.lagDays);
         if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
         break;
       }
       case 'FF': {
+        // FF: successor ends when predecessor ends + lag (same day if lag=0)
         const endCandidate = addWorkDays(predEnd, dep.lagDays);
         if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
         break;
       }
       case 'SF': {
+        // SF: successor ends when predecessor starts + lag
         const endCandidate = addWorkDays(predStart, dep.lagDays);
         if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
         break;
@@ -251,12 +255,28 @@ function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
 
+function workDaysBetween(start: Date, end: Date): number {
+  // Count only business days (Mon-Fri) between start and end, inclusive
+  if (start > end) return 0;
+  let count = 0;
+  const current = new Date(start);
+  while (current <= end) {
+    const dow = current.getDay();
+    if (dow !== 0 && dow !== 6) count++; // Not Sunday (0) or Saturday (6)
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+}
+
 function parseDate(s: string) {
   return new Date(s.slice(0, 10) + 'T00:00:00');
 }
 
 function addDays(date: Date, days: number): string {
-  return new Date(date.getTime() + days * 86_400_000).toISOString().split('T')[0];
+  // Use addWorkDays to count only business days (excluding weekends)
+  if (days === 0) return date.toISOString().split('T')[0];
+  const result = addWorkDays(date, days);
+  return result.toISOString().split('T')[0];
 }
 
 interface HeaderCell { label: string; left: number; width: number; }
@@ -472,6 +492,55 @@ function badgeClass(actual: number, planned: number): string {
   return 'ao-badge ao-br';
 }
 
+/**
+ * Calcula o %Real de uma tarefa pai baseado nos filhos com pesos
+ */
+function calculateParentProgress(parent: GanttTask, children: GanttTask[]): number {
+  if (children.length === 0) return parent.actualProgress;
+
+  const totalWeight = children.reduce((sum, child) => sum + (child.weight || 1), 0);
+  if (totalWeight === 0) return parent.actualProgress;
+
+  const weightedSum = children.reduce((sum, child) => {
+    return sum + (child.actualProgress || 0) * (child.weight || 1);
+  }, 0);
+
+  return Math.round((weightedSum / totalWeight) * 100) / 100;
+}
+
+/**
+ * Recalcula o %Real de todas as tarefas pai em cascata
+ */
+function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
+  let updated = [...tasks];
+
+  // Identificar todas as tarefas pai
+  const parentIds = new Set(updated.filter(t => t.parentId).map(t => t.parentId));
+
+  // Processar cada pai, começando dos filhos diretos até a raiz
+  // Iterar até estabilizar (max 10 vezes para evitar loop infinito)
+  for (let iter = 0; iter < 10; iter++) {
+    let changed = false;
+
+    updated = updated.map(task => {
+      if (!parentIds.has(task.id)) return task;
+
+      const children = updated.filter(t => t.parentId === task.id);
+      const newProgress = calculateParentProgress(task, children);
+
+      if (newProgress !== task.actualProgress) {
+        changed = true;
+        return { ...task, actualProgress: newProgress };
+      }
+      return task;
+    });
+
+    if (!changed) break;
+  }
+
+  return updated;
+}
+
 function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
   if (level === 0) return { background: 'var(--s2)', fontWeight: 700, fontSize: 12 };
   if (level === 1) return { background: hasChildren ? 'var(--s1)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
@@ -536,7 +605,7 @@ function formFromTask(task: GanttTask): FormState {
     parentId: task.parentId ?? '',
     startDate: task.startDate.slice(0, 10),
     endDate: task.endDate.slice(0, 10),
-    durationDays: task.durationDays ?? Math.max(1, daysBetween(start, end)),
+    durationDays: task.durationDays ?? Math.max(1, workDaysBetween(start, end)),
     plannedProgress: task.plannedProgress,
     actualProgress: task.actualProgress,
     weight: task.weight ?? 1,
@@ -598,7 +667,7 @@ interface ColFilterDropdownProps {
   onSortChange: (dir: 'asc' | 'desc' | null) => void;
   onFilterChange: (values: string[]) => void;
   onClose: () => void;
-  triggerRef: React.RefObject<HTMLButtonElement>;
+  triggerRef: HTMLButtonElement | null | undefined;
 }
 
 function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSortChange, onFilterChange, onClose, triggerRef }: ColFilterDropdownProps) {
@@ -606,8 +675,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
   const [coords, setCoords] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
+    if (triggerRef) {
+      const rect = triggerRef.getBoundingClientRect();
       setCoords({ top: rect.bottom + 4, left: rect.left });
     }
   }, [triggerRef]);
@@ -1000,7 +1069,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         const s = parseDate((key === 'startDate' ? value : prev.startDate) as string);
         const e = parseDate((key === 'endDate' ? value : prev.endDate) as string);
         if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e > s) {
-          next.durationDays = daysBetween(s, e);
+          next.durationDays = workDaysBetween(s, e);
         }
       } else if (key === 'durationDays' && (value as number) > 0) {
         const s = parseDate(prev.startDate);
@@ -1657,13 +1726,55 @@ export default function Cronograma() {
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
-  // Column visibility state
+  // Column visibility state (ID column always visible)
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set(COL_DEFS.map(c => c.key));
-    const saved = localStorage.getItem('cronograma_cols');
-    return saved ? new Set(JSON.parse(saved)) : new Set(COL_DEFS.map(c => c.key));
+    try {
+      const saved = localStorage.getItem('cronograma_cols');
+      let cols: Set<string>;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          cols = new Set(parsed);
+        } else {
+          console.warn('Invalid cronograma_cols format, resetting');
+          cols = new Set(COL_DEFS.map(c => c.key));
+        }
+      } else {
+        cols = new Set(COL_DEFS.map(c => c.key));
+      }
+      cols.add('rowId'); // Ensure ID column is always included
+      return cols;
+    } catch (e) {
+      console.error('Error loading visible columns:', e);
+      // Clear corrupted data
+      try {
+        localStorage.removeItem('cronograma_cols');
+      } catch {}
+      return new Set(COL_DEFS.map(c => c.key));
+    }
   });
   const [showColPicker, setShowColPicker] = useState(false);
+
+  // Baseline state
+  const [baselines, setBaselines] = useState<any[]>([]);
+  const [showBaselineConfirm, setShowBaselineConfirm] = useState(false);
+  const [baselineDescription, setBaselineDescription] = useState('');
+  const [showBaselineHistory, setShowBaselineHistory] = useState(false);
+  const [selectedBaseline, setSelectedBaseline] = useState<any | null>(null);
+  const [baselineComparison, setBaselineComparison] = useState<any | null>(null);
+  const [savingBaseline, setSavingBaseline] = useState(false);
+  const [showBaselineMenu, setShowBaselineMenu] = useState(false);
+
+  // Physical progress state
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
+  const [reports, setReports] = useState<ProjectReport[]>([]);
+  const [showSaveReportConfirm, setShowSaveReportConfirm] = useState(false);
+  const [reportDescription, setReportDescription] = useState('');
+  const [savingReport, setSavingReport] = useState(false);
+  const [showReportHistory, setShowReportHistory] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
+  const [showReportMenu, setShowReportMenu] = useState(false);
 
   // Inline edit state
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -1702,8 +1813,26 @@ export default function Cronograma() {
   // Column widths state
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {};
-    const saved = localStorage.getItem('cronograma_col_widths');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('cronograma_col_widths');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed;
+        } else {
+          console.warn('Invalid cronograma_col_widths format, resetting');
+          return {};
+        }
+      }
+      return {};
+    } catch (e) {
+      console.error('Error loading column widths:', e);
+      // Clear corrupted data
+      try {
+        localStorage.removeItem('cronograma_col_widths');
+      } catch {}
+      return {};
+    }
   });
 
   // Time scale state
@@ -1729,6 +1858,7 @@ export default function Cronograma() {
   const hdrRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
   const dragRef = useRef<{ colKey: string; startX: number; startWidth: number } | null>(null);
+  const colRefsMap = useRef<Map<string, HTMLButtonElement | null>>(new Map());
   const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // Debounce search
@@ -1736,6 +1866,66 @@ export default function Cronograma() {
     const t = setTimeout(() => setSearch(searchRaw.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
   }, [searchRaw]);
+
+  // Sync visible columns to localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const data = Array.from(visibleCols);
+      localStorage.setItem('cronograma_cols', JSON.stringify(data));
+      console.log('[Cronograma] Saved visible columns:', data);
+    } catch (e) {
+      console.error('[Cronograma] Failed to save visible columns:', e);
+    }
+  }, [visibleCols]);
+
+  // Sync column widths to localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('cronograma_col_widths', JSON.stringify(colWidths));
+      console.log('[Cronograma] Saved column widths');
+    } catch (e) {
+      console.error('[Cronograma] Failed to save column widths:', e);
+    }
+  }, [colWidths]);
+
+  // Clean up column refs map when visible columns change
+  useEffect(() => {
+    const visibleKeys = new Set(visibleColDefs.map(c => c.key));
+    const keysToDelete: string[] = [];
+    colRefsMap.current.forEach((_, key) => {
+      if (!visibleKeys.has(key)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => colRefsMap.current.delete(key));
+  }, [visibleColDefs]);
+
+  // Get enterprise progress from root task (level 0 or no parent)
+  const enterpriseProgress = useMemo(() => {
+    // Try to find by ID first
+    let root = tasks.find(t => t.id === '1');
+
+    // If not found by ID, find first level-0 task
+    if (!root) {
+      root = tasks.find(t => t.level === 0 && !t.parentId);
+    }
+
+    // If still not found, use first task
+    if (!root && tasks.length > 0) {
+      root = tasks[0];
+    }
+
+    const progress = root?.actualProgress ?? 0;
+    console.log('[Cronograma] Enterprise Progress:', {
+      method: root?.id === '1' ? 'byId' : root?.level === 0 ? 'byLevel' : 'byFirst',
+      taskId: root?.id,
+      taskName: root?.name,
+      progress,
+    });
+    return progress;
+  }, [tasks]);
 
   const loadData = useCallback(() => {
     if (!projectId) return;
@@ -1759,8 +1949,10 @@ export default function Cronograma() {
   }, [projectId]);
 
   useEffect(() => {
-    if (projectId) loadData();
-    else {
+    if (projectId) {
+      loadData();
+      loadMetrics();
+    } else {
       const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
         .map((t, i) => ({ ...t, rowId: i + 1 }));
       setTasks(mock);
@@ -1948,7 +2140,7 @@ export default function Cronograma() {
           const s = parseDate(inlineEdit.value);
           const e = parseDate(form.endDate);
           if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-            form.durationDays = Math.max(1, daysBetween(s, e));
+            form.durationDays = Math.max(1, workDaysBetween(s, e));
           }
           break;
         }
@@ -1957,7 +2149,7 @@ export default function Cronograma() {
           const s = parseDate(form.startDate);
           const e = parseDate(inlineEdit.value);
           if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-            form.durationDays = Math.max(1, daysBetween(s, e));
+            form.durationDays = Math.max(1, workDaysBetween(s, e));
           }
           break;
         }
@@ -2004,7 +2196,7 @@ export default function Cronograma() {
         await scheduleApi.update(task.id, payload);
       }
 
-      setTasks(prev => prev.map(t => t.id === task.id ? {
+      let updatedTasks = tasks.map(t => t.id === task.id ? {
         ...t,
         name: form.name,
         code: form.code,
@@ -2014,8 +2206,48 @@ export default function Cronograma() {
         actualProgress: form.actualProgress,
         weight: form.weight,
         responsible: form.responsible || undefined,
-      } : t));
+      } : t);
 
+      // If progress changed, recalculate parent progress in cascade
+      if (inlineEdit.colKey === 'progress') {
+        const originalTasks = tasks;
+        updatedTasks = recalculateParentProgress(updatedTasks);
+
+        // Update parents in backend
+        const parentsChanged = updatedTasks.filter(t => {
+          const orig = originalTasks.find(o => o.id === t.id);
+          return orig && t.parentId && orig.actualProgress !== t.actualProgress;
+        });
+
+        if (parentsChanged.length > 0 && projectId) {
+          await Promise.all(parentsChanged.map(t => scheduleApi.update(t.id, {
+            actualProgress: t.actualProgress,
+          })));
+        }
+
+        console.log('[Cronograma] Parent progress recalculated:', {
+          task: task.name,
+          newProgress: form.actualProgress,
+          parentsUpdated: parentsChanged.map(t => ({ id: t.id, name: t.name, progress: t.actualProgress }))
+        });
+      }
+
+      // If duration/dates changed, propagate to dependent tasks
+      if (['duration', 'startDate', 'endDate'].includes(inlineEdit.colKey)) {
+        updatedTasks = propagateDates(updatedTasks);
+        const dateChanged = updatedTasks.filter(t => {
+          const orig = tasks.find(o => o.id === t.id);
+          return orig && (orig.startDate.slice(0,10) !== t.startDate.slice(0,10) || orig.endDate.slice(0,10) !== t.endDate.slice(0,10));
+        });
+        if (dateChanged.length > 0 && projectId) {
+          await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
+            startDate: t.startDate.slice(0,10),
+            endDate: t.endDate.slice(0,10),
+          })));
+        }
+      }
+
+      setTasks(updatedTasks);
       addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -2103,6 +2335,15 @@ export default function Cronograma() {
     });
   }
 
+  function onTableWheel(e: React.WheelEvent) {
+    if (e.ctrlKey) return; // Let Gantt handle Ctrl+wheel for zoom
+    if (!leftRef.current || !rightRef.current) return;
+    e.preventDefault();
+    const scrollDelta = e.deltaY;
+    leftRef.current.scrollTop += scrollDelta;
+    rightRef.current.scrollTop += scrollDelta;
+  }
+
   function startSplitterResize(e: React.MouseEvent) {
     e.preventDefault();
     splitterDragRef.current = { startX: e.clientX, startWidth: finalLeftWidth };
@@ -2122,7 +2363,11 @@ export default function Cronograma() {
   function onSplitterResizeEnd() {
     if (!splitterDragRef.current) return;
     setSplitterWidth(prev => {
-      localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      try {
+        localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      } catch (e) {
+        console.error('Failed to save splitter position:', e);
+      }
       return prev;
     });
     splitterDragRef.current = null;
@@ -2249,6 +2494,102 @@ export default function Cronograma() {
     }
   }
 
+  // Baseline functions
+  async function loadBaselineHistory() {
+    if (!projectId) return;
+    try {
+      const data = await baselineApi.list(projectId);
+      setBaselines(data);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar histórico', description: String(err) });
+    }
+  }
+
+  async function saveBaseline() {
+    if (!projectId) return;
+    setSavingBaseline(true);
+    try {
+      const result = await baselineApi.create(projectId, baselineDescription || undefined);
+      addToast({
+        type: 'success',
+        title: 'Linha de Base Gravada',
+        description: `Versão ${result.version} criada com sucesso.`,
+      });
+      setShowBaselineConfirm(false);
+      setBaselineDescription('');
+      await loadBaselineHistory();
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao gravar', description: String(err) });
+    } finally {
+      setSavingBaseline(false);
+    }
+  }
+
+  async function loadBaselineComparison(baseline: any) {
+    if (!projectId) return;
+    try {
+      const comparison = await baselineApi.compare(projectId, baseline.id);
+      setBaselineComparison(comparison);
+      setSelectedBaseline(baseline);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao comparar', description: String(err) });
+    }
+  }
+
+  // Physical progress functions
+  async function loadMetrics() {
+    if (!projectId) return;
+    try {
+      const data = await progressApi.metrics(projectId);
+      setMetrics(data);
+    } catch (err) {
+      console.error('Erro ao carregar métricas:', err);
+    }
+  }
+
+  async function loadReportHistory() {
+    if (!projectId) return;
+    try {
+      const data = await progressApi.listReports(projectId);
+      setReports(data);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar histórico', description: String(err) });
+    }
+  }
+
+  async function saveReport() {
+    if (!projectId) return;
+    setSavingReport(true);
+    try {
+      const result = await progressApi.createReport(projectId, reportDescription || undefined);
+      addToast({
+        type: 'success',
+        title: 'Relatório Gravado',
+        description: `Report #${result.reportNumber} criado com sucesso.`,
+      });
+      setShowSaveReportConfirm(false);
+      setReportDescription('');
+      // Reload all data to show updated enterprise progress
+      await loadData();
+      await loadMetrics();
+      await loadReportHistory();
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao gravar', description: String(err) });
+    } finally {
+      setSavingReport(false);
+    }
+  }
+
+  async function loadReportComparison(report: ProjectReport) {
+    if (!projectId) return;
+    try {
+      const comparison = await progressApi.getReport(projectId, report.id);
+      setSelectedReport(comparison);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar comparação', description: String(err) });
+    }
+  }
+
   function handleExport() {
     if (tasks.length === 0) return;
     const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
@@ -2284,10 +2625,6 @@ export default function Cronograma() {
 
   function onResizeEnd() {
     if (!dragRef.current) return;
-    setColWidths(prev => {
-      localStorage.setItem('cronograma_col_widths', JSON.stringify(prev));
-      return prev;
-    });
     dragRef.current = null;
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
@@ -2295,14 +2632,23 @@ export default function Cronograma() {
     document.removeEventListener('mouseup', onResizeEnd);
   }
 
-  // Column toggle handler
+  // Column toggle handler (ID column always required)
   function toggleCol(key: string) {
+    console.log('[Cronograma] toggleCol called for:', key);
+    if (key === 'rowId') return; // ID column cannot be toggled
     const col = COL_DEFS.find(c => c.key === key);
     if (col?.fixed) return;
     setVisibleCols((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      localStorage.setItem('cronograma_cols', JSON.stringify(Array.from(next)));
+      if (next.has(key)) {
+        next.delete(key);
+        console.log('[Cronograma] Hiding column:', key);
+      } else {
+        next.add(key);
+        console.log('[Cronograma] Showing column:', key);
+      }
+      next.add('rowId'); // Always ensure ID column is in the saved state
+      console.log('[Cronograma] New visible columns:', Array.from(next));
       return next;
     });
   }
@@ -2348,10 +2694,10 @@ export default function Cronograma() {
 
   return (
     <>
-      <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0 }}>
+      <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0, display: 'flex', flexDirection: 'column', height: '100vh', maxHeight: '100vh', overflow: 'hidden' }}>
 
         {/* Toolbar */}
-        <div className="ao-card-hdr" style={{ marginBottom: 8 }}>
+        <div className="ao-card-hdr" style={{ marginBottom: 4, flexShrink: 0 }}>
           <span className="ao-card-title">EAP — Cronograma completo</span>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
@@ -2380,16 +2726,16 @@ export default function Cronograma() {
             </select>
             <button
               className="ao-btn ao-btn-sm"
-              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
-              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
-              title="Adicionar recuo (tornar filho da tarefa acima)"
-            >→ Recuo</button>
-            <button
-              className="ao-btn ao-btn-sm"
               disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
               onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
               title="Remover recuo (subir um nível)"
-            >← Recuo</button>
+            >←</button>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
+              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
+              title="Adicionar recuo (tornar filho da tarefa acima)"
+            >→</button>
             <select
               value={outlineLevel}
               onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
@@ -2403,7 +2749,7 @@ export default function Cronograma() {
               <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
               {showColPicker && (
                 <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                  {COL_DEFS.map(col => (
+                  {COL_DEFS.filter(col => col.key !== 'rowId').map(col => (
                     <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
                       <input
                         type="checkbox"
@@ -2429,6 +2775,36 @@ export default function Cronograma() {
             >
               🔍 Filtros avançados
             </button>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" style={{ background: '#7c3aed', color: '#fff', border: 'none' }} onClick={() => setShowBaselineMenu(!showBaselineMenu)} title="Opções de baseline">
+                📊 Baseline
+              </button>
+              {showBaselineMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { loadBaselineHistory(); setShowBaselineHistory(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Visualizar histórico de linhas de base">
+                    📊 Histórico Baseline
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowBaselineConfirm(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Gravar uma nova linha de base do cronograma">
+                    💾 Gravar Baseline
+                  </button>
+                </div>
+              )}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" style={{ background: '#ec4899', color: '#fff', border: 'none' }} onClick={() => setShowReportMenu(!showReportMenu)} title="Opções de report">
+                📈 Report
+              </button>
+              {showReportMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowSaveReportConfirm(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Gravar relatório de avanço físico">
+                    💾 Gravar Report
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { loadReportHistory(); setShowReportHistory(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Visualizar histórico de relatórios">
+                    📈 Histórico Reports
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
             <button
@@ -2442,7 +2818,7 @@ export default function Cronograma() {
         </div>
 
         {/* Legend */}
-        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 4, flexWrap: 'wrap', flexShrink: 0 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 10, height: 5, background: 'rgba(55,138,221,.3)', borderRadius: 2, display: 'inline-block' }} />Planejado
           </span>
@@ -2461,15 +2837,41 @@ export default function Cronograma() {
           <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
         </div>
 
+        {/* Physical Progress Metrics */}
+        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--t1)', marginBottom: 4, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 8, alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>📊 % Real do Empreendimento:</span>
+            <span style={{ fontSize: 18, fontWeight: 700, color: '#10b981' }}>{enterpriseProgress.toFixed(1)}%</span>
+          </div>
+          {metrics && (
+            <>
+              {metrics.lastReportDate && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
+                  <span>Último Report: {new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}</span>
+                </div>
+              )}
+              {metrics.lastReportNumber > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
+                  <span>Report #{metrics.lastReportNumber}</span>
+                </div>
+              )}
+              {metrics.activeBaselineVersion > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
+                  <span>Baseline v{metrics.activeBaselineVersion}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         {/* Gantt wrap */}
-        <div style={{ display: 'flex', border: '1px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', border: '1px solid var(--bd)', borderRadius: 12, overflow: 'hidden', flex: 1, minHeight: 0 }}>
 
           {/* ── Left panel: Multi-column ── */}
-          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--s0)' }}>
+          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--s0)', height: '100%' }}>
             {/* Header row */}
             <div style={{ height: HDR_H, background: 'var(--s1)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
               {visibleColDefs.map((col, colIdx) => {
-                const colRef = useRef<HTMLButtonElement>(null);
                 const hasFilter = colFilters[col.key]?.length > 0;
                 const isFiltered = sortConfig?.key === col.key || hasFilter;
 
@@ -2495,7 +2897,10 @@ export default function Cronograma() {
                 >
                   <span>{col.label}</span>
                   <button
-                    ref={colRef}
+                    ref={(el) => {
+                      if (el) colRefsMap.current.set(col.key, el);
+                      else colRefsMap.current.delete(col.key);
+                    }}
                     onClick={() => setFilterDropdownCol(filterDropdownCol === col.key ? null : col.key)}
                     title="Filtrar coluna"
                     style={{
@@ -2521,7 +2926,7 @@ export default function Cronograma() {
                       onSortChange={(dir) => setSortConfig(dir ? { key: col.key, dir } : null)}
                       onFilterChange={(vals) => setColFilters(prev => ({ ...prev, [col.key]: vals }))}
                       onClose={() => setFilterDropdownCol(null)}
-                      triggerRef={colRef}
+                      triggerRef={colRefsMap.current.get(col.key)}
                     />
                   )}
                   {colIdx < visibleColDefs.length - 1 && (
@@ -2545,7 +2950,7 @@ export default function Cronograma() {
             </div>
 
             {/* Rows */}
-            <div ref={leftRef} onScroll={onLeftScroll} style={{ overflowY: 'scroll', overflowX: 'hidden', flex: 1 }}>
+            <div ref={leftRef} onScroll={onLeftScroll} onWheel={onTableWheel} style={{ overflowY: 'hidden', overflowX: 'hidden', flex: 1 }}>
               {loading
                 ? Array.from({ length: 12 }).map((_, i) => (
                     <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
@@ -2999,6 +3404,296 @@ export default function Cronograma() {
           onChange={setAdvFilters}
           onClose={() => setShowAdvFilters(false)}
         />
+      )}
+
+      {/* Baseline Confirmation Modal */}
+      {showBaselineConfirm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--t1)' }}>Gravar Linha de Base</h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--t2)', fontSize: 14 }}>
+              Você está prestes a gravar uma snapshot completa do cronograma atual. Essa será utilizada como referência para monitoramento e comparação.
+            </p>
+            <div style={{ margin: '0 0 16px 0' }}>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>
+                Descrição (opcional):
+              </label>
+              <input
+                type="text"
+                value={baselineDescription}
+                onChange={(e) => setBaselineDescription(e.target.value)}
+                placeholder="ex: Baseline após aprovação de escopo"
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)', color: 'var(--t1)', fontSize: 12, boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowBaselineConfirm(false); setBaselineDescription(''); }}
+                disabled={savingBaseline}
+              >
+                Cancelar
+              </button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#7c3aed', color: '#fff', border: 'none' }}
+                onClick={saveBaseline}
+                disabled={savingBaseline}
+              >
+                {savingBaseline ? '⏳ Gravando...' : '💾 Gravar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Baseline History Modal */}
+      {showBaselineHistory && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 20px 0', color: 'var(--t1)' }}>Histórico de Linhas de Base</h2>
+            {baselines.length === 0 ? (
+              <p style={{ color: 'var(--t3)', fontSize: 13 }}>Nenhuma linha de base gravada ainda.</p>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--bd)' }}>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Versão</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Data/Hora</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Usuário</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Itens</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Descrição</th>
+                      <th style={{ padding: 8, textAlign: 'center', color: 'var(--t2)' }}>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {baselines.map((b) => (
+                      <tr key={b.id} style={{ borderBottom: '0.5px solid var(--bd)' }}>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 500 }}>Baseline {String(b.version).padStart(2, '0')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{new Date(b.createdAt).toLocaleString('pt-BR')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{b.user.fullName || b.user.email}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{b.itemCount}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.description || '—'}</td>
+                        <td style={{ padding: 8, textAlign: 'center' }}>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                            onClick={() => loadBaselineComparison(b)}
+                          >
+                            Comparar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {baselineComparison && (
+                  <div style={{ marginTop: 24, padding: 16, background: 'var(--bg2)', borderRadius: 8 }}>
+                    <h3 style={{ margin: '0 0 12px 0', color: 'var(--t1)', fontSize: 13 }}>
+                      Comparação: {selectedBaseline.version === 1 ? 'Inicial' : `Versão ${selectedBaseline.version}`} vs Atual
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #3b82f6' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Tarefas Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.itemsChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #ef4444' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Datas Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.datesChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #f59e0b' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Durações Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.durationChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #10b981' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Progresso Alterado</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.progressChanged}</div>
+                      </div>
+                    </div>
+
+                    {baselineComparison.changes.length > 0 && (
+                      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <h4 style={{ margin: '0 0 8px 0', color: 'var(--t2)', fontSize: 12 }}>Detalhes das Alterações:</h4>
+                        {baselineComparison.changes.slice(0, 10).map((change: any, idx: number) => (
+                          <div key={idx} style={{ padding: 8, marginBottom: 8, background: 'var(--bg1)', borderRadius: 4, fontSize: 11, borderLeft: `3px solid ${change.changeType === 'NEW_ITEM' ? '#10b981' : change.changeType === 'DELETED_ITEM' ? '#ef4444' : '#f59e0b'}` }}>
+                            <div style={{ fontWeight: 600, color: 'var(--t1)' }}>{change.code} - {change.name}</div>
+                            <div style={{ color: 'var(--t3)', marginTop: 4 }}>
+                              {change.changeType === 'NEW_ITEM' && '✚ Nova tarefa'}
+                              {change.changeType === 'DELETED_ITEM' && '✕ Tarefa removida'}
+                              {change.changeType === 'MODIFIED' && `Alterado: ${change.changes.join(', ')}`}
+                            </div>
+                          </div>
+                        ))}
+                        {baselineComparison.changes.length > 10 && (
+                          <p style={{ color: 'var(--t3)', fontSize: 11, margin: '8px 0 0 0' }}>... e mais {baselineComparison.changes.length - 10} alterações</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowBaselineHistory(false); setBaselineComparison(null); setSelectedBaseline(null); }}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Report Modal */}
+      {showSaveReportConfirm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--t1)' }}>Gravar Relatório de Avanço Físico</h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--t2)', fontSize: 14 }}>
+              Você está prestes a gravar uma snapshot do avanço físico atual. Esse relatório será comparado com a linha de base para análise de desempenho.
+            </p>
+            <div style={{ margin: '0 0 16px 0' }}>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>
+                Descrição (opcional):
+              </label>
+              <input
+                type="text"
+                value={reportDescription}
+                onChange={(e) => setReportDescription(e.target.value)}
+                placeholder="ex: Avanço após conclusão da fundação"
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)', color: 'var(--t1)', fontSize: 12, boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowSaveReportConfirm(false); setReportDescription(''); }}
+                disabled={savingReport}
+              >
+                Cancelar
+              </button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#ec4899', color: '#fff', border: 'none' }}
+                onClick={saveReport}
+                disabled={savingReport}
+              >
+                {savingReport ? '⏳ Gravando...' : '📊 Gravar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report History Modal */}
+      {showReportHistory && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 20px 0', color: 'var(--t1)' }}>Histórico de Relatórios de Avanço Físico</h2>
+            {reports.length === 0 ? (
+              <p style={{ color: 'var(--t3)', fontSize: 13 }}>Nenhum relatório gravado ainda.</p>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--bd)' }}>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Report #</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Data/Hora</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Usuário</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Avanço %</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Descrição</th>
+                      <th style={{ padding: 8, textAlign: 'center', color: 'var(--t2)' }}>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.map((r) => (
+                      <tr key={r.id} style={{ borderBottom: '0.5px solid var(--bd)' }}>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 500 }}>Report #{String(r.reportNumber).padStart(3, '0')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{new Date(r.createdAt).toLocaleString('pt-BR')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{r.user.fullName || r.user.email}</td>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600 }}>{r.physicalProgress.toFixed(1)}%</td>
+                        <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
+                        <td style={{ padding: 8, textAlign: 'center' }}>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                            onClick={() => loadReportComparison(r)}
+                          >
+                            Comparar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {selectedReport && (
+                  <div style={{ marginTop: 24, padding: 16, background: 'var(--bg2)', borderRadius: 8 }}>
+                    <h3 style={{ margin: '0 0 12px 0', color: 'var(--t1)', fontSize: 13 }}>
+                      Report #{selectedReport.reportNumber} vs Baseline v{selectedReport.baselineVersion}
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #3b82f6' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>No Prazo</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.onSchedule}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #ef4444' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Atrasadas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.delayed}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #10b981' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Adiantadas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.advanced}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #f59e0b' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Avanço Acima</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.progressAbove}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #a855f7' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Avanço Abaixo</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.progressBelow}</div>
+                      </div>
+                    </div>
+
+                    {selectedReport.changes.length > 0 && (
+                      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <h4 style={{ margin: '0 0 8px 0', color: 'var(--t2)', fontSize: 12 }}>Detalhes das Tarefas:</h4>
+                        {selectedReport.changes.slice(0, 10).map((change, idx: number) => (
+                          <div key={idx} style={{ padding: 8, marginBottom: 8, background: 'var(--bg1)', borderRadius: 4, fontSize: 11, borderLeft: `3px solid ${change.status === 'onSchedule' ? '#3b82f6' : change.status === 'delayed' ? '#ef4444' : '#10b981'}` }}>
+                            <div style={{ fontWeight: 600, color: 'var(--t1)' }}>{change.code} - {change.name}</div>
+                            <div style={{ color: 'var(--t3)', marginTop: 4 }}>
+                              Status: <span style={{ fontWeight: 500, color: 'var(--t1)' }}>
+                                {change.status === 'onSchedule' && 'No prazo'}
+                                {change.status === 'delayed' && `Atrasado ${change.deviation.days} dia(s)`}
+                                {change.status === 'advanced' && `Adiantado ${Math.abs(change.deviation.days)} dia(s)`}
+                              </span>
+                              <br />
+                              Progresso: <span style={{ fontWeight: 500, color: 'var(--t1)' }}>
+                                Planejado {change.baseline.progress.toFixed(1)}% → Real {change.report.progress.toFixed(1)}%
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        {selectedReport.changes.length > 10 && (
+                          <p style={{ color: 'var(--t3)', fontSize: 11, margin: '8px 0 0 0' }}>... e mais {selectedReport.changes.length - 10} tarefas</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowReportHistory(false); setSelectedReport(null); }}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
