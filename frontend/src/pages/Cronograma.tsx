@@ -667,7 +667,7 @@ interface ColFilterDropdownProps {
   onSortChange: (dir: 'asc' | 'desc' | null) => void;
   onFilterChange: (values: string[]) => void;
   onClose: () => void;
-  triggerRef: React.RefObject<HTMLButtonElement>;
+  triggerRef: HTMLButtonElement | null | undefined;
 }
 
 function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSortChange, onFilterChange, onClose, triggerRef }: ColFilterDropdownProps) {
@@ -675,8 +675,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
   const [coords, setCoords] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
+    if (triggerRef) {
+      const rect = triggerRef.getBoundingClientRect();
       setCoords({ top: rect.bottom + 4, left: rect.left });
     }
   }, [triggerRef]);
@@ -2926,7 +2926,7 @@ export default function Cronograma() {
                       onSortChange={(dir) => setSortConfig(dir ? { key: col.key, dir } : null)}
                       onFilterChange={(vals) => setColFilters(prev => ({ ...prev, [col.key]: vals }))}
                       onClose={() => setFilterDropdownCol(null)}
-                      triggerRef={colRefsMap.current.get(col.key) ?? undefined}
+                      triggerRef={colRefsMap.current.get(col.key)}
                     />
                   )}
                   {colIdx < visibleColDefs.length - 1 && (
