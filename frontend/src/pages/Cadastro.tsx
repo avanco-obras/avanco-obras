@@ -532,363 +532,277 @@ export default function Cadastro() {
     setMembers((prev) => prev.filter((m) => m.id !== id));
   }
 
-  return (
-    <div className="ao-app">
+  // ── inline styles ─────────────────────────────────────────────────────────
+  const fgStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 };
+  const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.7px' };
+  const inputStyle: React.CSSProperties = { padding: '6px 9px', fontSize: 12, borderRadius: 'var(--r-md)', border: '1px solid var(--bd)', background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)', outline: 'none', transition: 'border-color .1s, box-shadow .1s', width: '100%' };
+  const sectionLabel: React.CSSProperties = { fontSize: 9, fontWeight: 800, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.8px', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 };
 
-      {/* ── Section 1: Dados do empreendimento ──────────────────────── */}
+  function SectionRule() {
+    return <div style={{ ...sectionLabel }}><span style={{ whiteSpace: 'nowrap' }}>{'──'}</span><div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+      {/* ── Card 1: Dados do empreendimento ───────────────────────── */}
       <div className="ao-card">
         <div className="ao-card-hdr">
-          <p className="ao-card-title">Dados do empreendimento</p>
-          <button
-            className="ao-btn ao-btn-primary ao-btn-sm"
-            onClick={handleSaveProject}
-            disabled={saving}
-          >
-            {saving ? (
-              <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
-            ) : (
-              <Save size={12} />
-            )}
-            {saving ? 'Salvando…' : 'Salvar'}
+          <span className="ao-card-title">Empreendimento</span>
+          <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving}>
+            {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
+            {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
           </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* Nome do empreendimento — full width */}
-          <div className="ao-fg" style={{ gridColumn: 'span 2' }}>
-            <label>Nome do empreendimento</label>
-            <input
-              value={form.name}
-              onChange={(e) => handleFormChange('name', e.target.value)}
-              placeholder="Ex.: Residencial Parque das Flores"
-            />
+          {/* ── Identificação ── */}
+          <div>
+            <div style={{ ...sectionLabel }}>Identificação<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div style={{ ...fgStyle, gridColumn: 'span 2' }}>
+                <label style={labelStyle}>Nome do empreendimento *</label>
+                <input style={inputStyle} value={form.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder="Ex.: Residencial Parque das Flores" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Empresa responsável</label>
+                <input style={inputStyle} value={form.company} onChange={(e) => handleFormChange('company', e.target.value)} placeholder="Construtora ABC Ltda." />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Status</label>
+                <select style={inputStyle} value={form.status} onChange={(e) => handleFormChange('status', e.target.value)}>
+                  <option value="PLANNING">Planejamento</option>
+                  <option value="IN_PROGRESS">Em execução</option>
+                  <option value="ON_HOLD">Suspenso</option>
+                  <option value="COMPLETED">Concluído</option>
+                </select>
+              </div>
+              <div style={{ ...fgStyle, gridColumn: 'span 2' }}>
+                <label style={labelStyle}>Endereço</label>
+                <input style={inputStyle} value={form.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder="Rua, número, bairro, cidade - UF" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Engenheiro responsável</label>
+                <input style={inputStyle} value={form.engineer} onChange={(e) => handleFormChange('engineer', e.target.value)} placeholder="Nome do engenheiro" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Contato / Telefone</label>
+                <input style={inputStyle} value={form.contact} onChange={(e) => handleFormChange('contact', e.target.value)} placeholder="(11) 99999-9999" />
+              </div>
+            </div>
           </div>
 
-          {/* Empresa responsável */}
-          <div className="ao-fg">
-            <label>Empresa responsável</label>
-            <input
-              value={form.company}
-              onChange={(e) => handleFormChange('company', e.target.value)}
-              placeholder="Ex.: Construtora ABC Ltda."
-            />
+          {/* ── Estrutura ── */}
+          <div>
+            <div style={{ ...sectionLabel }}>Estrutura construtiva<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Torres / Blocos</label>
+                <input style={inputStyle} type="number" min="1" value={form.towers} onChange={(e) => handleFormChange('towers', e.target.value)} placeholder="2" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Pavimentos / Torre</label>
+                <input style={inputStyle} type="number" min="1" value={form.floorsPerTower} onChange={(e) => handleFormChange('floorsPerTower', e.target.value)} placeholder="10" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Unidades / Pavimento</label>
+                <input style={inputStyle} type="number" min="1" value={form.unitsPerFloor} onChange={(e) => handleFormChange('unitsPerFloor', e.target.value)} placeholder="4" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Área total (m²)</label>
+                <input style={inputStyle} type="number" min="0" step="0.01" value={form.totalArea} onChange={(e) => handleFormChange('totalArea', e.target.value)} placeholder="0,00" />
+              </div>
+            </div>
           </div>
 
-          {/* Endereço completo — full width */}
-          <div className="ao-fg" style={{ gridColumn: 'span 2' }}>
-            <label>Endereço completo</label>
-            <input
-              value={form.address}
-              onChange={(e) => handleFormChange('address', e.target.value)}
-              placeholder="Rua, número, bairro, cidade - UF"
-            />
+          {/* ── Prazo e custo ── */}
+          <div>
+            <div style={{ ...sectionLabel }}>Prazo e custo<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Data de início</label>
+                <input style={inputStyle} type="date" value={form.startDate} onChange={(e) => handleFormChange('startDate', e.target.value)} />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Término previsto</label>
+                <input style={inputStyle} type="date" value={form.endDate} onChange={(e) => handleFormChange('endDate', e.target.value)} />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Custo orçado (R$)</label>
+                <input style={inputStyle} type="number" min="0" step="0.01" value={form.estimatedCost} onChange={(e) => handleFormChange('estimatedCost', e.target.value)} placeholder="0,00" />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Moeda</label>
+                <select style={inputStyle} value={form.currency} onChange={(e) => handleFormChange('currency', e.target.value)}>
+                  <option value="BRL">BRL — Real</option>
+                  <option value="USD">USD — Dólar</option>
+                  <option value="EUR">EUR — Euro</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          {/* Número de torres / blocos */}
-          <div className="ao-fg">
-            <label>Número de torres / blocos</label>
-            <input
-              type="number"
-              min="1"
-              value={form.towers}
-              onChange={(e) => handleFormChange('towers', e.target.value)}
-              placeholder="Ex.: 2"
-            />
-          </div>
-
-          {/* Número de pavimentos por torre */}
-          <div className="ao-fg">
-            <label>Número de pavimentos por torre</label>
-            <input
-              type="number"
-              min="1"
-              value={form.floorsPerTower}
-              onChange={(e) => handleFormChange('floorsPerTower', e.target.value)}
-              placeholder="Ex.: 10"
-            />
-          </div>
-
-          {/* Unidades por pavimento */}
-          <div className="ao-fg">
-            <label>Unidades por pavimento</label>
-            <input
-              type="number"
-              min="1"
-              value={form.unitsPerFloor}
-              onChange={(e) => handleFormChange('unitsPerFloor', e.target.value)}
-              placeholder="Ex.: 4"
-            />
-          </div>
-
-          {/* Área total construída */}
-          <div className="ao-fg">
-            <label>Área total construída (m²)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.totalArea}
-              onChange={(e) => handleFormChange('totalArea', e.target.value)}
-              placeholder="0,00"
-            />
-          </div>
-
-          {/* Data de início */}
-          <div className="ao-fg">
-            <label>Data de início</label>
-            <input
-              type="date"
-              value={form.startDate}
-              onChange={(e) => handleFormChange('startDate', e.target.value)}
-            />
-          </div>
-
-          {/* Data prevista de término */}
-          <div className="ao-fg">
-            <label>Data prevista de término</label>
-            <input
-              type="date"
-              value={form.endDate}
-              onChange={(e) => handleFormChange('endDate', e.target.value)}
-            />
-          </div>
-
-          {/* Custo total orçado */}
-          <div className="ao-fg">
-            <label>Custo total orçado (R$)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.estimatedCost}
-              onChange={(e) => handleFormChange('estimatedCost', e.target.value)}
-              placeholder="0,00"
-            />
-          </div>
-
-          {/* Engenheiro responsável */}
-          <div className="ao-fg">
-            <label>Engenheiro responsável</label>
-            <input
-              value={form.engineer}
-              onChange={(e) => handleFormChange('engineer', e.target.value)}
-              placeholder="Nome do engenheiro"
-            />
-          </div>
-
-          {/* Contato / Telefone */}
-          <div className="ao-fg">
-            <label>Contato / Telefone</label>
-            <input
-              value={form.contact}
-              onChange={(e) => handleFormChange('contact', e.target.value)}
-              placeholder="(11) 99999-9999"
-            />
+          {/* ── Parâmetros operacionais ── */}
+          <div>
+            <div style={{ ...sectionLabel }}>Parâmetros operacionais<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Dias úteis / semana</label>
+                <input style={inputStyle} type="number" min="1" max="7" value={form.workdaysPerWeek} onChange={(e) => handleFormChange('workdaysPerWeek', e.target.value)} />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Horas / dia</label>
+                <input style={inputStyle} type="number" min="1" max="24" value={form.hoursPerDay} onChange={(e) => handleFormChange('hoursPerDay', e.target.value)} />
+              </div>
+              <div style={fgStyle}>
+                <label style={labelStyle}>Fuso horário</label>
+                <select style={inputStyle} value={form.timezone} onChange={(e) => handleFormChange('timezone', e.target.value)}>
+                  <option value="America/Sao_Paulo">São Paulo (GMT-3)</option>
+                  <option value="America/Manaus">Manaus (GMT-4)</option>
+                  <option value="America/Fortaleza">Fortaleza (GMT-3)</option>
+                  <option value="America/Belem">Belém (GMT-3)</option>
+                  <option value="America/Cuiaba">Cuiabá (GMT-4)</option>
+                  <option value="America/Rio_Branco">Rio Branco (GMT-5)</option>
+                </select>
+              </div>
+            </div>
           </div>
 
         </div>
       </div>
 
-      {/* ── Section 2: Two-column grid ──────────────────────────────── */}
+      {/* ── Row 2: Plantas + Modelo 3D ──────────────────────────────── */}
       <div className="ao-g2">
 
         {/* Card: Plantas (PDF) */}
-        <div className="ao-card" style={{ margin: 0 }}>
+        <div className="ao-card">
           <div className="ao-card-hdr">
-            <p className="ao-card-title">Plantas (PDF)</p>
-            <input
-              ref={aiFileInputRef}
-              type="file"
-              accept=".pdf,application/pdf"
-              style={{ display: 'none' }}
-              onChange={(e) => handleAiFileSelected(e.target.files)}
-            />
-            <button
-              className="ao-btn ao-btn-sm ao-btn-primary"
-              onClick={() => aiFileInputRef.current?.click()}
-              disabled={aiProcessing || !currentProject}
-              title={!currentProject ? 'Salve o empreendimento primeiro' : 'Enviar PDF para análise com IA'}
-            >
-              {aiProcessing ? (
-                <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-              ) : (
-                <Sparkles size={11} />
-              )}
-              {aiProcessing ? 'Analisando…' : 'Processar com IA'}
-            </button>
+            <span className="ao-card-title">Plantas do projeto</span>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input ref={aiFileInputRef} type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={(e) => handleAiFileSelected(e.target.files)} />
+              <button
+                className="ao-btn ao-btn-sm ao-btn-primary"
+                onClick={() => aiFileInputRef.current?.click()}
+                disabled={aiProcessing || !currentProject}
+                title={!currentProject ? 'Salve o empreendimento primeiro' : 'Processar PDF com IA para extrair EAP'}
+              >
+                {aiProcessing ? <Loader2 size={11} className="ao-spin" /> : <Sparkles size={11} />}
+                {aiProcessing ? 'Analisando…' : 'Processar com IA'}
+              </button>
+            </div>
           </div>
+          <div className="ao-card-body">
+            <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple style={{ display: 'none' }} onChange={(e) => handleFileUpload(e.target.files)} />
 
-          <div
-            style={{
-              border: '1px dashed var(--bd2)',
-              borderRadius: 'var(--r-md)',
-              padding: '1.25rem',
-              textAlign: 'center',
-            }}
-          >
-            <FileText
-              size={32}
-              style={{ color: 'var(--t2)', margin: '0 auto 8px' }}
-            />
-            <p style={{ fontSize: '12px', color: 'var(--t2)' }}>
-              Plantas baixas, cortes e fachadas
-            </p>
-            <p style={{ fontSize: '11px', color: 'var(--t3)', marginTop: '3px' }}>
-              A IA extrai pavimentos, unidades e áreas e sugere EAP
-            </p>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,application/pdf"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => handleFileUpload(e.target.files)}
-            />
-
-            <button
-              className="ao-btn ao-btn-sm"
-              style={{ marginTop: '10px' }}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading || !currentProject}
+            {/* Drop zone */}
+            <div
+              onClick={() => currentProject && fileInputRef.current?.click()}
+              style={{
+                border: '1px dashed var(--bd2)',
+                borderRadius: 'var(--r-md)',
+                padding: '20px 16px',
+                textAlign: 'center',
+                background: 'var(--s1)',
+                cursor: currentProject ? 'pointer' : 'default',
+                transition: 'background 0.1s',
+                marginBottom: uploads.length > 0 ? 12 : 0,
+              }}
             >
-              {uploading ? (
-                <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-              ) : (
-                <Upload size={11} />
+              <div style={{ width: 36, height: 36, background: 'var(--s2)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                {uploading
+                  ? <Loader2 size={18} style={{ color: 'var(--blue)' }} className="ao-spin" />
+                  : <Upload size={18} style={{ color: 'var(--t3)' }} />}
+              </div>
+              <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 3 }}>
+                {uploading ? 'Enviando arquivos…' : 'Arraste PDFs ou clique para selecionar'}
+              </p>
+              <p style={{ fontSize: 11, color: 'var(--t3)' }}>
+                Plantas baixas, cortes e fachadas · A IA extrai o EAP automaticamente
+              </p>
+              {!currentProject && (
+                <p style={{ fontSize: 11, color: 'var(--amber)', marginTop: 8, fontWeight: 500 }}>
+                  Salve o empreendimento antes de enviar arquivos.
+                </p>
               )}
-              {uploading ? 'Enviando…' : 'Selecionar PDFs'}
-            </button>
+            </div>
 
             {/* File list */}
             {loadingUploads && (
-              <div style={{ marginTop: '10px', fontSize: '11px', color: 'var(--t3)' }}>
-                Carregando…
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--t3)', padding: '6px 0' }}>
+                <Loader2 size={12} className="ao-spin" /> Carregando…
               </div>
             )}
 
             {!loadingUploads && uploads.length > 0 && (
-              <div style={{ marginTop: '10px', textAlign: 'left' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {uploads.map((file) => (
-                  <div
-                    key={file.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '5px 6px',
-                      borderRadius: 'var(--r-md)',
-                      background: 'var(--bg2)',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <FileText size={12} style={{ color: '#A32D2D', flexShrink: 0 }} />
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        color: 'var(--t1)',
-                        flex: 1,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                  <div key={file.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 'var(--r-md)', background: 'var(--s1)', border: '1px solid var(--bd)' }}>
+                    <FileText size={13} style={{ color: 'var(--red)', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: 'var(--t1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {file.fileName}
                     </span>
-                    <span style={{ fontSize: '10px', color: 'var(--t3)', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: 'var(--t3)', flexShrink: 0, fontFamily: 'var(--mono)' }}>
                       {formatBytes(file.fileSize)}
                     </span>
                     <button
-                      className="ao-btn ao-btn-sm"
-                      style={{ padding: '2px 5px', border: 'none', background: 'transparent', color: 'var(--t3)' }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', display: 'flex', alignItems: 'center', padding: '2px 4px', borderRadius: 3, flexShrink: 0 }}
                       onClick={() => handleDeleteUpload(file.id)}
                     >
-                      <Trash2 size={11} />
+                      <Trash2 size={12} />
                     </button>
                   </div>
                 ))}
               </div>
             )}
-
-            {!currentProject && (
-              <p style={{ fontSize: '11px', color: 'var(--amber)', marginTop: '8px' }}>
-                Salve o empreendimento antes de enviar arquivos.
-              </p>
-            )}
           </div>
         </div>
 
         {/* Card: Modelo 3D */}
-        <div className="ao-card" style={{ margin: 0 }}>
+        <div className="ao-card">
           <div className="ao-card-hdr">
-            <p className="ao-card-title">Modelo 3D</p>
-            <span className="ao-badge ao-bb">Navegação visual</span>
+            <span className="ao-card-title">Modelo 3D</span>
+            <span className="ao-badge ao-bb">BIM · IFC</span>
           </div>
-
-          <div
-            style={{
-              border: '1px dashed var(--bd2)',
-              borderRadius: 'var(--r-md)',
-              padding: '1.25rem',
-              textAlign: 'center',
-            }}
-          >
-            <Box
-              size={32}
-              style={{ color: 'var(--t2)', margin: '0 auto 8px' }}
-            />
-            <p style={{ fontSize: '12px', color: 'var(--t2)' }}>
-              Modelo 3D do empreendimento
-            </p>
-            <p style={{ fontSize: '11px', color: 'var(--t3)', marginTop: '3px' }}>
-              IFC, OBJ, FBX ou embed Sketchfab/BIM 360
-            </p>
-
-            <div
-              style={{
-                display: 'flex',
-                gap: '6px',
-                justifyContent: 'center',
-                flexWrap: 'wrap',
-                marginTop: '10px',
-              }}
-            >
-              <button
-                className="ao-btn ao-btn-sm"
-                onClick={() => {
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = '.ifc,.obj,.fbx,.glb,.gltf';
-                  input.click();
-                }}
-              >
-                <Upload size={11} />
-                Arquivo
-              </button>
-              <button
-                className="ao-btn ao-btn-sm"
-                onClick={handleSetSketchfab}
-              >
-                <Link size={11} />
-                URL Sketchfab
-              </button>
-            </div>
-
-            {sketchfabUrl && (
-              <div style={{ marginTop: '10px' }}>
+          <div className="ao-card-body">
+            {sketchfabUrl ? (
+              <div>
                 <iframe
                   src={sketchfabUrl}
                   width="100%"
-                  height="180"
+                  height="220"
                   frameBorder="0"
                   allowFullScreen
-                  title="Modelo 3D Sketchfab"
-                  style={{ borderRadius: 'var(--r-md)' }}
+                  title="Modelo 3D"
+                  style={{ borderRadius: 'var(--r-md)', display: 'block' }}
                 />
-                <p style={{ fontSize: '10px', color: 'var(--t3)', marginTop: '4px' }}>
-                  Após vincular, navegue pelo modelo no módulo Medição
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                  <p style={{ fontSize: 11, color: 'var(--t3)' }}>Visualização via Sketchfab</p>
+                  <button className="ao-btn ao-btn-sm" onClick={() => setSketchfabUrl('')}>
+                    <X size={11} /> Remover
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ border: '1px dashed var(--bd2)', borderRadius: 'var(--r-md)', padding: '24px 16px', textAlign: 'center', background: 'var(--s1)' }}>
+                <div style={{ width: 36, height: 36, background: 'var(--s2)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                  <Box size={18} style={{ color: 'var(--t3)' }} />
+                </div>
+                <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 3 }}>Nenhum modelo vinculado</p>
+                <p style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 14 }}>
+                  Suporte a IFC, OBJ, FBX, GLB e embed Sketchfab / Autodesk BIM 360
                 </p>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    className="ao-btn ao-btn-sm"
+                    onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.ifc,.obj,.fbx,.glb,.gltf'; i.click(); }}
+                  >
+                    <Upload size={11} /> Arquivo local
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={handleSetSketchfab}>
+                    <Link size={11} /> URL Sketchfab
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -896,129 +810,81 @@ export default function Cadastro() {
 
       </div>
 
-      {/* ── Section 3: Equipe ────────────────────────────────────────── */}
+      {/* ── Card 3: Equipe ───────────────────────────────────────────── */}
       <div className="ao-card">
         <div className="ao-card-hdr">
-          <p className="ao-card-title">Equipe</p>
-          <span className="ao-badge ao-bk">{members.length} membros</span>
+          <span className="ao-card-title">Equipe do projeto</span>
+          <span className="ao-badge ao-bk">{members.length} {members.length === 1 ? 'membro' : 'membros'}</span>
         </div>
 
         {/* Add member form */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr auto',
-            gap: '8px',
-            alignItems: 'flex-end',
-            marginBottom: '12px',
-          }}
-        >
-          <div className="ao-fg">
-            <label>Nome</label>
-            <input
-              placeholder="Nome completo"
-              value={newMember.name}
-              onChange={(e) => setNewMember((p) => ({ ...p, name: e.target.value }))}
-            />
+        <div className="ao-card-body" style={{ borderBottom: '1px solid var(--bd)' }}>
+          <div style={{ ...sectionLabel }}>Adicionar membro<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 200px auto', gap: 8, alignItems: 'flex-end' }}>
+            <div style={fgStyle}>
+              <label style={labelStyle}>Nome completo</label>
+              <input style={inputStyle} placeholder="Carlos Silva" value={newMember.name} onChange={(e) => setNewMember((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div style={fgStyle}>
+              <label style={labelStyle}>E-mail</label>
+              <input style={inputStyle} type="email" placeholder="carlos@empresa.com.br" value={newMember.email} onChange={(e) => setNewMember((p) => ({ ...p, email: e.target.value }))} />
+            </div>
+            <div style={fgStyle}>
+              <label style={labelStyle}>Função</label>
+              <select style={inputStyle} value={newMember.role} onChange={(e) => setNewMember((p) => ({ ...p, role: e.target.value as UserRole }))}>
+                {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+              </select>
+            </div>
+            <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handleAddMember} disabled={addingMember}>
+              {addingMember ? <Loader2 size={11} className="ao-spin" /> : <Plus size={11} />}
+              Adicionar
+            </button>
           </div>
-          <div className="ao-fg">
-            <label>E-mail</label>
-            <input
-              type="email"
-              placeholder="email@empresa.com.br"
-              value={newMember.email}
-              onChange={(e) => setNewMember((p) => ({ ...p, email: e.target.value }))}
-            />
-          </div>
-          <div className="ao-fg">
-            <label>Função</label>
-            <select
-              value={newMember.role}
-              onChange={(e) => setNewMember((p) => ({ ...p, role: e.target.value as UserRole }))}
-            >
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            className="ao-btn ao-btn-sm ao-btn-primary"
-            onClick={handleAddMember}
-            disabled={addingMember}
-          >
-            {addingMember ? (
-              <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-            ) : (
-              <Plus size={11} />
-            )}
-            Adicionar
-          </button>
         </div>
 
-        {/* Members list */}
+        {/* Members table */}
         {members.length === 0 ? (
-          <p style={{ fontSize: '12px', color: 'var(--t3)', textAlign: 'center', padding: '1rem 0' }}>
-            Nenhum membro adicionado ainda.
-          </p>
+          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>
+            Nenhum membro adicionado. Use o formulário acima para convidar a equipe.
+          </div>
         ) : (
-          <div>
-            {members.map((member) => (
-              <div
-                key={member.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '7px 8px',
-                  borderRadius: 'var(--r-md)',
-                  background: 'var(--bg2)',
-                  marginBottom: '4px',
-                }}
-              >
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    background: 'var(--amb-bg)',
-                    color: 'var(--amber)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '10px',
-                    fontWeight: 600,
-                    flexShrink: 0,
-                  }}
-                >
-                  {member.name
-                    .split(' ')
-                    .slice(0, 2)
-                    .map((n) => n[0])
-                    .join('')
-                    .toUpperCase() || '?'}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '12px', color: 'var(--t1)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {member.name || '—'}
-                  </p>
-                  <p style={{ fontSize: '11px', color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {member.email}
-                  </p>
-                </div>
-                <span className="ao-badge ao-bk" style={{ flexShrink: 0 }}>
-                  {ROLE_LABELS[member.role]}
-                </span>
-                <button
-                  className="ao-btn ao-btn-sm"
-                  style={{ border: 'none', background: 'transparent', color: 'var(--t3)', padding: '3px 5px', flexShrink: 0 }}
-                  onClick={() => handleRemoveMember(member.id)}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            ))}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="ao-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 36 }}></th>
+                  <th>Nome</th>
+                  <th>E-mail</th>
+                  <th>Função</th>
+                  <th style={{ width: 44 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member) => {
+                  const initials = member.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
+                  return (
+                    <tr key={member.id}>
+                      <td>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                          {initials}
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 500 }}>{member.name || '—'}</td>
+                      <td className="mono">{member.email}</td>
+                      <td><span className="ao-badge ao-bk">{ROLE_LABELS[member.role]}</span></td>
+                      <td>
+                        <button
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
+                          onClick={() => handleRemoveMember(member.id)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -1026,87 +892,53 @@ export default function Cadastro() {
       {/* ── AI Import Modal ──────────────────────────────────────────── */}
       {aiModalOpen && aiResult && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px',
-          }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(13,22,41,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={(e) => { if (e.target === e.currentTarget) setAiModalOpen(false); }}
         >
-          <div
-            style={{
-              background: 'var(--bg1)',
-              borderRadius: 'var(--r-lg)',
-              border: '0.5px solid var(--bd)',
-              width: '100%',
-              maxWidth: '680px',
-              maxHeight: '90vh',
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {/* Modal header */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '14px 16px',
-                borderBottom: '0.5px solid var(--bd)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Bot size={16} style={{ color: 'var(--amber)' }} />
-                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--t1)' }}>
-                  Resultado da Análise com IA
-                </span>
-                <span
-                  className={`ao-badge ${aiResult.confidence === 'high' ? 'ao-bg' : aiResult.confidence === 'medium' ? 'ao-ba' : 'ao-br'}`}
-                  style={{ marginLeft: '4px' }}
-                >
-                  {aiResult.confidence === 'high' ? 'Alta confiança' : aiResult.confidence === 'medium' ? 'Média confiança' : 'Baixa confiança'}
+          <div style={{ background: 'var(--s0)', borderRadius: 8, border: '1px solid var(--bd2)', width: '100%', maxWidth: 680, maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-lg)' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--bd)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 28, height: 28, background: 'var(--amb-bg)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Bot size={15} style={{ color: 'var(--amber)' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>Análise com IA — Resultado</div>
+                  <div style={{ fontSize: 10, color: 'var(--t3)' }}>Revise os dados antes de aplicar</div>
+                </div>
+                <span className={`ao-badge ${aiResult.confidence === 'high' ? 'ao-bg' : aiResult.confidence === 'medium' ? 'ao-ba' : 'ao-br'}`}>
+                  {aiResult.confidence === 'high' ? 'Alta confiança' : aiResult.confidence === 'medium' ? 'Média' : 'Baixa confiança'}
                 </span>
               </div>
-              <button
-                className="ao-btn ao-btn-sm"
-                style={{ border: 'none', background: 'transparent', color: 'var(--t3)' }}
-                onClick={() => setAiModalOpen(false)}
-              >
-                <X size={14} />
+              <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', display: 'flex', alignItems: 'center' }} onClick={() => setAiModalOpen(false)}>
+                <X size={16} />
               </button>
             </div>
 
-            {/* Modal body */}
-            <div style={{ overflow: 'auto', flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Body */}
+            <div style={{ overflow: 'auto', flex: 1, padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-              {/* Resumo da análise */}
-              <div style={{ background: 'var(--bg2)', borderRadius: 'var(--r-md)', padding: '10px 12px' }}>
-                <p style={{ fontSize: '11px', color: 'var(--t2)', lineHeight: '1.5' }}>{aiResult.rawAnalysis}</p>
+              {/* Análise em texto */}
+              <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: '10px 12px' }}>
+                <p style={{ fontSize: 11, color: 'var(--t2)', lineHeight: 1.6 }}>{aiResult.rawAnalysis}</p>
               </div>
 
-              {/* Info do projeto */}
+              {/* Dados identificados */}
               <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                  Dados identificados
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                <div style={{ ...sectionLabel }}>Dados identificados<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   {[
                     { label: 'Torres / Blocos', value: aiResult.projectInfo.towers },
                     { label: 'Pavimentos / Torre', value: aiResult.projectInfo.floorsPerTower },
-                    { label: 'Unidades / Pavimento', value: aiResult.projectInfo.unitsPerFloor },
+                    { label: 'Unidades / Pav.', value: aiResult.projectInfo.unitsPerFloor },
                     ...(aiResult.projectInfo.totalArea ? [{ label: 'Área total (m²)', value: aiResult.projectInfo.totalArea }] : []),
                     ...(aiResult.projectInfo.estimatedDurationMonths ? [{ label: 'Duração estimada', value: `${aiResult.projectInfo.estimatedDurationMonths} meses` }] : []),
-                    ...(aiResult.projectInfo.buildingType ? [{ label: 'Tipo', value: aiResult.projectInfo.buildingType }] : []),
+                    ...(aiResult.projectInfo.buildingType ? [{ label: 'Tipo de edificação', value: aiResult.projectInfo.buildingType }] : []),
                   ].map((item) => (
-                    <div key={item.label} style={{ background: 'var(--bg2)', borderRadius: 'var(--r-md)', padding: '8px 10px' }}>
-                      <p style={{ fontSize: '10px', color: 'var(--t3)' }}>{item.label}</p>
-                      <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--t1)' }}>{item.value}</p>
+                    <div key={item.label} style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: '10px 12px' }}>
+                      <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 4 }}>{item.label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)', fontFamily: 'var(--mono)' }}>{item.value}</div>
                     </div>
                   ))}
                 </div>
@@ -1114,26 +946,12 @@ export default function Cadastro() {
 
               {/* Tipos de atividade */}
               <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                  Tipos de atividade sugeridos ({aiResult.activityTypes.length})
-                </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                <div style={{ ...sectionLabel }}>Tipos de atividade sugeridos ({aiResult.activityTypes.length})<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                   {aiResult.activityTypes.map((at, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '3px 8px',
-                        borderRadius: '20px',
-                        background: 'var(--amb-bg)',
-                        fontSize: '11px',
-                        color: 'var(--amb-t)',
-                      }}
-                    >
+                    <div key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 'var(--r-sm)', background: 'var(--grn-bg)', border: '1px solid var(--grn-bd)', fontSize: 10, color: 'var(--grn-t)', fontWeight: 600 }}>
                       <CheckCircle size={9} />
-                      {at.name} <span style={{ opacity: 0.7 }}>({at.unit})</span>
+                      {at.name} <span style={{ opacity: 0.6, fontWeight: 400 }}>· {at.unit}</span>
                     </div>
                   ))}
                 </div>
@@ -1141,97 +959,42 @@ export default function Cadastro() {
 
               {/* EAP */}
               <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--t2)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                  Cronograma (EAP) sugerido
-                </p>
-                <div
-                  style={{
-                    background: 'var(--bg2)',
-                    borderRadius: 'var(--r-md)',
-                    padding: '10px 12px',
-                    maxHeight: '200px',
-                    overflow: 'auto',
-                  }}
-                >
+                <div style={{ ...sectionLabel }}>Cronograma EAP sugerido<div style={{ flex: 1, height: 1, background: 'var(--bd)' }} /></div>
+                <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: '10px 12px', maxHeight: 200, overflow: 'auto' }}>
                   {renderScheduleTree(aiResult.schedule)}
                 </div>
               </div>
 
-              {/* Warning if low confidence */}
+              {/* Aviso baixa confiança */}
               {aiResult.confidence === 'low' && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '8px',
-                    padding: '10px 12px',
-                    background: 'var(--red-bg)',
-                    borderRadius: 'var(--r-md)',
-                  }}
-                >
-                  <AlertCircle size={14} style={{ color: 'var(--red)', flexShrink: 0, marginTop: '1px' }} />
-                  <p style={{ fontSize: '11px', color: 'var(--red-t)' }}>
-                    Confiança baixa: o documento pode não conter plantas claras. Os dados sugeridos são valores padrão para obras residenciais. Revise antes de aplicar.
-                  </p>
+                <div className="ao-alert ao-alert-danger">
+                  <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>Confiança baixa — o documento pode não conter plantas claras. Os dados são valores padrão para obras residenciais. Revise antes de aplicar.</span>
                 </div>
               )}
             </div>
 
-            {/* Modal footer */}
-            <div
-              style={{
-                borderTop: '0.5px solid var(--bd)',
-                padding: '12px 16px',
-              }}
-            >
-              {/* Progress feedback */}
+            {/* Footer */}
+            <div style={{ borderTop: '1px solid var(--bd)', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {eapImporting && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 10px',
-                    background: 'var(--amb-bg)',
-                    borderRadius: 'var(--r-md)',
-                    marginBottom: '10px',
-                    fontSize: '11px',
-                    color: 'var(--amb-t)',
-                  }}
-                >
-                  <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-                  <span>{eapImportProgress || 'Importando EAP…'}</span>
+                <div className="ao-alert ao-alert-warn" style={{ padding: '8px 12px' }}>
+                  <Loader2 size={12} className="ao-spin" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 11 }}>{eapImportProgress || 'Importando EAP…'}</span>
                 </div>
               )}
-
-              {/* Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                <button className="ao-btn ao-btn-sm" onClick={() => setAiModalOpen(false)} disabled={eapImporting}>
-                  Fechar
-                </button>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {/* Aplica apenas os dados do cadastro */}
-                  <button
-                    className="ao-btn ao-btn-sm"
-                    onClick={handleApplyAiResult}
-                    disabled={eapImporting}
-                    title="Preenche os campos de cadastro com os dados identificados pela IA"
-                  >
-                    <CheckCircle size={11} />
-                    Aplicar dados do cadastro
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button className="ao-btn ao-btn-sm" onClick={() => setAiModalOpen(false)} disabled={eapImporting}>Fechar</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="ao-btn ao-btn-sm" onClick={handleApplyAiResult} disabled={eapImporting} title="Preenche os campos do formulário com os dados da IA">
+                    <CheckCircle size={11} /> Aplicar ao cadastro
                   </button>
-                  {/* Importa EAP e tipos de atividade no banco */}
                   <button
                     className="ao-btn ao-btn-sm ao-btn-primary"
                     onClick={handleImportEap}
                     disabled={eapImporting || !currentProject}
-                    title={!currentProject ? 'Salve o empreendimento antes de importar o EAP' : 'Cria os tipos de atividade e o cronograma (EAP) completo no banco de dados'}
+                    title={!currentProject ? 'Salve o empreendimento antes de importar' : 'Cria tipos de atividade e EAP no banco'}
                   >
-                    {eapImporting ? (
-                      <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-                    ) : (
-                      <Sparkles size={11} />
-                    )}
+                    {eapImporting ? <Loader2 size={11} className="ao-spin" /> : <Sparkles size={11} />}
                     {eapImporting ? 'Importando…' : 'Importar EAP + Atividades'}
                   </button>
                 </div>

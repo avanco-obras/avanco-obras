@@ -461,9 +461,9 @@ function generateHeaderCells(scale: TimeScale, minDate: Date, maxDate: Date, pxP
 }
 
 function barColor(actual: number, planned: number): string {
-  if (actual >= planned) return '#16803C';
-  if (actual >= planned - 15) return '#C47D0F';
-  return '#C9312F';
+  if (actual >= planned) return '#15803D';
+  if (actual >= planned - 15) return '#D97706';
+  return '#B91C1C';
 }
 
 function badgeClass(actual: number, planned: number): string {
@@ -473,16 +473,16 @@ function badgeClass(actual: number, planned: number): string {
 }
 
 function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
-  if (level === 0) return { background: 'var(--bg3)', fontWeight: 700, fontSize: 12 };
-  if (level === 1) return { background: hasChildren ? 'var(--bg2)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
+  if (level === 0) return { background: 'var(--s2)', fontWeight: 700, fontSize: 12 };
+  if (level === 1) return { background: hasChildren ? 'var(--s1)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
   if (level === 2) return { fontSize: 11, fontWeight: hasChildren ? 500 : 400 };
   if (level === 3) return { fontSize: 10, color: 'var(--t2)' };
   return { fontSize: 10, color: 'var(--t3)' };
 }
 
 function rowBg(level: number): string {
-  if (level === 0) return 'var(--bg3)';
-  if (level === 1) return 'var(--bg2)';
+  if (level === 0) return 'var(--s2)';
+  if (level === 1) return 'var(--s1)';
   return 'transparent';
 }
 
@@ -582,8 +582,8 @@ function formatCellForFilter(task: GanttTask, colKey: string): string {
 
 const inp: React.CSSProperties = {
   padding: '5px 8px', fontSize: 12,
-  border: '0.5px solid var(--bd2)', borderRadius: 6,
-  background: 'var(--bg1)', color: 'var(--t1)',
+  border: '1px solid var(--bd)', borderRadius: 6,
+  background: 'var(--s0)', color: 'var(--t1)',
   width: '100%', boxSizing: 'border-box',
 };
 
@@ -622,8 +622,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
         top: coords.top,
         left: coords.left,
         zIndex: 10000,
-        background: 'var(--bg1)',
-        border: '0.5px solid var(--bd)',
+        background: 'var(--s0)',
+        border: '1px solid var(--bd)',
         borderRadius: 6,
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         width: 240,
@@ -643,8 +643,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
             flex: 1,
             padding: '4px 6px',
             fontSize: 11,
-            border: `0.5px solid ${sortDir === 'asc' ? '#2563EB' : 'var(--bd)'}`,
-            background: sortDir === 'asc' ? '#2563EB' : 'var(--bg2)',
+            border: `0.5px solid ${sortDir === 'asc' ? '#1A56A0' : 'var(--bd)'}`,
+            background: sortDir === 'asc' ? '#1A56A0' : 'var(--s1)',
             color: sortDir === 'asc' ? '#fff' : 'var(--t1)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -658,8 +658,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
             flex: 1,
             padding: '4px 6px',
             fontSize: 11,
-            border: `0.5px solid ${sortDir === 'desc' ? '#2563EB' : 'var(--bd)'}`,
-            background: sortDir === 'desc' ? '#2563EB' : 'var(--bg2)',
+            border: `0.5px solid ${sortDir === 'desc' ? '#1A56A0' : 'var(--bd)'}`,
+            background: sortDir === 'desc' ? '#1A56A0' : 'var(--s1)',
             color: sortDir === 'desc' ? '#fff' : 'var(--t1)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -678,9 +678,9 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
         style={{
           padding: '4px 6px',
           fontSize: 11,
-          border: '0.5px solid var(--bd)',
+          border: '1px solid var(--bd)',
           borderRadius: 4,
-          background: 'var(--bg2)',
+          background: 'var(--s1)',
           color: 'var(--t1)',
           width: '100%',
           boxSizing: 'border-box',
@@ -726,8 +726,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
           style={{
             flex: 1,
             padding: '4px 6px',
-            border: '0.5px solid var(--bd)',
-            background: 'var(--bg2)',
+            border: '1px solid var(--bd)',
+            background: 'var(--s1)',
             color: 'var(--t2)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -740,8 +740,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
           style={{
             flex: 1,
             padding: '4px 6px',
-            border: '0.5px solid #2563EB',
-            background: '#2563EB',
+            border: '0.5px solid #1A56A0',
+            background: '#1A56A0',
             color: '#fff',
             borderRadius: 4,
             cursor: 'pointer',
@@ -797,8 +797,8 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
           bottom: 0,
           zIndex: 2000,
           width: 320,
-          background: 'var(--bg1)',
-          border: '0.5px solid var(--bd)',
+          background: 'var(--s0)',
+          border: '1px solid var(--bd)',
           borderLeft: '1px solid var(--bd)',
           display: 'flex',
           flexDirection: 'column',
@@ -810,7 +810,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
         <div style={{ padding: 12, borderBottom: '0.5px solid var(--bd)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Filtros avançados</span>
-            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#2563EB', fontWeight: 500 }}>({activeCount})</span>}
+            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#1A56A0', fontWeight: 500 }}>({activeCount})</span>}
           </div>
           <button
             onClick={onClose}
@@ -930,13 +930,13 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
         <div style={{ padding: 12, borderTop: '0.5px solid var(--bd)', display: 'flex', gap: 8 }}>
           <button
             onClick={() => onChange({ dateStart: '', dateEnd: '', progressMin: '', progressMax: '', onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: [] })}
-            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '0.5px solid var(--bd)', background: 'var(--bg2)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '1px solid var(--bd)', background: 'var(--s1)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
           >
             Limpar tudo
           </button>
           <button
             onClick={onClose}
-            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#2563EB', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#1A56A0', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
           >
             Fechar
           </button>
@@ -1094,7 +1094,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       <div key={dep.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 11 }}>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{item?.code}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--t1)' }}>{item?.name}</span>
-        <span style={{ color: 'var(--t3)', fontSize: 9, background: 'var(--bg2)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>
+        <span style={{ color: 'var(--t3)', fontSize: 9, background: 'var(--s1)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>
           {dep.type}{dep.lagDays ? `+${dep.lagDays}d` : ''}
         </span>
         <button onClick={() => handleRemoveDep(dep.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>
@@ -1107,7 +1107,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 14, padding: '1.25rem', width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 6, padding: '1.25rem', width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1170,7 +1170,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           </div>
 
           <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input type="checkbox" id="cp-chk" checked={form.isCriticalPath} onChange={(e) => change('isCriticalPath', e.target.checked)} style={{ cursor: 'pointer', accentColor: '#C9312F' }} />
+            <input type="checkbox" id="cp-chk" checked={form.isCriticalPath} onChange={(e) => change('isCriticalPath', e.target.checked)} style={{ cursor: 'pointer', accentColor: '#B91C1C' }} />
             <label htmlFor="cp-chk" style={{ fontSize: 12, color: 'var(--t1)', cursor: 'pointer' }}>Caminho crítico</label>
           </div>
         </div>
@@ -1209,7 +1209,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
                     <button className="ao-btn ao-btn-sm" onClick={() => { setAddingDep(true); setAddDepRole('successor'); }}>+ Sucessora</button>
                   </div>
                 ) : (
-                  <div style={{ background: 'var(--bg2)', borderRadius: 8, padding: 10, border: '0.5px solid var(--bd)' }}>
+                  <div style={{ background: 'var(--s1)', borderRadius: 8, padding: 10, border: '1px solid var(--bd)' }}>
                     <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 6 }}>
                       Selecionar {addDepRole === 'predecessor' ? 'predecessora' : 'sucessora'}:
                     </div>
@@ -1228,7 +1228,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
                             key={t.id}
                             onClick={() => handleAddDep(t.id)}
                             style={{ cursor: 'pointer', padding: '4px 6px', borderRadius: 4, fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}
-                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg3)'; }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--s2)'; }}
                             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ''; }}
                           >
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{t.code}</span>
@@ -1250,7 +1250,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           <button className="ao-btn ao-btn-sm" onClick={onClose} disabled={saving}>Cancelar</button>
           <button
             className="ao-btn ao-btn-sm"
-            style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: saving || !form.name.trim() ? 0.6 : 1 }}
+            style={{ background: '#1A56A0', color: '#fff', border: 'none', opacity: saving || !form.name.trim() ? 0.6 : 1 }}
             onClick={handleSave}
             disabled={saving || !form.name.trim()}
           >
@@ -1286,13 +1286,13 @@ function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteC
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 360 }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 360 }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 8 }}>Excluir atividade</div>
         <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: childCount > 0 ? 6 : 16 }}>
           Tem certeza que deseja excluir <strong style={{ color: 'var(--t1)' }}>"{task.name}"</strong>?
         </p>
         {childCount > 0 && (
-          <p style={{ fontSize: 12, color: '#C9312F', marginBottom: 16 }}>
+          <p style={{ fontSize: 12, color: '#B91C1C', marginBottom: 16 }}>
             ⚠ {childCount} atividade{childCount > 1 ? 's filha' : ' filha'} também {childCount > 1 ? 'serão excluídas' : 'será excluída'}.
           </p>
         )}
@@ -1300,7 +1300,7 @@ function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteC
           <button className="ao-btn ao-btn-sm" onClick={onCancel} disabled={loading}>Cancelar</button>
           <button
             className="ao-btn ao-btn-sm"
-            style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: loading ? 0.6 : 1 }}
+            style={{ background: '#B91C1C', color: '#fff', border: 'none', opacity: loading ? 0.6 : 1 }}
             onClick={onConfirm}
             disabled={loading}
           >
@@ -1428,7 +1428,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1002, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
 
         {/* Step 1: File selection */}
         {step === 1 && (
@@ -1456,7 +1456,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
             </p>
 
             {/* Colunas esperadas */}
-            <div style={{ background: 'var(--bg2)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
+            <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
               <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas:</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
                 <div><strong>Código</strong></div>
@@ -1498,23 +1498,23 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
                 padding: '2rem',
                 textAlign: 'center',
                 cursor: 'pointer',
-                background: 'var(--bg2)',
+                background: 'var(--s1)',
                 marginBottom: 12,
                 transition: 'all 0.2s',
               }}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => {
                 e.preventDefault();
-                e.currentTarget.style.background = 'var(--bg3)';
-                e.currentTarget.style.borderColor = '#2563EB';
+                e.currentTarget.style.background = 'var(--s2)';
+                e.currentTarget.style.borderColor = '#1A56A0';
               }}
               onDragLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.background = 'var(--s1)';
                 e.currentTarget.style.borderColor = 'var(--bd)';
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.background = 'var(--s1)';
                 e.currentTarget.style.borderColor = 'var(--bd)';
                 const f = e.dataTransfer.files[0];
                 handleFileInput(f);
@@ -1538,7 +1538,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
+                style={{ background: '#1A56A0', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
                 disabled={!file || preview.length === 0}
                 onClick={() => setStep(2)}
               >
@@ -1556,7 +1556,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               {file?.name} — {preview.length > 0 ? `Primeiras ${preview.length} linhas` : 'Nenhuma linha'}
             </p>
             {preview.length > 0 ? (
-              <div style={{ overflowX: 'auto', marginBottom: 16, border: '0.5px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)' }}>
+              <div style={{ overflowX: 'auto', marginBottom: 16, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s1)' }}>
                 <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
@@ -1586,7 +1586,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={() => setStep(1)}>← Voltar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+                style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
                 onClick={() => setStep(3)}
               >
                 Avançar →
@@ -1612,7 +1612,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={() => setStep(2)} disabled={importing}>← Voltar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
+                style={{ background: '#B91C1C', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
                 onClick={handleImport}
                 disabled={importing}
               >
@@ -2358,7 +2358,7 @@ export default function Cronograma() {
               placeholder="Buscar atividade..."
               value={searchRaw}
               onChange={(e) => setSearchRaw(e.target.value)}
-              style={{ padding: '5px 9px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', width: 160 }}
+              style={{ padding: '5px 9px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', width: 160 }}
             />
             <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
             <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
@@ -2368,9 +2368,9 @@ export default function Cronograma() {
               style={{
                 padding: '5px 8px',
                 fontSize: 11,
-                border: '0.5px solid var(--bd2)',
+                border: '1px solid var(--bd)',
                 borderRadius: 6,
-                background: 'var(--bg1)',
+                background: 'var(--s0)',
                 color: 'var(--t1)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -2393,7 +2393,7 @@ export default function Cronograma() {
             <select
               value={outlineLevel}
               onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              style={{ padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s0)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
               title="Mostrar até este nível hierárquico"
             >
               <option value="all">Todos os níveis</option>
@@ -2402,7 +2402,7 @@ export default function Cronograma() {
             <div style={{ position: 'relative' }}>
               <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
               {showColPicker && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                   {COL_DEFS.map(col => (
                     <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
                       <input
@@ -2423,7 +2423,7 @@ export default function Cronograma() {
               className="ao-btn ao-btn-sm"
               onClick={() => setShowAdvFilters(!showAdvFilters)}
               style={{
-                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#2563EB' : undefined,
+                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#1A56A0' : undefined,
                 color: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#fff' : undefined,
               }}
             >
@@ -2433,7 +2433,7 @@ export default function Cronograma() {
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
             <button
               className="ao-btn ao-btn-sm"
-              style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+              style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
               onClick={openNew}
             >
               + Nova atividade
@@ -2450,7 +2450,7 @@ export default function Cronograma() {
             <span style={{ width: 10, height: 5, background: '#3B6D11', borderRadius: 2, display: 'inline-block' }} />No prazo
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: '#C47D0F', borderRadius: 2, display: 'inline-block' }} />Leve atraso
+            <span style={{ width: 10, height: 5, background: '#D97706', borderRadius: 2, display: 'inline-block' }} />Leve atraso
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 10, height: 5, background: '#E24B4A', borderRadius: 2, display: 'inline-block' }} />Crítico
@@ -2462,12 +2462,12 @@ export default function Cronograma() {
         </div>
 
         {/* Gantt wrap */}
-        <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', border: '1px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
 
           {/* ── Left panel: Multi-column ── */}
-          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
+          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--s0)' }}>
             {/* Header row */}
-            <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
+            <div style={{ height: HDR_H, background: 'var(--s1)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
               {visibleColDefs.map((col, colIdx) => {
                 const colRef = useRef<HTMLButtonElement>(null);
                 const hasFilter = colFilters[col.key]?.length > 0;
@@ -2499,7 +2499,7 @@ export default function Cronograma() {
                     onClick={() => setFilterDropdownCol(filterDropdownCol === col.key ? null : col.key)}
                     title="Filtrar coluna"
                     style={{
-                      background: isFiltered ? '#2563EB' : 'transparent',
+                      background: isFiltered ? '#1A56A0' : 'transparent',
                       border: 'none',
                       cursor: 'pointer',
                       fontSize: 11,
@@ -2551,7 +2551,7 @@ export default function Cronograma() {
                     <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
                       {visibleColDefs.map((col, colIdx) => (
                         <div key={col.key} style={{ width: effectiveWidth(col), flexShrink: 0, borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
-                          <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '60%' }} />
+                          <div style={{ height: 8, background: 'var(--s2)', borderRadius: 4, width: '60%' }} />
                         </div>
                       ))}
                     </div>
@@ -2660,9 +2660,9 @@ export default function Cronograma() {
                           height: ROW_H,
                           display: 'flex',
                           borderBottom: '0.5px solid var(--bd)',
-                          background: isHov ? 'var(--bg2)' : (lvStyle.background as string ?? ''),
+                          background: isHov ? 'var(--s1)' : (lvStyle.background as string ?? ''),
                           userSelect: 'none',
-                          outline: isSelected ? '1px solid #2563EB' : 'none',
+                          outline: isSelected ? '1px solid #1A56A0' : 'none',
                           outlineOffset: '-1px',
                         }}
                       >
@@ -2711,7 +2711,7 @@ export default function Cronograma() {
                                 cursor: isEditable ? 'text' : 'default',
                                 overflow: 'hidden',
                                 backgroundColor: isEditing ? '#fff' : undefined,
-                                border: isEditing ? '2px solid #2563EB' : (isCellSelected ? '1.5px solid #2563EB' : undefined),
+                                border: isEditing ? '2px solid #1A56A0' : (isCellSelected ? '1.5px solid #1A56A0' : undefined),
                                 borderRadius: isEditing || isCellSelected ? 4 : 0,
                                 ...(isNameCol && !isEditing ? lvStyle : { fontSize: 11 }),
                               }}
@@ -2761,9 +2761,9 @@ export default function Cronograma() {
                                     </span>
                                     {isHov && (
                                       <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
-                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
-                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
-                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
+                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
+                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: '#B91C1C', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
                                       </div>
                                     )}
                                   </>
@@ -2841,7 +2841,7 @@ export default function Cronograma() {
               userSelect: 'none',
               transition: 'background-color 0.15s',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg2)')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--s1)')}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '')}
           />
 
@@ -2851,7 +2851,7 @@ export default function Cronograma() {
             {/* Header with upper and lower rows */}
             <div
               ref={hdrRef}
-              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
+              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--s1)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
             >
               {/* Upper header */}
               <div style={{ flex: 1, position: 'relative', borderBottom: '0.5px solid var(--bd)' }}>
@@ -2878,7 +2878,7 @@ export default function Cronograma() {
             </div>
 
             {/* Scrollable bar body */}
-            <div ref={rightRef} onScroll={onRightScroll} style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}>
+            <div ref={rightRef} onScroll={onRightScroll} style={{ flex: 1, overflow: 'auto', background: 'var(--s0)' }}>
               <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
                 <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
 
@@ -2890,7 +2890,7 @@ export default function Cronograma() {
                   const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
                   const color = barColor(task.actualProgress, task.plannedProgress);
                   const top = rowIdx * ROW_H;
-                  const bg = hoveredRow === task.id ? 'var(--bg2)' : rowBg(task.level);
+                  const bg = hoveredRow === task.id ? 'var(--s1)' : rowBg(task.level);
 
                   return (
                     <div

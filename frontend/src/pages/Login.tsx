@@ -147,13 +147,13 @@ export default function Login() {
           {/* Logo */}
           <div className="flex items-center gap-3 mb-12">
             <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-3">
-              <HardHat className="h-10 w-10 text-sky-300" />
+              <HardHat className="h-10 w-10 text-amber-400" />
             </div>
             <div>
               <h1 className="text-3xl font-black tracking-tight leading-none">
                 AvançoObras
               </h1>
-              <span className="text-sky-300 font-bold text-xl">Pro</span>
+              <span className="text-amber-400 font-bold text-xl">Pro</span>
             </div>
           </div>
 
@@ -244,7 +244,7 @@ export default function Login() {
             <h2 className="text-2xl font-bold mb-3 leading-tight">
               Gestão de obras inteligente e eficiente
             </h2>
-            <p className="text-blue-200/80 text-sm leading-relaxed">
+            <p className="text-slate-300/80 text-sm leading-relaxed">
               Acompanhe o progresso físico, cronograma e planejamento semanal
               de suas obras em tempo real.
             </p>

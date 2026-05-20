@@ -16,7 +16,7 @@ const config: Config = {
     },
     extend: {
       fontFamily: {
-        sans: ["'IBM Plex Sans'", 'system-ui', 'sans-serif'],
+        sans: ["'Inter'", 'system-ui', 'sans-serif'],
         mono: ["'IBM Plex Mono'", 'Consolas', 'monospace'],
       },
       colors: {
@@ -55,9 +55,9 @@ const config: Config = {
         },
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        lg: "var(--r-lg)",
+        md: "var(--r-md)",
+        sm: "var(--r-sm)",
       },
       keyframes: {
         "accordion-down": {

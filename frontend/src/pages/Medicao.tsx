@@ -49,11 +49,11 @@ function methodLabel(method: 'PERCENT' | 'METRIC' | 'COUNT'): string {
 }
 
 function heatmapColor(pct: number): string {
-  if (pct === 0) return '#e2e8f0';
-  if (pct <= 30) return '#fed7aa';
-  if (pct <= 60) return '#fdba74';
-  if (pct < 100) return '#a3e635';
-  return '#4ade80';
+  if (pct === 0) return '#EBF0F6';
+  if (pct <= 30) return '#FEF3C7';
+  if (pct <= 60) return '#FCD34D';
+  if (pct < 100) return '#86EFAC';
+  return '#4ADE80';
 }
 
 function unitState(p: number): 'ni' | 'ea' | 'co' {
@@ -87,21 +87,21 @@ interface KpiBarProps {
 function KpiBar({ overallProgress, towerProgresses, towers, unitsTotal, unitsDone }: KpiBarProps) {
   return (
     <div style={{
-      background: 'linear-gradient(135deg, var(--bg2) 0%, var(--bg3) 100%)',
-      padding: '1rem',
+      background: 'var(--s0)',
+      padding: '12px 16px',
       borderBottom: '1px solid var(--bd)',
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: '1rem',
-      marginBottom: '1rem',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: '16px',
+      marginBottom: '12px',
     }}>
       {/* Progresso Geral */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
           Avanço Geral da Obra
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--blue)' }}>
+          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px' }}>
             {overallProgress}%
           </div>
           <div className="ao-pbar" style={{ flex: 1, minHeight: 6 }}>
@@ -119,22 +119,23 @@ function KpiBar({ overallProgress, towerProgresses, towers, unitsTotal, unitsDon
 
       {/* Unidades */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
           Unidades
         </div>
-        <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)' }}>
-          {unitsDone} de {unitsTotal} concluídas
+        <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
+          {unitsDone} <span style={{ fontSize: 12, color: 'var(--t3)' }}>/ {unitsTotal}</span>
         </div>
+        <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>concluídas</div>
       </div>
 
       {/* Torres */}
       {towers.length > 1 && towers.map((tower) => (
         <div key={tower.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
             {tower.name}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--t1)' }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
               {Math.round(towerProgresses[tower.id] ?? 0)}%
             </div>
             <div className="ao-pbar" style={{ flex: 1, minHeight: 4 }}>
@@ -184,11 +185,11 @@ function BuildingModel3D({
         {/* Shadow */}
         <ellipse cx="130" cy="334" rx="65" ry="6" fill="rgba(0,0,0,.06)" />
         {/* Side face */}
-        <polygon points="178,22 218,8 218,314 178,328" fill="var(--bg4)" stroke="var(--bd2)" strokeWidth=".5" />
+        <polygon points="178,22 218,8 218,314 178,328" fill="var(--s3)" stroke="var(--bd2)" strokeWidth=".5" />
         {/* Roof */}
-        <polygon points="22,22 62,8 218,8 178,22" fill="var(--bg3)" stroke="var(--bd2)" strokeWidth=".5" />
+        <polygon points="22,22 62,8 218,8 178,22" fill="var(--s2)" stroke="var(--bd2)" strokeWidth=".5" />
         {/* Main facade */}
-        <rect x="22" y="22" width="156" height="274" fill="var(--bg2)" stroke="var(--bd2)" strokeWidth=".5" />
+        <rect x="22" y="22" width="156" height="274" fill="var(--s1)" stroke="var(--bd2)" strokeWidth=".5" />
 
         {/* Floor labels + windows */}
         {displayFloors.map((floor, idx) => {
@@ -304,8 +305,9 @@ function HeatmapLegend() {
       fontSize: '10px',
       marginTop: '10px',
       padding: '10px',
-      background: 'var(--bg3)',
-      borderRadius: '6px',
+      background: 'var(--s2)',
+      borderRadius: 'var(--r-md)',
+      border: '1px solid var(--bd)',
     }}>
       {[
         { pct: 100, label: 'Concluído' },
@@ -345,23 +347,13 @@ function StatusFilterButtons({ current, onChange }: FilterProps) {
   ];
 
   return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+    <div className="ao-tab-bar" style={{ marginBottom: '10px', display: 'inline-flex', borderBottom: 'none', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
       {filters.map((f) => (
         <button
           key={f.value}
           onClick={() => onChange(f.value)}
-          style={{
-            padding: '4px 10px',
-            fontSize: '11px',
-            fontWeight: 500,
-            borderRadius: '6px',
-            border: 'none',
-            cursor: 'pointer',
-            background: current === f.value ? 'var(--blue)' : 'var(--bg2)',
-            color: current === f.value ? '#fff' : 'var(--t2)',
-            transition: 'all .15s',
-            fontFamily: 'var(--font)',
-          }}
+          className={`ao-tab${current === f.value ? ' active' : ''}`}
+          style={{ borderTop: 'none', marginBottom: 0, padding: '5px 12px' }}
         >
           {f.label}
         </button>
@@ -400,7 +392,7 @@ function ProgressCascade({
 
   return (
     <div style={{
-      background: 'var(--bg2)',
+      background: 'var(--s1)',
       border: '1px solid var(--bd)',
       borderRadius: '8px',
       padding: '12px',
@@ -778,12 +770,12 @@ export default function Medicao() {
             <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4, fontWeight: 500 }}>Torre</label>
               {loadingTowers ? (
-                <div style={{ height: 32, background: 'var(--bg3)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
+                <div style={{ height: 32, background: 'var(--s2)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
               ) : (
                 <select
                   value={selectedTowerId ?? ''}
                   onChange={(e) => setSelectedTowerId(e.target.value || null)}
-                  style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                  style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
                 >
                   <option value="">Selecione a torre</option>
                   {towers.map((t) => (
@@ -795,7 +787,7 @@ export default function Medicao() {
 
             {/* Building model 3D */}
             {loadingFloors ? (
-              <div style={{ height: 290, background: 'var(--bg3)', borderRadius: 8, marginBottom: 10 }} />
+              <div style={{ height: 290, background: 'var(--s2)', borderRadius: 8, marginBottom: 10 }} />
             ) : (
               <BuildingModel3D
                 floors={floors}
@@ -813,7 +805,7 @@ export default function Medicao() {
                 value={selectedFloorId ?? ''}
                 onChange={(e) => setSelectedFloorId(e.target.value || null)}
                 disabled={floors.length === 0}
-                style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
               >
                 <option value="">Selecione o andar</option>
                 {floors.map((f) => (
@@ -858,7 +850,7 @@ export default function Medicao() {
             {loadingUnits ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
                 {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} style={{ height: 60, background: 'var(--bg3)', borderRadius: 8 }} />
+                  <div key={i} style={{ height: 60, background: 'var(--s2)', borderRadius: 8 }} />
                 ))}
               </div>
             ) : units.length === 0 ? (
@@ -872,7 +864,7 @@ export default function Medicao() {
                   const state = unitState(p);
                   const isSelected = unit.id === selectedUnitId;
 
-                  const bgColor = state === 'ni' ? 'var(--bg2)' : state === 'co' ? 'var(--grn-bg)' : 'var(--amb-bg)';
+                  const bgColor = state === 'ni' ? 'var(--s1)' : state === 'co' ? 'var(--grn-bg)' : 'var(--amb-bg)';
                   const textColor = state === 'ni' ? 'var(--t2)' : state === 'co' ? 'var(--grn-t)' : 'var(--amb-t)';
 
                   return (
@@ -940,7 +932,7 @@ export default function Medicao() {
             ) : loadingMeasurements ? (
               <div>
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} style={{ height: 44, background: 'var(--bg3)', borderRadius: 8, marginBottom: 6 }} />
+                  <div key={i} style={{ height: 44, background: 'var(--s2)', borderRadius: 8, marginBottom: 6 }} />
                 ))}
               </div>
             ) : entries.length === 0 ? (
@@ -990,7 +982,7 @@ export default function Medicao() {
 
                         {/* Mode toggle */}
                         {entry.measurementMethod !== 'PERCENT' && (
-                          <div style={{ display: 'flex', borderRadius: 6, border: '0.5px solid var(--bd2)', overflow: 'hidden', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', borderRadius: 6, border: '1px solid var(--bd)', overflow: 'hidden', flexShrink: 0 }}>
                             <button
                               onClick={() => handleEntryChange(idx, { mode: 'PERCENT', isDirty: true })}
                               style={{
@@ -1063,7 +1055,7 @@ export default function Medicao() {
                             min={0}
                             value={entry.executedQty}
                             onChange={(e) => handleExecutedChange(e.target.value)}
-                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '0.5px solid var(--bd2)', borderRadius: 4, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
                           />
                           <span style={{ color: 'var(--t3)' }}>/</span>
                           <input
@@ -1071,7 +1063,7 @@ export default function Medicao() {
                             min={0}
                             value={entry.totalQty}
                             onChange={(e) => handleTotalChange(e.target.value)}
-                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '0.5px solid var(--bd2)', borderRadius: 4, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
                           />
                           <span style={{ color: 'var(--t2)', fontWeight: 500 }}>{entry.unit}</span>
                         </div>
@@ -1084,7 +1076,7 @@ export default function Medicao() {
                             max={100}
                             value={entry.percentValue}
                             onChange={(e) => handlePercentChange(e.target.value)}
-                            style={{ width: 70, padding: '4px 6px', fontSize: 10, border: '0.5px solid var(--bd2)', borderRadius: 4, background: 'var(--bg1)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                            style={{ width: 70, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
                           />
                           <span style={{ color: 'var(--t2)', fontWeight: 500 }}>%</span>
                         </div>
