@@ -117,6 +117,7 @@ export interface ScheduleItem {
   actualProgress: number;
   weight: number;
   isCriticalPath: boolean;
+  responsible?: string;
   order: number;
   children?: ScheduleItem[];
   activityType?: ActivityType;

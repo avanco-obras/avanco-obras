@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Undo2, Redo2 } from 'lucide-react';
 import { useStore } from '@/store';
 import { towersApi, measurementsApi, activityTypesApi } from '@/services/api';
 import type { Tower, Floor, Unit, ActivityType, Measurement } from '@/types';
+import { useHistoryStore } from '@/store/historyStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -429,6 +431,16 @@ function ProgressCascade({
 export default function Medicao() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
+  const { push, triggerDataOnly, dataOnlyTrigger, past, future, undo, redo, isProcessing: historyProcessing } = useHistoryStore();
+  // Tracks the last-saved state of entries per unit (for undo)
+  const committedEntriesRef = useRef<Map<string, ActivityEntry[]>>(new Map());
+  const [measurementRefreshTick, setMeasurementRefreshTick] = useState(0);
+
+  // dataOnlyTrigger: undo/redo refreshes only measurements for current unit, preserving navigation
+  useEffect(() => {
+    if (dataOnlyTrigger > 0) setMeasurementRefreshTick((t) => t + 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataOnlyTrigger]);
 
   const [towers, setTowers] = useState<Tower[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
@@ -607,13 +619,17 @@ export default function Medicao() {
       .list(selectedUnitId)
       .then((meas) => {
         setMeasurements(meas);
-        setEntries(buildEntries(meas, activityTypes));
+        const built = buildEntries(meas, activityTypes);
+        setEntries(built);
+        committedEntriesRef.current.set(selectedUnitId, built);
       })
       .catch(() => {
-        setEntries(buildEntries([], activityTypes));
+        const empty = buildEntries([], activityTypes);
+        setEntries(empty);
+        if (selectedUnitId) committedEntriesRef.current.set(selectedUnitId, empty);
       })
       .finally(() => setLoadingMeasurements(false));
-  }, [selectedUnitId, activityTypes, buildEntries]);
+  }, [selectedUnitId, activityTypes, buildEntries, measurementRefreshTick]);
 
   // ── Calculate all progress values ────────────────────────────────────────
 
@@ -682,10 +698,24 @@ export default function Medicao() {
     const dirty = entries.filter((e) => e.isDirty);
     if (dirty.length === 0) return;
     setSaving(true);
+
+    // Capture old (committed) state before overwriting
+    const unitId = selectedUnitId;
+    const oldCommitted = committedEntriesRef.current.get(unitId) ?? [];
+    const oldSnapshots = dirty.map((e) => {
+      const old = oldCommitted.find((o) => o.activityTypeId === e.activityTypeId);
+      return { activityTypeId: e.activityTypeId, percentComplete: old?.computed ?? 0, executedQty: old?.executedQty, totalQty: old?.totalQty };
+    });
+    const newSnapshots = dirty.map((e) => ({
+      activityTypeId: e.activityTypeId, percentComplete: e.computed,
+      executedQty: e.mode === 'METRIC' ? e.executedQty : undefined,
+      totalQty: e.mode === 'METRIC' ? e.totalQty : undefined,
+    }));
+
     try {
       await Promise.all(
         dirty.map((e) =>
-          measurementsApi.create(selectedUnitId, {
+          measurementsApi.create(unitId, {
             activityTypeId: e.activityTypeId,
             percentComplete: e.computed,
             executedQty: e.mode === 'METRIC' ? e.executedQty : undefined,
@@ -700,10 +730,11 @@ export default function Medicao() {
 
       // Update entries to clean state
       setEntries(cleanedEntries);
+      committedEntriesRef.current.set(unitId, cleanedEntries);
 
       // Update unit in cache with new progress
       const updatedUnits = (floorUnitsCache[selectedFloorId] ?? []).map((u) =>
-        u.id === selectedUnitId ? { ...u, progressPercent: newUnitProgress } : u,
+        u.id === unitId ? { ...u, progressPercent: newUnitProgress } : u,
       );
 
       setFloorUnitsCache((prev) => ({ ...prev, [selectedFloorId]: updatedUnits }));
@@ -718,6 +749,20 @@ export default function Medicao() {
       setFloorProgresses((prev) => ({ ...prev, [selectedFloorId]: newFloorProgress }));
 
       addToast({ type: 'success', title: 'Salvo com sucesso', description: 'Medição da unidade salva.' });
+
+      // Record in history
+      push({
+        description: `Medição: ${dirty.length} atividade(s) salva(s)`,
+        module: 'medicao',
+        undo: async () => {
+          await Promise.all(oldSnapshots.map((s) => measurementsApi.create(unitId, s)));
+          triggerDataOnly();
+        },
+        redo: async () => {
+          await Promise.all(newSnapshots.map((s) => measurementsApi.create(unitId, s)));
+          triggerDataOnly();
+        },
+      });
     } catch {
       addToast({ type: 'error', title: 'Erro ao salvar', description: 'Tente novamente.' });
     } finally {
@@ -909,20 +954,41 @@ export default function Medicao() {
               <span className="ao-card-title">
                 {selectedUnit ? `Atividades — ${selectedUnit.name}` : 'Atividades'}
               </span>
-              {selectedUnit && (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
-                    Tudo concluído
-                  </button>
-                  <button
-                    className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
-                    onClick={handleSave}
-                    disabled={saving || entries.every((e) => !e.isDirty)}
-                  >
-                    {saving ? 'Salvando…' : 'Salvar'}
-                  </button>
-                </div>
-              )}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button
+                  className="ao-btn ao-btn-sm"
+                  onClick={undo}
+                  disabled={past.length === 0 || historyProcessing}
+                  title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
+                  style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+                >
+                  <Undo2 style={{ width: 12, height: 12 }} />
+                </button>
+                <button
+                  className="ao-btn ao-btn-sm"
+                  onClick={redo}
+                  disabled={future.length === 0 || historyProcessing}
+                  title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
+                  style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+                >
+                  <Redo2 style={{ width: 12, height: 12 }} />
+                </button>
+                {selectedUnit && (
+                  <>
+                    <div style={{ width: 1, height: 16, background: 'var(--bd)' }} />
+                    <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
+                      Tudo concluído
+                    </button>
+                    <button
+                      className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
+                      onClick={handleSave}
+                      disabled={saving || entries.every((e) => !e.isDirty)}
+                    >
+                      {saving ? 'Salvando…' : 'Salvar'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {!selectedUnitId ? (

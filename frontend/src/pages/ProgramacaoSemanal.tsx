@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Undo2, Redo2 } from 'lucide-react';
 import { useStore } from '../store';
 import { weeklyPlanningApi } from '../services/api';
 import { formatDate } from '../utils/calculations';
 import type { WeeklyPlan, WeeklyTask, Restriction, TaskStatus, RestrictionStatus } from '../types';
+import { useHistoryStore } from '../store/historyStore';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +58,7 @@ function restrictionStatusLabel(status: RestrictionStatus): string {
 export default function ProgramacaoSemanal() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
+  const { push, triggerDataOnly, dataOnlyTrigger, past, future, undo, redo, isProcessing: historyProcessing } = useHistoryStore();
 
   // Plans list + navigation
   const [plans, setPlans] = useState<WeeklyPlan[]>([]);
@@ -96,6 +99,14 @@ export default function ProgramacaoSemanal() {
   useEffect(() => {
     loadPlans();
   }, [loadPlans]);
+
+  // dataOnlyTrigger: undo/redo reloads only the current plan, preserving week navigation
+  useEffect(() => {
+    if (dataOnlyTrigger > 0 && plans.length > 0 && planIndex >= 0 && planIndex < plans.length) {
+      loadPlan(plans[planIndex].id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataOnlyTrigger]);
 
   // ── Load selected plan detail ─────────────────────────────────────────────
 
@@ -151,6 +162,8 @@ export default function ProgramacaoSemanal() {
   // ── Toggle task status via checkbox ──────────────────────────────────────
 
   const handleCheckboxChange = async (taskId: string, checked: boolean) => {
+    const oldTask = tasks.find((t) => t.id === taskId);
+    const oldStatus = oldTask?.status ?? 'NOT_COMPLETED';
     const newStatus: TaskStatus = checked ? 'COMPLETED' : 'NOT_COMPLETED';
 
     // Optimistic update — recalc PPC immediately
@@ -160,9 +173,23 @@ export default function ProgramacaoSemanal() {
     try {
       const updated = await weeklyPlanningApi.updateTask(taskId, { status: newStatus });
       setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
+
+      const taskDesc = oldTask?.description ?? 'Tarefa';
+      push({
+        description: `Status: "${taskDesc.slice(0, 40)}"`,
+        module: 'programacao-semanal',
+        undo: async () => {
+          await weeklyPlanningApi.updateTask(taskId, { status: oldStatus });
+          triggerDataOnly();
+        },
+        redo: async () => {
+          await weeklyPlanningApi.updateTask(taskId, { status: newStatus });
+          triggerDataOnly();
+        },
+      });
     } catch {
       // Revert
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: t.status } : t)));
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: oldStatus } : t)));
       addToast({ type: 'error', title: 'Erro ao atualizar status da tarefa.' });
     } finally {
       setUpdatingTask(null);
@@ -170,9 +197,27 @@ export default function ProgramacaoSemanal() {
   };
 
   const handleCauseBlur = async (taskId: string, nonCompletionCause: string) => {
+    const oldTask = tasks.find((t) => t.id === taskId);
+    const oldCause = oldTask?.nonCompletionCause ?? '';
+    if (oldCause === nonCompletionCause) return;
+
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, nonCompletionCause } : t)));
     try {
       await weeklyPlanningApi.updateTask(taskId, { nonCompletionCause });
+
+      const taskDesc = oldTask?.description ?? 'Tarefa';
+      push({
+        description: `Causa: "${taskDesc.slice(0, 40)}"`,
+        module: 'programacao-semanal',
+        undo: async () => {
+          await weeklyPlanningApi.updateTask(taskId, { nonCompletionCause: oldCause });
+          triggerDataOnly();
+        },
+        redo: async () => {
+          await weeklyPlanningApi.updateTask(taskId, { nonCompletionCause });
+          triggerDataOnly();
+        },
+      });
     } catch {
       addToast({ type: 'error', title: 'Erro ao salvar causa.' });
     }
@@ -279,7 +324,26 @@ export default function ProgramacaoSemanal() {
           )}
 
           {/* Actions */}
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={undo}
+              disabled={past.length === 0 || historyProcessing}
+              title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
+              style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Undo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={redo}
+              disabled={future.length === 0 || historyProcessing}
+              title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
+              style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Redo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <div style={{ width: 1, height: 16, background: 'var(--bd)' }} />
             <button className="ao-btn ao-btn-sm" onClick={handleGenerate} disabled={generating || !plan}>
               {generating ? 'Gerando…' : 'Gerar tarefas'}
             </button>

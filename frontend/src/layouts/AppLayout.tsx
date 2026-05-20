@@ -9,6 +9,7 @@ import { useStore } from '@/store'
 import { useAuth } from '@/hooks/useAuth'
 import { projectsApi } from '@/services/api'
 import type { Project } from '@/types'
+import { useHistoryStore } from '@/store/historyStore'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 const NAV_MAIN = [
@@ -164,6 +165,8 @@ export function AppLayout() {
   const [cmdOpen, setCmdOpen]               = useState(false)
   const [tooltip, setTooltip]              = useState<string | null>(null)
 
+  const { undo, redo } = useHistoryStore()
+
   const [darkMode, setDarkMode] = useState(() => {
     const s = localStorage.getItem('theme')
     return s ? s === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -210,7 +213,17 @@ export function AppLayout() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA'
+
+      // Undo/Redo — only when not typing in an input
+      if (!isInput && (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault(); undo(); return
+      }
+      if (!isInput && ((e.metaKey && e.shiftKey && e.key === 'z') || (e.ctrlKey && e.key === 'y'))) {
+        e.preventDefault(); redo(); return
+      }
+
+      if (isInput) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o) }
       if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); navigate('/dashboard') }
       if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); navigate('/cronograma') }
@@ -219,7 +232,7 @@ export function AppLayout() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [navigate])
+  }, [navigate, undo, redo])
 
   function handleSelectProject(p: Project) {
     setCurrentProject(p)

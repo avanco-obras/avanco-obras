@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Undo2, Redo2 } from 'lucide-react';
 import { useStore } from '@/store';
 import { scheduleApi, baselineApi, progressApi } from '@/services/api';
+import { useHistoryStore } from '@/store/historyStore';
 import * as xlsx from 'xlsx';
 import type { GanttTask, ScheduleDependencyItem, ProjectMetrics, ProjectReport, ReportComparison } from '@/types';
 
@@ -1036,6 +1038,7 @@ interface TaskModalProps {
 }
 
 function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
+  const { push, triggerDataOnly } = useHistoryStore();
   const [form, setForm] = useState<FormState>(() =>
     editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks)
   );
@@ -1096,11 +1099,48 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         responsible: form.responsible.trim() || undefined,
       };
       if (editingTask) {
-        await scheduleApi.update(editingTask.id, payload);
+        const oldPayload = formFromTask(editingTask);
+        const taskId = editingTask.id;
+        await scheduleApi.update(taskId, payload);
         addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+
+        push({
+          description: `Editar: "${form.name.trim()}"`,
+          module: 'cronograma',
+          undo: async () => {
+            await scheduleApi.update(taskId, {
+              name: oldPayload.name, code: oldPayload.code, level: oldPayload.level,
+              parentId: oldPayload.parentId || undefined, startDate: oldPayload.startDate,
+              endDate: oldPayload.endDate, durationDays: oldPayload.durationDays,
+              plannedProgress: oldPayload.plannedProgress, actualProgress: oldPayload.actualProgress,
+              weight: oldPayload.weight, isCriticalPath: oldPayload.isCriticalPath,
+              responsible: oldPayload.responsible || undefined,
+            });
+            triggerDataOnly();
+          },
+          redo: async () => {
+            await scheduleApi.update(taskId, payload);
+            triggerDataOnly();
+          },
+        });
       } else {
-        await scheduleApi.create(projectId, payload);
+        const created = await scheduleApi.create(projectId, payload);
         addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
+
+        const newId = (created as { id: string }).id;
+        if (newId) {
+          push({
+            description: `Criar: "${form.name.trim()}"`,
+            module: 'cronograma',
+            undo: async () => {
+              await scheduleApi.delete(newId);
+              triggerDataOnly();
+            },
+            redo: async () => {
+              triggerDataOnly();
+            },
+          });
+        }
       }
       onSaved();
       onClose();
@@ -1700,10 +1740,12 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 export default function Cronograma() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
+  const { push, triggerReload, reloadTrigger, triggerDataOnly, dataOnlyTrigger, past, future, undo, redo, isProcessing: historyProcessing } = useHistoryStore();
 
   const [tasks, setTasks] = useState<GanttTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const expandedRef = useRef<Set<string>>(new Set());
   const [outlineLevel, setOutlineLevel] = useState<number | 'all'>('all');
   const [searchRaw, setSearchRaw] = useState('');
   const [search, setSearch] = useState('');
@@ -1927,6 +1969,9 @@ export default function Cronograma() {
     return progress;
   }, [tasks]);
 
+  // Keep expandedRef in sync so closures can read current value without stale deps
+  useEffect(() => { expandedRef.current = expanded; }, [expanded]);
+
   const loadData = useCallback(() => {
     if (!projectId) return;
     setLoading(true);
@@ -1948,6 +1993,21 @@ export default function Cronograma() {
       .finally(() => setLoading(false));
   }, [projectId]);
 
+  // Refresh only task data, preserving all UI state (expanded, scroll, filters, zoom)
+  const loadTasksOnly = useCallback(() => {
+    if (!projectId) return;
+    const prevExpanded = expandedRef.current;
+    scheduleApi.ganttData(projectId)
+      .then((data) => {
+        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
+        setTasks(sorted);
+        const validHasChildren = new Set(sorted.filter(t => t.hasChildren).map(t => t.id));
+        setExpanded(new Set([...prevExpanded].filter(id => validHasChildren.has(id))));
+      })
+      .catch(() => {});
+  }, [projectId]);
+
   useEffect(() => {
     if (projectId) {
       loadData();
@@ -1959,7 +2019,14 @@ export default function Cronograma() {
       const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
       setExpanded(new Set(ids));
     }
-  }, [loadData, projectId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData, projectId, reloadTrigger]);
+
+  // dataOnlyTrigger: undo/redo refreshes data without resetting expanded/scroll/filters
+  useEffect(() => {
+    if (dataOnlyTrigger > 0) loadTasksOnly();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataOnlyTrigger]);
 
   // Ancestor set for search filtering
   const ancestorIds = useMemo((): Set<string> => {
@@ -2118,9 +2185,13 @@ export default function Cronograma() {
     const task = tasks.find(t => t.id === inlineEdit.taskId);
     if (!task) { setInlineEdit(null); return; }
 
+    // Snapshot of the task BEFORE any change (for undo)
+    const oldForm = formFromTask(task);
+    const colKey = inlineEdit.colKey;
+
     const form = formFromTask(task);
     try {
-      switch (inlineEdit.colKey) {
+      switch (colKey) {
         case 'name':
           form.name = inlineEdit.value.trim();
           break;
@@ -2208,12 +2279,14 @@ export default function Cronograma() {
         responsible: form.responsible || undefined,
       } : t);
 
-      // If progress changed, recalculate parent progress in cascade
-      if (inlineEdit.colKey === 'progress') {
+      // Progress cascade: recalculate parent progress
+      type CascadeItem = { id: string; oldVal: number; newVal: number };
+      const progressCascade: CascadeItem[] = [];
+
+      if (colKey === 'progress') {
         const originalTasks = tasks;
         updatedTasks = recalculateParentProgress(updatedTasks);
 
-        // Update parents in backend
         const parentsChanged = updatedTasks.filter(t => {
           const orig = originalTasks.find(o => o.id === t.id);
           return orig && t.parentId && orig.actualProgress !== t.actualProgress;
@@ -2225,15 +2298,17 @@ export default function Cronograma() {
           })));
         }
 
-        console.log('[Cronograma] Parent progress recalculated:', {
-          task: task.name,
-          newProgress: form.actualProgress,
-          parentsUpdated: parentsChanged.map(t => ({ id: t.id, name: t.name, progress: t.actualProgress }))
+        parentsChanged.forEach(t => {
+          const orig = originalTasks.find(o => o.id === t.id)!;
+          progressCascade.push({ id: t.id, oldVal: orig.actualProgress, newVal: t.actualProgress });
         });
       }
 
-      // If duration/dates changed, propagate to dependent tasks
-      if (['duration', 'startDate', 'endDate'].includes(inlineEdit.colKey)) {
+      // Date cascade: propagate to dependent tasks
+      type DateCascadeItem = { id: string; oldStart: string; oldEnd: string; newStart: string; newEnd: string };
+      const dateCascade: DateCascadeItem[] = [];
+
+      if (['duration', 'startDate', 'endDate'].includes(colKey)) {
         updatedTasks = propagateDates(updatedTasks);
         const dateChanged = updatedTasks.filter(t => {
           const orig = tasks.find(o => o.id === t.id);
@@ -2245,10 +2320,50 @@ export default function Cronograma() {
             endDate: t.endDate.slice(0,10),
           })));
         }
+        dateChanged.forEach(t => {
+          const orig = tasks.find(o => o.id === t.id)!;
+          dateCascade.push({
+            id: t.id,
+            oldStart: orig.startDate.slice(0,10),
+            oldEnd: orig.endDate.slice(0,10),
+            newStart: t.startDate.slice(0,10),
+            newEnd: t.endDate.slice(0,10),
+          });
+        });
       }
 
       setTasks(updatedTasks);
       addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+
+      // Record in history
+      const taskId = task.id;
+      const taskName = form.name;
+      const colLabel = COL_DEFS.find(c => c.key === colKey)?.label ?? colKey;
+      const undoPayload = {
+        name: oldForm.name, code: oldForm.code, level: oldForm.level,
+        parentId: oldForm.parentId || undefined, startDate: oldForm.startDate,
+        endDate: oldForm.endDate, durationDays: oldForm.durationDays,
+        plannedProgress: oldForm.plannedProgress, actualProgress: oldForm.actualProgress,
+        weight: oldForm.weight, isCriticalPath: oldForm.isCriticalPath,
+        responsible: oldForm.responsible || undefined,
+      };
+
+      push({
+        description: `${colLabel}: "${taskName}"`,
+        module: 'cronograma',
+        undo: async () => {
+          await scheduleApi.update(taskId, undoPayload);
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.oldVal })));
+          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, { startDate: c.oldStart, endDate: c.oldEnd })));
+          triggerDataOnly();
+        },
+        redo: async () => {
+          await scheduleApi.update(taskId, payload);
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.newVal })));
+          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, { startDate: c.newStart, endDate: c.newEnd })));
+          triggerDataOnly();
+        },
+      });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
@@ -2407,9 +2522,29 @@ export default function Cronograma() {
       const orig = tasks.find(o => o.id === t.id);
       return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
     });
+    // Snapshot before/after for undo
+    const undoItems = changed.map(t => {
+      const orig = tasks.find(o => o.id === t.id)!;
+      return { id: t.id, code: orig.code, parentId: orig.parentId || undefined, level: orig.level };
+    });
+    const redoItems = changed.map(t => ({ id: t.id, code: t.code, parentId: t.parentId || undefined, level: t.level }));
+
     await Promise.all(changed.map(t =>
       scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
     ));
+
+    push({
+      description: `Indentar: "${task.name}"`,
+      module: 'cronograma',
+      undo: async () => {
+        await Promise.all(undoItems.map(u => scheduleApi.update(u.id, { code: u.code, parentId: u.parentId, level: u.level })));
+        triggerDataOnly();
+      },
+      redo: async () => {
+        await Promise.all(redoItems.map(r => scheduleApi.update(r.id, { code: r.code, parentId: r.parentId, level: r.level })));
+        triggerDataOnly();
+      },
+    });
   }
 
   async function outdentTask(taskId: string) {
@@ -2431,9 +2566,28 @@ export default function Cronograma() {
       const orig = tasks.find(o => o.id === t.id);
       return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
     });
+    const undoItems = changed.map(t => {
+      const orig = tasks.find(o => o.id === t.id)!;
+      return { id: t.id, code: orig.code, parentId: orig.parentId || undefined, level: orig.level };
+    });
+    const redoItems = changed.map(t => ({ id: t.id, code: t.code, parentId: t.parentId || undefined, level: t.level }));
+
     await Promise.all(changed.map(t =>
       scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
     ));
+
+    push({
+      description: `Recuar: "${task.name}"`,
+      module: 'cronograma',
+      undo: async () => {
+        await Promise.all(undoItems.map(u => scheduleApi.update(u.id, { code: u.code, parentId: u.parentId, level: u.level })));
+        triggerDataOnly();
+      },
+      redo: async () => {
+        await Promise.all(redoItems.map(r => scheduleApi.update(r.id, { code: r.code, parentId: r.parentId, level: r.level })));
+        triggerDataOnly();
+      },
+    });
   }
 
   function handleOutlineLevelChange(newLevel: number | 'all') {
@@ -2451,6 +2605,13 @@ export default function Cronograma() {
       addToast({ type: 'error', title: 'Erro nas predecessoras', description: errors.join('\n') });
       return;
     }
+    // Snapshot of old dependencies for undo
+    const oldDeps = (task.predecessorDeps ?? []).map(d => ({
+      predecessorId: d.predecessorId, lagDays: d.lagDays, type: d.type,
+    }));
+    const taskId = task.id;
+    const taskName = task.name;
+
     const existing = task.predecessorDeps ?? [];
     try {
       await Promise.all(existing.map(d => scheduleApi.removeDependency(d.id)));
@@ -2465,6 +2626,10 @@ export default function Cronograma() {
         const dep = await scheduleApi.addDependency(task.id, { predecessorId: predTask.id, lagDays: p.lag, type: p.type });
         created.push({ id: dep.id, predecessorId: dep.predecessorId, successorId: dep.successorId, lagDays: dep.lagDays, type: dep.type });
       }
+
+      // New set of predecessor specs (for redo)
+      const newDepSpecs = created.map(d => ({ predecessorId: d.predecessorId, lagDays: d.lagDays, type: d.type }));
+
       let updatedTasks = tasks.map(t => {
         if (t.id === task.id) return { ...t, predecessorDeps: created };
         const wasSuccessor = existing.some(d => d.predecessorId === t.id);
@@ -2489,6 +2654,28 @@ export default function Cronograma() {
         endDate: t.endDate.slice(0,10),
       })));
       addToast({ type: 'success', title: 'Predecessoras atualizadas', description: `${created.length} vínculo(s) criado(s).` });
+
+      // Record in history
+      push({
+        description: `Predecessoras: "${taskName}"`,
+        module: 'cronograma',
+        undo: async () => {
+          const current = await scheduleApi.getDependencies(taskId);
+          await Promise.all(current.map(d => scheduleApi.removeDependency(d.id)));
+          for (const dep of oldDeps) {
+            await scheduleApi.addDependency(taskId, dep);
+          }
+          triggerDataOnly();
+        },
+        redo: async () => {
+          const current = await scheduleApi.getDependencies(taskId);
+          await Promise.all(current.map(d => scheduleApi.removeDependency(d.id)));
+          for (const dep of newDepSpecs) {
+            await scheduleApi.addDependency(taskId, dep);
+          }
+          triggerDataOnly();
+        },
+      });
     } catch (err) {
       addToast({ type: 'error', title: 'Erro ao salvar', description: String(err) });
     }
@@ -2662,11 +2849,44 @@ export default function Cronograma() {
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
+
+    // Snapshot the task before deleting (for undo)
+    const snapshot = deleteTarget;
+    const hasChildren = deleteTarget.hasChildren;
+
     try {
       await scheduleApi.delete(deleteTarget.id);
       addToast({ type: 'success', title: 'Excluído', description: `"${deleteTarget.name}" removido.` });
       setDeleteTarget(null);
-      loadData();
+      loadTasksOnly();
+
+      // Record undo only for leaf tasks (parent deletion cascades children — complex to undo)
+      if (!hasChildren && projectId) {
+        push({
+          description: `Excluir: "${snapshot.name}"`,
+          module: 'cronograma',
+          undo: async () => {
+            await scheduleApi.create(projectId, {
+              name: snapshot.name,
+              code: snapshot.code,
+              level: snapshot.level,
+              parentId: snapshot.parentId || undefined,
+              startDate: snapshot.startDate.slice(0, 10),
+              endDate: snapshot.endDate.slice(0, 10),
+              durationDays: snapshot.durationDays,
+              plannedProgress: snapshot.plannedProgress,
+              actualProgress: snapshot.actualProgress,
+              weight: snapshot.weight,
+              isCriticalPath: snapshot.isCriticalPath,
+              responsible: snapshot.responsible,
+            });
+            triggerDataOnly();
+          },
+          redo: async () => {
+            triggerDataOnly();
+          },
+        });
+      }
     } catch {
       addToast({ type: 'error', title: 'Erro', description: 'Não foi possível excluir.' });
     } finally {
@@ -2807,6 +3027,26 @@ export default function Cronograma() {
             </div>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
+            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={undo}
+              disabled={past.length === 0 || historyProcessing}
+              title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
+              style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Undo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={redo}
+              disabled={future.length === 0 || historyProcessing}
+              title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
+              style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Redo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
             <button
               className="ao-btn ao-btn-sm"
               style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
