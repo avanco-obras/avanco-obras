@@ -263,14 +263,14 @@ export class ProjectsService {
     }
 
     const targetUser = await this.prisma.user.findUnique({
-      where: { id: dto.userId },
+      where: { email: dto.email },
       select: { id: true },
     });
     if (!targetUser) {
-      throw new NotFoundException(`Usuário com ID "${dto.userId}" não encontrado`);
+      throw new NotFoundException(`Usuário com e-mail "${dto.email}" não encontrado`);
     }
 
-    const existingMember = project.members.find((m) => m.userId === dto.userId);
+    const existingMember = project.members.find((m) => m.userId === targetUser.id);
     if (existingMember) {
       return this.prisma.projectMember.update({
         where: { id: existingMember.id },
@@ -292,7 +292,7 @@ export class ProjectsService {
     return this.prisma.projectMember.create({
       data: {
         projectId: id,
-        userId: dto.userId,
+        userId: targetUser.id,
         role: dto.role,
       },
       include: {

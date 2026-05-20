@@ -21,8 +21,8 @@ export declare class DashboardController {
     } & {
         id: string;
         status: import(".prisma/client").$Enums.RestrictionStatus;
-        description: string;
         responsible: string;
+        description: string;
         dueDate: Date;
         resolvedAt: Date | null;
         weeklyPlanId: string;

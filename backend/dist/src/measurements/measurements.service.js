@@ -259,14 +259,11 @@ let MeasurementsService = class MeasurementsService {
             },
             orderBy: { order: 'asc' },
         });
-        return towers.map((tower) => ({
-            towerId: tower.id,
-            towerName: tower.name,
-            floors: tower.floors.map((floor) => ({
-                floorId: floor.id,
-                floorName: floor.name,
-                level: floor.level,
-                units: floor.units.map((unit) => {
+        const towerData = towers.map((tower) => ({
+            id: tower.id,
+            name: tower.name,
+            floors: tower.floors.map((floor) => {
+                const units = floor.units.map((unit) => {
                     const latestByActivity = new Map();
                     for (const m of unit.measurements) {
                         if (!latestByActivity.has(m.activityTypeId)) {
@@ -282,18 +279,30 @@ let MeasurementsService = class MeasurementsService {
                         avgProgress: Math.round(data.percentComplete * 100) / 100,
                     }));
                     const values = activityProgress.map((a) => a.avgProgress);
-                    const overallAvgProgress = values.length > 0
+                    const progressPercent = values.length > 0
                         ? Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100
                         : 0;
                     return {
-                        unitId: unit.id,
-                        unitName: unit.name,
+                        id: unit.id,
+                        name: unit.name,
                         activityProgress,
-                        overallAvgProgress,
+                        progressPercent,
                     };
-                }),
-            })),
+                });
+                const unitProgresses = units.map((u) => u.progressPercent);
+                const averageProgress = unitProgresses.length > 0
+                    ? Math.round((unitProgresses.reduce((a, b) => a + b, 0) / unitProgresses.length) * 100) / 100
+                    : 0;
+                return {
+                    id: floor.id,
+                    name: floor.name,
+                    level: floor.level,
+                    units,
+                    averageProgress,
+                };
+            }),
         }));
+        return { towers: towerData };
     }
 };
 exports.MeasurementsService = MeasurementsService;

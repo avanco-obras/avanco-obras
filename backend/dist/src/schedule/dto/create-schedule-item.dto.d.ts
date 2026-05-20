@@ -12,4 +12,5 @@ export declare class CreateScheduleItemDto {
     weight?: number;
     isCriticalPath?: boolean;
     order?: number;
+    responsible?: string;
 }

@@ -1,6 +1,7 @@
 import { ScheduleService } from './schedule.service';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+import { CreateDependencyDto } from './dto/create-dependency.dto';
 export declare class ScheduleController {
     private readonly scheduleService;
     constructor(scheduleService: ScheduleService);
@@ -31,6 +32,7 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     })[]>;
@@ -61,6 +63,7 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -91,12 +94,57 @@ export declare class ScheduleController {
         plannedProgress: import("@prisma/client/runtime/library").Decimal;
         actualProgress: import("@prisma/client/runtime/library").Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
+    addDependency(successorId: string, dto: CreateDependencyDto): Promise<{
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        predecessorId: string;
+        successorId: string;
+        lagDays: number;
+    }>;
+    removeDependency(depId: string): Promise<{
+        message: string;
+    }>;
+    getItemDependencies(itemId: string): Promise<({
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        predecessorId: string;
+        successorId: string;
+        lagDays: number;
+    })[]>;
     remove(id: string): Promise<{
         message: string;
     }>;
     getGanttData(projectId: string): Promise<import("./schedule.service").GanttRow[]>;
     getCurvaS(projectId: string): Promise<import("./schedule.service").CurvaSPoint[]>;
+    importSchedule(projectId: string, file: Express.Multer.File): Promise<{
+        imported: number;
+        skipped: number;
+        errors: string[];
+    }>;
 }

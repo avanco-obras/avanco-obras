@@ -5,7 +5,9 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\usuario1\\\\Documents\\\\avanco-obras\" -Recurse -Force | Where-Object { $_.PSIsContainer -eq $false } | ForEach-Object { $_.FullName } | Sort-Object)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npx skills *)",
+      "Bash(npx prisma *)"
     ]
   }
 }

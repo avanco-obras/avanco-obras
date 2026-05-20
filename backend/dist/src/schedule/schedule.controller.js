@@ -14,11 +14,13 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ScheduleController = void 0;
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
 const swagger_1 = require("@nestjs/swagger");
 const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const schedule_service_1 = require("./schedule.service");
 const create_schedule_item_dto_1 = require("./dto/create-schedule-item.dto");
 const update_schedule_item_dto_1 = require("./dto/update-schedule-item.dto");
+const create_dependency_dto_1 = require("./dto/create-dependency.dto");
 let ScheduleController = class ScheduleController {
     constructor(scheduleService) {
         this.scheduleService = scheduleService;
@@ -32,6 +34,15 @@ let ScheduleController = class ScheduleController {
     update(id, dto) {
         return this.scheduleService.update(id, dto);
     }
+    addDependency(successorId, dto) {
+        return this.scheduleService.addDependency(successorId, dto.predecessorId, dto.lagDays, dto.type);
+    }
+    removeDependency(depId) {
+        return this.scheduleService.removeDependency(depId);
+    }
+    getItemDependencies(itemId) {
+        return this.scheduleService.getItemDependencies(itemId);
+    }
     remove(id) {
         return this.scheduleService.remove(id);
     }
@@ -40,6 +51,12 @@ let ScheduleController = class ScheduleController {
     }
     getCurvaS(projectId) {
         return this.scheduleService.getCurvaS(projectId);
+    }
+    importSchedule(projectId, file) {
+        if (!file) {
+            throw new common_1.BadRequestException('Nenhum arquivo fornecido');
+        }
+        return this.scheduleService.importBatch(projectId, file.buffer, file.mimetype);
     }
 };
 exports.ScheduleController = ScheduleController;
@@ -77,6 +94,38 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], ScheduleController.prototype, "update", null);
 __decorate([
+    (0, common_1.Post)('schedule/:id/predecessors'),
+    (0, swagger_1.ApiOperation)({ summary: 'Add a predecessor dependency to a schedule item' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Successor schedule item ID' }),
+    (0, swagger_1.ApiResponse)({ status: 201, description: 'Dependency created' }),
+    (0, common_1.HttpCode)(common_1.HttpStatus.CREATED),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, create_dependency_dto_1.CreateDependencyDto]),
+    __metadata("design:returntype", void 0)
+], ScheduleController.prototype, "addDependency", null);
+__decorate([
+    (0, common_1.Delete)('schedule/dependencies/:depId'),
+    (0, swagger_1.ApiOperation)({ summary: 'Remove a schedule dependency' }),
+    (0, swagger_1.ApiParam)({ name: 'depId', description: 'Dependency ID' }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Dependency removed' }),
+    __param(0, (0, common_1.Param)('depId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], ScheduleController.prototype, "removeDependency", null);
+__decorate([
+    (0, common_1.Get)('schedule/:id/dependencies'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get all dependencies for a schedule item' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Schedule item ID' }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Returns predecessors and successors' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], ScheduleController.prototype, "getItemDependencies", null);
+__decorate([
     (0, common_1.Delete)('schedule/:id'),
     (0, swagger_1.ApiOperation)({ summary: 'Delete a schedule item and its children' }),
     (0, swagger_1.ApiParam)({ name: 'id', description: 'Schedule item ID' }),
@@ -106,6 +155,19 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], ScheduleController.prototype, "getCurvaS", null);
+__decorate([
+    (0, common_1.Post)('projects/:id/schedule/import'),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    (0, swagger_1.ApiOperation)({ summary: 'Import schedule items from CSV or XLSX file' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Project ID' }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: 'Import completed with summary' }),
+    __param(0, (0, common_1.Param)('id', common_1.ParseUUIDPipe)),
+    __param(1, (0, common_1.UploadedFile)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], ScheduleController.prototype, "importSchedule", null);
 exports.ScheduleController = ScheduleController = __decorate([
     (0, swagger_1.ApiTags)('Schedule'),
     (0, swagger_1.ApiBearerAuth)(),

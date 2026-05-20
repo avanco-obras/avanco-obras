@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: avanco-obras-api
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    healthCheckPath: /api/docs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+
+      # Defina estas variáveis manualmente no dashboard do Render
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 30d
+
+      # Cloudflare R2 (S3-compatível, gratuito até 10GB)
+      # Endpoint: <account-id>.r2.cloudflarestorage.com
+      - key: MINIO_ENDPOINT
+        sync: false
+      - key: MINIO_ACCESS_KEY
+        sync: false
+      - key: MINIO_SECRET_KEY
+        sync: false
+      - key: MINIO_BUCKET
+        value: avanco-obras
+      - key: MINIO_USE_SSL
+        value: "true"
+      # Deixe MINIO_PORT vazio para usar a porta padrão HTTPS (443)
+
+      # URL do frontend no Vercel (ex: https://avanco-obras.vercel.app)
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+      # IA (opcional)
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MISTRAL_MODEL
+        value: mistral-small-latest

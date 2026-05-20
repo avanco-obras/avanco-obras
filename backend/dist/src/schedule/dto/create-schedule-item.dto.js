@@ -88,4 +88,10 @@ __decorate([
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], CreateScheduleItemDto.prototype, "order", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ description: 'Responsible person/team' }),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateScheduleItemDto.prototype, "responsible", void 0);
 //# sourceMappingURL=create-schedule-item.dto.js.map

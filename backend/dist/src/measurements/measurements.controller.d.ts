@@ -116,5 +116,5 @@ export declare class MeasurementsController {
         measuredById: string;
     })[]>;
     getSummary(projectId: string): Promise<import("./measurements.service").FloorSummary[]>;
-    getBuildingData(projectId: string): Promise<import("./measurements.service").TowerBuildingData[]>;
+    getBuildingData(projectId: string): Promise<import("./measurements.service").BuildingDataResponse>;
 }

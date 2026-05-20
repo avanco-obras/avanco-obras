@@ -1,10 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Check, Save, Loader2, ChevronRight } from 'lucide-react';
 import { useStore } from '@/store';
 import { towersApi, measurementsApi, activityTypesApi } from '@/services/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import type { Tower, Floor, Unit, ActivityType, Measurement } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -15,35 +11,25 @@ interface ActivityEntry {
   measurementMethod: 'PERCENT' | 'METRIC' | 'COUNT';
   unit: string;
   defaultQuantity: number;
-  // edit state
   mode: 'PERCENT' | 'METRIC';
-  percentValue: number; // 0-100
+  percentValue: number;
   executedQty: number;
   totalQty: number;
-  // computed
-  computed: number; // final 0-100
+  computed: number;
   isDirty: boolean;
 }
 
+type StatusFilter = 'todos' | 'ni' | 'ea' | 'co';
+
+interface TowerProgress {
+  [towerId: string]: number;
+}
+
+interface FloorProgress {
+  [floorId: string]: number;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function progressColor(p: number): string {
-  if (p === 0) return '#94a3b8'; // slate-400
-  if (p < 100) return '#f59e0b'; // amber-400
-  return '#22c55e'; // green-500
-}
-
-function unitBgClass(p: number): string {
-  if (p === 0) return 'bg-slate-100 border-slate-200';
-  if (p < 100) return 'bg-amber-50 border-amber-300';
-  return 'bg-green-50 border-green-400';
-}
-
-function floorBandColor(avg: number): string {
-  if (avg === 0) return '#cbd5e1'; // slate-300
-  if (avg < 100) return '#fbbf24'; // amber-400
-  return '#22c55e'; // green-500
-}
 
 function calcFromMetric(executed: number, total: number): number {
   if (total <= 0) return 0;
@@ -62,252 +48,378 @@ function methodLabel(method: 'PERCENT' | 'METRIC' | 'COUNT'): string {
   return 'un';
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
+function heatmapColor(pct: number): string {
+  if (pct === 0) return '#EBF0F6';
+  if (pct <= 30) return '#FEF3C7';
+  if (pct <= 60) return '#FCD34D';
+  if (pct < 100) return '#86EFAC';
+  return '#4ADE80';
+}
 
-function SkeletonCard() {
+function unitState(p: number): 'ni' | 'ea' | 'co' {
+  if (p === 0) return 'ni';
+  if (p >= 100) return 'co';
+  return 'ea';
+}
+
+function statusBadgeClass(p: number): string {
+  if (p === 0) return 'ao-badge ao-bk';
+  if (p >= 100) return 'ao-badge ao-bg';
+  return 'ao-badge ao-ba';
+}
+
+function statusLabel(p: number): string {
+  if (p === 0) return 'Não iniciado';
+  if (p >= 100) return 'Concluído';
+  return 'Em andamento';
+}
+
+// ── KpiBar Component ──────────────────────────────────────────────────────────
+
+interface KpiBarProps {
+  overallProgress: number;
+  towerProgresses: TowerProgress;
+  towers: Tower[];
+  unitsTotal: number;
+  unitsDone: number;
+}
+
+function KpiBar({ overallProgress, towerProgresses, towers, unitsTotal, unitsDone }: KpiBarProps) {
   return (
-    <div className="rounded-lg border border-slate-200 p-3 animate-pulse space-y-2">
-      <div className="h-3 bg-slate-200 rounded w-3/4" />
-      <div className="h-2 bg-slate-100 rounded w-1/2" />
-      <div className="h-1.5 bg-slate-100 rounded w-full mt-2" />
+    <div style={{
+      background: 'var(--s0)',
+      padding: '12px 16px',
+      borderBottom: '1px solid var(--bd)',
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: '16px',
+      marginBottom: '12px',
+    }}>
+      {/* Progresso Geral */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
+          Avanço Geral da Obra
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px' }}>
+            {overallProgress}%
+          </div>
+          <div className="ao-pbar" style={{ flex: 1, minHeight: 6 }}>
+            <div
+              className="ao-pfill"
+              style={{
+                width: `${overallProgress}%`,
+                background: heatmapColor(overallProgress),
+                borderRadius: 3,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Unidades */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
+          Unidades
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
+          {unitsDone} <span style={{ fontSize: 12, color: 'var(--t3)' }}>/ {unitsTotal}</span>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>concluídas</div>
+      </div>
+
+      {/* Torres */}
+      {towers.length > 1 && towers.map((tower) => (
+        <div key={tower.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
+            {tower.name}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
+              {Math.round(towerProgresses[tower.id] ?? 0)}%
+            </div>
+            <div className="ao-pbar" style={{ flex: 1, minHeight: 4 }}>
+              <div
+                className="ao-pfill"
+                style={{
+                  width: `${towerProgresses[tower.id] ?? 0}%`,
+                  background: heatmapColor(towerProgresses[tower.id] ?? 0),
+                  borderRadius: 2,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
-// ── Building SVG Panel ────────────────────────────────────────────────────────
+// ── Building Model 3D (SVG Isométrico + Heatmap) ──────────────────────────────
 
-interface BuildingPanelProps {
+interface BuildingModel3DProps {
   floors: Floor[];
-  units: Record<string, Unit[]>; // floorId → units
+  unitsCache: Record<string, Unit[]>;
   selectedFloorId: string | null;
   onSelectFloor: (floorId: string) => void;
+  floorProgresses: FloorProgress;
 }
 
-function BuildingPanel({ floors, units, selectedFloorId, onSelectFloor }: BuildingPanelProps) {
-  const BAND_HEIGHT = 28;
-  const UNIT_W = 18;
-  const UNIT_H = 20;
-  const UNIT_GAP = 3;
-  const LEFT_LABEL_W = 36;
-  const SVG_W = 240;
+function BuildingModel3D({
+  floors,
+  unitsCache,
+  selectedFloorId,
+  onSelectFloor,
+  floorProgresses,
+}: BuildingModel3DProps) {
+  const sorted = [...floors].sort((a, b) => b.level - a.level);
+  const displayFloors = sorted.slice(0, 12);
 
-  const sorted = [...floors].sort((a, b) => b.level - a.level); // top = highest level
-
-  function avgProgress(floorId: string): number {
-    const us = units[floorId] ?? [];
-    if (us.length === 0) return 0;
-    const sum = us.reduce((acc, u) => acc + (u.progressPercent ?? 0), 0);
-    return sum / us.length;
-  }
-
-  const svgHeight = Math.max(80, sorted.length * (BAND_HEIGHT + 4) + 20);
+  const FLOOR_H = 36;
+  const TOP_Y = 16;
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <p className="text-xs font-semibold text-slate-500 self-start mb-1">Vista do Edifício</p>
-      <svg
-        width={SVG_W}
-        height={svgHeight}
-        className="rounded border border-slate-200 bg-slate-50"
-        viewBox={`0 0 ${SVG_W} ${svgHeight}`}
-      >
-        {sorted.map((floor, idx) => {
-          const y = 10 + idx * (BAND_HEIGHT + 4);
-          const floorUnits = units[floor.id] ?? [];
-          const avg = avgProgress(floor.id);
+    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+      {/* SVG */}
+      <svg viewBox="0 0 220 340" width="180" height="290" style={{ display: 'block', flexShrink: 0 }}>
+        {/* Shadow */}
+        <ellipse cx="130" cy="334" rx="65" ry="6" fill="rgba(0,0,0,.06)" />
+        {/* Side face */}
+        <polygon points="178,22 218,8 218,314 178,328" fill="var(--s3)" stroke="var(--bd2)" strokeWidth=".5" />
+        {/* Roof */}
+        <polygon points="22,22 62,8 218,8 178,22" fill="var(--s2)" stroke="var(--bd2)" strokeWidth=".5" />
+        {/* Main facade */}
+        <rect x="22" y="22" width="156" height="274" fill="var(--s1)" stroke="var(--bd2)" strokeWidth=".5" />
+
+        {/* Floor labels + windows */}
+        {displayFloors.map((floor, idx) => {
+          const y = TOP_Y + idx * FLOOR_H;
+          const avg = floorProgresses[floor.id] ?? 0;
           const isSelected = floor.id === selectedFloorId;
 
+          const winW = 20;
+          const winH = 12;
+          const winY = y + 7;
+          const winXs = [32, 62, 92, 122];
+
           return (
-            <g
-              key={floor.id}
-              onClick={() => onSelectFloor(floor.id)}
-              style={{ cursor: 'pointer' }}
-            >
-              {/* Band background */}
+            <g key={floor.id} onClick={() => onSelectFloor(floor.id)} style={{ cursor: 'pointer' }}>
+              {/* Floor outline */}
               <rect
-                x={LEFT_LABEL_W}
+                x="22"
                 y={y}
-                width={SVG_W - LEFT_LABEL_W - 8}
-                height={BAND_HEIGHT}
-                rx={4}
-                fill={isSelected ? '#e0e7ff' : '#f1f5f9'}
-                stroke={isSelected ? '#6366f1' : '#cbd5e1'}
-                strokeWidth={isSelected ? 2 : 1}
+                width="156"
+                height={FLOOR_H - 1}
+                fill="transparent"
+                stroke={isSelected ? 'var(--blue)' : 'var(--bd)'}
+                strokeWidth={isSelected ? 2 : 0.5}
               />
+              {/* Windows */}
+              {winXs.map((wx, wi) => (
+                <rect
+                  key={wi}
+                  x={wx}
+                  y={winY}
+                  width={winW}
+                  height={winH}
+                  rx="1.5"
+                  fill={heatmapColor(avg)}
+                  opacity={0.85}
+                  stroke={isSelected ? 'var(--blue)' : 'none'}
+                  strokeWidth={isSelected ? 0.5 : 0}
+                />
+              ))}
               {/* Floor label */}
-              <text
-                x={LEFT_LABEL_W - 4}
-                y={y + BAND_HEIGHT / 2 + 4}
-                textAnchor="end"
-                fontSize={9}
-                fill="#64748b"
-                fontFamily="monospace"
-              >
+              <text x="186" y={y + 22} fontSize="8" fill="var(--t3)" fontFamily="sans-serif" fontWeight="500">
                 {floor.name}
               </text>
-              {/* Unit rects */}
-              {floorUnits.slice(0, Math.floor((SVG_W - LEFT_LABEL_W - 16) / (UNIT_W + UNIT_GAP))).map((unit, ui) => {
-                const ux = LEFT_LABEL_W + 6 + ui * (UNIT_W + UNIT_GAP);
-                const uy = y + (BAND_HEIGHT - UNIT_H) / 2;
-                const p = unit.progressPercent ?? 0;
-                return (
-                  <rect
-                    key={unit.id}
-                    x={ux}
-                    y={uy}
-                    width={UNIT_W}
-                    height={UNIT_H}
-                    rx={2}
-                    fill={progressColor(p)}
-                    opacity={0.75}
-                  />
-                );
-              })}
-              {/* If no units, show avg color band */}
-              {floorUnits.length === 0 && (
-                <rect
-                  x={LEFT_LABEL_W + 6}
-                  y={y + 6}
-                  width={SVG_W - LEFT_LABEL_W - 20}
-                  height={BAND_HEIGHT - 12}
-                  rx={3}
-                  fill={floorBandColor(avg)}
-                  opacity={0.5}
-                />
-              )}
             </g>
           );
         })}
       </svg>
-      {/* Legend */}
-      <div className="flex items-center gap-3 text-[10px] text-slate-500 mt-1">
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-300" /> 0%</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-400" /> Em andamento</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" /> 100%</span>
+
+      {/* Heatmap Sidebar */}
+      <div style={{
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        maxHeight: 290,
+        overflowY: 'auto',
+        paddingRight: '4px',
+      }}>
+        {displayFloors.map((floor) => {
+          const progress = floorProgresses[floor.id] ?? 0;
+          const isSelected = floor.id === selectedFloorId;
+
+          return (
+            <div
+              key={floor.id}
+              onClick={() => onSelectFloor(floor.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 6px',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                background: isSelected ? 'rgba(27,111,232,.12)' : 'transparent',
+                border: isSelected ? '1px solid var(--blue)' : 'none',
+                fontSize: '10px',
+                fontWeight: 500,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--t2)' }}>
+                {floor.name}
+              </div>
+              <div className="ao-pbar" style={{ minWidth: '40px', minHeight: '3px' }}>
+                <div
+                  className="ao-pfill"
+                  style={{
+                    width: `${progress}%`,
+                    background: heatmapColor(progress),
+                    borderRadius: '1px',
+                  }}
+                />
+              </div>
+              <div style={{ minWidth: '24px', textAlign: 'right', fontWeight: 600, color: 'var(--t1)' }}>
+                {Math.round(progress)}%
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ── Activity Row ──────────────────────────────────────────────────────────────
+// ── Heatmap Legend ────────────────────────────────────────────────────────────
 
-interface ActivityRowProps {
-  entry: ActivityEntry;
-  onChange: (updated: Partial<ActivityEntry>) => void;
-  onMarkDone: () => void;
+function HeatmapLegend() {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(2, 1fr)',
+      gap: '8px',
+      fontSize: '10px',
+      marginTop: '10px',
+      padding: '10px',
+      background: 'var(--s2)',
+      borderRadius: 'var(--r-md)',
+      border: '1px solid var(--bd)',
+    }}>
+      {[
+        { pct: 100, label: 'Concluído' },
+        { pct: 70, label: 'Em andamento' },
+        { pct: 30, label: 'Iniciado' },
+        { pct: 0, label: 'Não iniciado' },
+      ].map((item) => (
+        <div key={item.pct} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div
+            style={{
+              width: '16px',
+              height: '10px',
+              borderRadius: '2px',
+              background: heatmapColor(item.pct),
+            }}
+          />
+          <span style={{ color: 'var(--t2)' }}>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function ActivityRow({ entry, onChange, onMarkDone }: ActivityRowProps) {
-  const isMetric = entry.mode === 'METRIC' && entry.measurementMethod !== 'PERCENT';
-  const computed = entry.computed;
+// ── Filter Buttons ────────────────────────────────────────────────────────────
 
-  function handlePercentChange(val: string) {
-    const n = Math.min(100, Math.max(0, parseFloat(val) || 0));
-    onChange({ percentValue: n, computed: n, isDirty: true });
-  }
+interface FilterProps {
+  current: StatusFilter;
+  onChange: (filter: StatusFilter) => void;
+}
 
-  function handleExecutedChange(val: string) {
-    const executed = parseFloat(val) || 0;
-    const computed = calcFromMetric(executed, entry.totalQty);
-    onChange({ executedQty: executed, computed, isDirty: true });
-  }
-
-  function handleTotalChange(val: string) {
-    const total = parseFloat(val) || 0;
-    const computed = calcFromMetric(entry.executedQty, total);
-    onChange({ totalQty: total, computed, isDirty: true });
-  }
+function StatusFilterButtons({ current, onChange }: FilterProps) {
+  const filters: Array<{ value: StatusFilter; label: string }> = [
+    { value: 'todos', label: 'Todos' },
+    { value: 'ni', label: 'Não iniciado' },
+    { value: 'ea', label: 'Em andamento' },
+    { value: 'co', label: 'Concluído' },
+  ];
 
   return (
-    <div className={`rounded-md border p-3 space-y-2 transition-colors ${entry.isDirty ? 'border-blue-300 bg-blue-50/40' : 'border-border bg-background'}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-sm font-medium text-foreground truncate">{entry.name}</span>
-          <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0">
-            {methodLabel(entry.measurementMethod)}
-          </Badge>
-        </div>
+    <div className="ao-tab-bar" style={{ marginBottom: '10px', display: 'inline-flex', borderBottom: 'none', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+      {filters.map((f) => (
+        <button
+          key={f.value}
+          onClick={() => onChange(f.value)}
+          className={`ao-tab${current === f.value ? ' active' : ''}`}
+          style={{ borderTop: 'none', marginBottom: 0, padding: '5px 12px' }}
+        >
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Mode toggle — only show if metric is possible */}
-          {entry.measurementMethod !== 'PERCENT' && (
-            <div className="flex rounded-md border border-input overflow-hidden text-[10px]">
-              <button
-                onClick={() => onChange({ mode: 'PERCENT', isDirty: true })}
-                className={`px-2 py-0.5 transition-colors ${!isMetric ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-              >
-                % Manual
-              </button>
-              <button
-                onClick={() => onChange({ mode: 'METRIC', isDirty: true })}
-                className={`px-2 py-0.5 transition-colors ${isMetric ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-              >
-                Métrica
-              </button>
-            </div>
-          )}
+// ── Progress Cascade ──────────────────────────────────────────────────────────
 
-          {/* Mark 100% */}
-          <button
-            onClick={onMarkDone}
-            title="Marcar 100%"
-            className="w-6 h-6 rounded-full border border-green-400 text-green-600 flex items-center justify-center hover:bg-green-50 transition-colors"
-          >
-            <Check className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
+interface ProgressCascadeProps {
+  unitProgress: number;
+  floorProgress: number;
+  towerProgress: number;
+  overallProgress: number;
+  selectedUnit: Unit | null;
+  selectedFloor: Floor | null;
+  selectedTower: Tower | null;
+}
 
-      {/* Inputs */}
-      {isMetric ? (
-        <div className="flex items-center gap-2 text-xs">
-          <Input
-            type="number"
-            min={0}
-            value={entry.executedQty}
-            onChange={(e) => handleExecutedChange(e.target.value)}
-            className="h-7 w-20 text-xs px-2"
-            placeholder="Exec."
-          />
-          <span className="text-muted-foreground">/</span>
-          <Input
-            type="number"
-            min={0}
-            value={entry.totalQty}
-            onChange={(e) => handleTotalChange(e.target.value)}
-            className="h-7 w-20 text-xs px-2"
-            placeholder="Total"
-          />
-          <span className="text-muted-foreground">{entry.unit}</span>
-          <span className="ml-auto font-semibold text-sm" style={{ color: progressColor(computed) }}>
-            {computed.toFixed(1)}%
-          </span>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            max={100}
-            value={entry.percentValue}
-            onChange={(e) => handlePercentChange(e.target.value)}
-            className="h-7 w-24 text-xs px-2"
-            placeholder="0–100"
-          />
-          <span className="text-xs text-muted-foreground">%</span>
-          <span className="ml-auto font-semibold text-sm" style={{ color: progressColor(computed) }}>
-            {computed.toFixed(1)}%
-          </span>
-        </div>
-      )}
+function ProgressCascade({
+  unitProgress,
+  floorProgress,
+  towerProgress,
+  overallProgress,
+  selectedUnit,
+  selectedFloor,
+  selectedTower,
+}: ProgressCascadeProps) {
+  const cascadeItems = [
+    { label: `${selectedUnit?.name ?? 'Unidade'}`, value: unitProgress },
+    { label: `${selectedFloor?.name ?? 'Pavimento'}`, value: floorProgress },
+    { label: `${selectedTower?.name ?? 'Torre'}`, value: towerProgress },
+    { label: 'Obra Geral', value: overallProgress },
+  ];
 
-      {/* Progress bar */}
-      <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${computed}%`, backgroundColor: progressColor(computed) }}
-        />
-      </div>
+  return (
+    <div style={{
+      background: 'var(--s1)',
+      border: '1px solid var(--bd)',
+      borderRadius: '8px',
+      padding: '12px',
+      marginTop: '12px',
+      fontSize: '11px',
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: '8px' }}>Progresso em Cascata</div>
+      {cascadeItems.map((item, idx) => (
+        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: idx < cascadeItems.length - 1 ? '6px' : 0 }}>
+          <div style={{ minWidth: '80px', textAlign: 'right', fontWeight: 500, color: 'var(--t1)' }}>
+            {item.label}:
+          </div>
+          <div className="ao-pbar" style={{ flex: 1, minHeight: '6px' }}>
+            <div
+              className="ao-pfill"
+              style={{
+                width: `${item.value}%`,
+                background: heatmapColor(item.value),
+                borderRadius: '3px',
+              }}
+            />
+          </div>
+          <div style={{ minWidth: '36px', textAlign: 'right', fontWeight: 600, color: 'var(--t1)' }}>
+            {Math.round(item.value)}%
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -318,32 +430,63 @@ export default function Medicao() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
 
-  // Data
   const [towers, setTowers] = useState<Tower[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
 
-  // Selection
   const [selectedTowerId, setSelectedTowerId] = useState<string | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
 
-  // Unit progress cache (floorId → units with progressPercent)
   const [floorUnitsCache, setFloorUnitsCache] = useState<Record<string, Unit[]>>({});
+  const [floorProgresses, setFloorProgresses] = useState<FloorProgress>({});
+  const [towerProgresses, setTowerProgresses] = useState<TowerProgress>({});
 
-  // Loading states
   const [loadingTowers, setLoadingTowers] = useState(false);
   const [loadingFloors, setLoadingFloors] = useState(false);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [loadingMeasurements, setLoadingMeasurements] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Activity entries (editable state for right panel)
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
 
-  // ── Load towers + activity types ─────────────────────────────────────────
+  // Calculates floor progress from units
+  const calculateFloorProgress = useCallback((floorId: string, cache: Record<string, Unit[]>): number => {
+    const floorUnits = cache[floorId] ?? [];
+    if (floorUnits.length === 0) return 0;
+    const sum = floorUnits.reduce((acc, u) => acc + (u.progressPercent ?? 0), 0);
+    return Math.round(sum / floorUnits.length);
+  }, []);
+
+  // Calculates tower progress from floors
+  const calculateTowerProgress = useCallback(
+    (towerId: string, towerFloors: Floor[], cache: Record<string, Unit[]>): number => {
+      const floorProgresses = towerFloors.map((f) => calculateFloorProgress(f.id, cache));
+      if (floorProgresses.length === 0) return 0;
+      const sum = floorProgresses.reduce((a, b) => a + b, 0);
+      return Math.round(sum / floorProgresses.length);
+    },
+    [calculateFloorProgress],
+  );
+
+  // Calculates overall progress from towers
+  const calculateOverallProgress = useCallback(
+    (allTowers: Tower[], allFloors: Floor[], cache: Record<string, Unit[]>): number => {
+      const towerProgs = allTowers.map((t) => {
+        const towerFloors = allFloors.filter((f) => f.towerId === t.id);
+        return calculateTowerProgress(t.id, towerFloors, cache);
+      });
+      if (towerProgs.length === 0) return 0;
+      const sum = towerProgs.reduce((a, b) => a + b, 0);
+      return Math.round(sum / towerProgs.length);
+    },
+    [calculateTowerProgress],
+  );
+
+  // ── Load towers + activity types + building data ─────────────────────────
 
   useEffect(() => {
     if (!projectId) return;
@@ -351,25 +494,51 @@ export default function Medicao() {
     Promise.all([
       towersApi.list(projectId),
       activityTypesApi.list(projectId),
+      measurementsApi.buildingData(projectId),
     ])
-      .then(([t, at]) => {
+      .then(([t, at, bd]) => {
         setTowers(t);
         setActivityTypes(at);
         if (t.length > 0) setSelectedTowerId(t[0].id);
+
+        // Populate floorUnitsCache and floorProgresses from buildingData
+        const unitsCache: Record<string, Unit[]> = {};
+        const floorProgs: FloorProgress = {};
+
+        bd.towers.forEach((tower) => {
+          tower.floors.forEach((floor) => {
+            floorProgs[floor.id] = floor.averageProgress;
+            unitsCache[floor.id] = floor.units.map((unit, idx) => ({
+              id: unit.id,
+              floorId: floor.id,
+              name: unit.name,
+              area: 0,
+              order: idx,
+              progressPercent: unit.progressPercent,
+            } as Unit));
+          });
+        });
+
+        setFloorUnitsCache(unitsCache);
+        setFloorProgresses(floorProgs);
       })
       .catch(() => {
         addToast({ type: 'error', title: 'Erro ao carregar dados', description: 'Não foi possível carregar as torres.' });
       })
       .finally(() => setLoadingTowers(false));
-  }, [projectId]);
+  }, [projectId, addToast]);
 
   // ── Load floors when tower changes ───────────────────────────────────────
 
   useEffect(() => {
-    if (!projectId || !selectedTowerId) { setFloors([]); return; }
+    if (!projectId || !selectedTowerId) {
+      setFloors([]);
+      return;
+    }
     setLoadingFloors(true);
     setSelectedFloorId(null);
     setFloorUnitsCache({});
+    setFloorProgresses({});
     towersApi
       .listFloors(projectId, selectedTowerId)
       .then((f) => {
@@ -383,7 +552,10 @@ export default function Medicao() {
   // ── Load units when floor changes ────────────────────────────────────────
 
   useEffect(() => {
-    if (!selectedFloorId) { setUnits([]); return; }
+    if (!selectedFloorId) {
+      setUnits([]);
+      return;
+    }
     setLoadingUnits(true);
     setSelectedUnitId(null);
     towersApi
@@ -406,8 +578,7 @@ export default function Medicao() {
         const execQty = existing?.executedQty ?? 0;
         const totalQty = existing?.totalQty ?? at.defaultQuantity;
         const mode: 'PERCENT' | 'METRIC' = at.measurementMethod !== 'PERCENT' && totalQty > 0 ? 'METRIC' : 'PERCENT';
-        const computed =
-          mode === 'METRIC' ? calcFromMetric(execQty, totalQty) : percent;
+        const computed = mode === 'METRIC' ? calcFromMetric(execQty, totalQty) : percent;
         return {
           activityTypeId: at.id,
           name: at.name,
@@ -427,7 +598,10 @@ export default function Medicao() {
   );
 
   useEffect(() => {
-    if (!selectedUnitId) { setEntries([]); return; }
+    if (!selectedUnitId) {
+      setEntries([]);
+      return;
+    }
     setLoadingMeasurements(true);
     measurementsApi
       .list(selectedUnitId)
@@ -441,19 +615,49 @@ export default function Medicao() {
       .finally(() => setLoadingMeasurements(false));
   }, [selectedUnitId, activityTypes, buildEntries]);
 
-  // ── Computed overall progress ─────────────────────────────────────────────
+  // ── Calculate all progress values ────────────────────────────────────────
 
-  const overallProgress = useMemo(() => calcOverallProgress(entries), [entries]);
+  const overallProgress = useMemo(() => {
+    return calculateOverallProgress(towers, floors, floorUnitsCache);
+  }, [towers, floors, floorUnitsCache, calculateOverallProgress]);
 
-  const selectedUnit = useMemo(
-    () => units.find((u) => u.id === selectedUnitId) ?? null,
-    [units, selectedUnitId],
-  );
+  const currentUnitProgress = useMemo(() => calcOverallProgress(entries), [entries]);
 
-  const selectedFloor = useMemo(
-    () => floors.find((f) => f.id === selectedFloorId) ?? null,
-    [floors, selectedFloorId],
-  );
+  const currentFloorProgress = useMemo(() => {
+    if (!selectedFloorId) return 0;
+    return calculateFloorProgress(selectedFloorId, floorUnitsCache);
+  }, [selectedFloorId, floorUnitsCache, calculateFloorProgress]);
+
+  const currentTowerProgress = useMemo(() => {
+    if (!selectedTowerId) return 0;
+    const towerFloors = floors.filter((f) => f.towerId === selectedTowerId);
+    return calculateTowerProgress(selectedTowerId, towerFloors, floorUnitsCache);
+  }, [selectedTowerId, floors, floorUnitsCache, calculateTowerProgress]);
+
+  // Update tower progresses for KPI
+  useEffect(() => {
+    const newTowerProgresses: TowerProgress = {};
+    towers.forEach((t) => {
+      const towerFloors = floors.filter((f) => f.towerId === t.id);
+      newTowerProgresses[t.id] = calculateTowerProgress(t.id, towerFloors, floorUnitsCache);
+    });
+    setTowerProgresses(newTowerProgresses);
+  }, [towers, floors, floorUnitsCache, calculateTowerProgress]);
+
+  const selectedUnit = useMemo(() => units.find((u) => u.id === selectedUnitId) ?? null, [units, selectedUnitId]);
+  const selectedFloor = useMemo(() => floors.find((f) => f.id === selectedFloorId) ?? null, [floors, selectedFloorId]);
+  const selectedTower = useMemo(() => towers.find((t) => t.id === selectedTowerId) ?? null, [towers, selectedTowerId]);
+
+  // Count units done
+  const unitsDone = useMemo(() => {
+    return Object.values(floorUnitsCache)
+      .flat()
+      .filter((u) => (u.progressPercent ?? 0) >= 100).length;
+  }, [floorUnitsCache]);
+
+  const unitsTotal = useMemo(() => {
+    return Object.values(floorUnitsCache).flat().length;
+  }, [floorUnitsCache]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -470,13 +674,11 @@ export default function Medicao() {
   }
 
   function handleAllDone() {
-    setEntries((prev) =>
-      prev.map((e) => ({ ...e, computed: 100, percentValue: 100, isDirty: true })),
-    );
+    setEntries((prev) => prev.map((e) => ({ ...e, computed: 100, percentValue: 100, isDirty: true })));
   }
 
   async function handleSave() {
-    if (!selectedUnitId) return;
+    if (!selectedUnitId || !selectedFloorId) return;
     const dirty = entries.filter((e) => e.isDirty);
     if (dirty.length === 0) return;
     setSaving(true);
@@ -491,16 +693,31 @@ export default function Medicao() {
           }),
         ),
       );
-      setEntries((prev) => prev.map((e) => ({ ...e, isDirty: false })));
-      // Update unit progress in cache
-      setFloorUnitsCache((prev) => {
-        if (!selectedFloorId) return prev;
-        const floorUnits = (prev[selectedFloorId] ?? []).map((u) =>
-          u.id === selectedUnitId ? { ...u, progressPercent: overallProgress } : u,
-        );
-        return { ...prev, [selectedFloorId]: floorUnits };
-      });
-      addToast({ type: 'success', title: 'Salvo com sucesso', description: `Medição da unidade salva.` });
+
+      // Calculate new unit progress from entries
+      const cleanedEntries = entries.map((e) => ({ ...e, isDirty: false }));
+      const newUnitProgress = calcOverallProgress(cleanedEntries);
+
+      // Update entries to clean state
+      setEntries(cleanedEntries);
+
+      // Update unit in cache with new progress
+      const updatedUnits = (floorUnitsCache[selectedFloorId] ?? []).map((u) =>
+        u.id === selectedUnitId ? { ...u, progressPercent: newUnitProgress } : u,
+      );
+
+      setFloorUnitsCache((prev) => ({ ...prev, [selectedFloorId]: updatedUnits }));
+
+      // Recalculate floor progress from updated units
+      const unitProgresses = updatedUnits.map((u) => u.progressPercent ?? 0);
+      const newFloorProgress =
+        unitProgresses.length > 0
+          ? Math.round(unitProgresses.reduce((a, b) => a + b, 0) / unitProgresses.length)
+          : 0;
+
+      setFloorProgresses((prev) => ({ ...prev, [selectedFloorId]: newFloorProgress }));
+
+      addToast({ type: 'success', title: 'Salvo com sucesso', description: 'Medição da unidade salva.' });
     } catch {
       addToast({ type: 'error', title: 'Erro ao salvar', description: 'Tente novamente.' });
     } finally {
@@ -512,253 +729,393 @@ export default function Medicao() {
 
   if (!currentProject) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-        <AlertTriangle className="h-14 w-14 text-muted-foreground/40" />
-        <div>
-          <h2 className="text-xl font-semibold text-foreground mb-1">Selecione um projeto</h2>
-          <p className="text-muted-foreground text-sm">
-            Escolha um projeto no seletor acima para registrar medições.
-          </p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
+        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
+          <p>Escolha um projeto no seletor acima para registrar medições.</p>
         </div>
       </div>
     );
   }
 
+  // ── Filtered units ────────────────────────────────────────────────────────
+
+  const filteredUnits = useMemo(() => {
+    if (statusFilter === 'todos') return units;
+    return units.filter((u) => unitState(u.progressPercent ?? 0) === statusFilter);
+  }, [units, statusFilter]);
+
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-56px)] overflow-hidden">
-      {/* ── Panel 1: Building SVG ── */}
-      <div className="w-[260px] shrink-0 flex flex-col border-r border-border bg-background overflow-y-auto p-4 gap-4">
-        <h2 className="text-base font-bold text-foreground">Medição</h2>
+    <>
+      {/* KPI Bar */}
+      <KpiBar
+        overallProgress={overallProgress}
+        towerProgresses={towerProgresses}
+        towers={towers}
+        unitsTotal={unitsTotal}
+        unitsDone={unitsDone}
+      />
 
-        {/* Tower selector */}
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Torre</label>
-          {loadingTowers ? (
-            <div className="h-9 bg-muted animate-pulse rounded-md" />
-          ) : (
-            <select
-              value={selectedTowerId ?? ''}
-              onChange={(e) => setSelectedTowerId(e.target.value || null)}
-              className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Selecione a torre</option>
-              {towers.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          )}
-        </div>
+      {/* Main content */}
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', marginBottom: '2rem' }}>
 
-        {/* Building SVG */}
-        {loadingFloors ? (
-          <div className="h-48 bg-muted animate-pulse rounded-md" />
-        ) : floors.length > 0 ? (
-          <BuildingPanel
-            floors={floors}
-            units={floorUnitsCache}
-            selectedFloorId={selectedFloorId}
-            onSelectFloor={setSelectedFloorId}
-          />
-        ) : (
-          <div className="h-32 flex items-center justify-center text-sm text-muted-foreground border border-dashed border-border rounded-md">
-            Nenhum andar
-          </div>
-        )}
+        {/* Left: Building Model */}
+        <div style={{ flexShrink: 0 }}>
+          <div className="ao-card" style={{ padding: '.875rem', width: 280 }}>
+            <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--t1)' }}>Modelo do Empreendimento</p>
 
-        {/* Floor selector */}
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Andar</label>
-          <select
-            value={selectedFloorId ?? ''}
-            onChange={(e) => setSelectedFloorId(e.target.value || null)}
-            className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            disabled={floors.length === 0}
-          >
-            <option value="">Selecione o andar</option>
-            {floors.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Progress summary */}
-        {selectedFloor && (
-          <div className="text-xs text-muted-foreground border-t pt-3 space-y-1">
-            <p className="font-medium text-foreground">{selectedFloor.name}</p>
-            <p>{units.length} unidades</p>
-            <p>
-              {units.filter((u) => (u.progressPercent ?? 0) === 100).length} concluídas
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* ── Panel 2: Unit Grid ── */}
-      <div className="w-[260px] shrink-0 flex flex-col border-r border-border bg-slate-50 overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-background shrink-0">
-          <p className="text-sm font-semibold text-foreground">Unidades</p>
-          {selectedFloor && (
-            <p className="text-xs text-muted-foreground">{selectedFloor.name}</p>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-3">
-          {loadingUnits ? (
-            <div className="grid grid-cols-2 gap-2">
-              {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
-            </div>
-          ) : units.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 text-sm text-muted-foreground">
-              <ChevronRight className="h-8 w-8 opacity-30" />
-              <p>Selecione um andar</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {units.map((unit) => {
-                const p = unit.progressPercent ?? 0;
-                const isSelected = unit.id === selectedUnitId;
-                return (
-                  <button
-                    key={unit.id}
-                    onClick={() => setSelectedUnitId(unit.id)}
-                    className={`rounded-lg border p-3 text-left transition-all hover:shadow-sm ${unitBgClass(p)} ${isSelected ? 'ring-2 ring-primary ring-offset-1' : ''}`}
-                  >
-                    <p className="text-xs font-semibold text-foreground truncate">{unit.name}</p>
-                    <p className="text-lg font-bold mt-0.5" style={{ color: progressColor(p) }}>
-                      {p.toFixed(0)}%
-                    </p>
-                    <div className="w-full bg-white/60 rounded-full h-1 mt-1.5 overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{ width: `${p}%`, backgroundColor: progressColor(p) }}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Panel 3: Activity Details ── */}
-      <div className="flex-1 flex flex-col bg-background overflow-hidden">
-        {/* Header */}
-        <div className="px-5 py-3 border-b border-border shrink-0 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-base font-bold text-foreground">
-              {selectedUnit ? selectedUnit.name : 'Selecione uma unidade'}
-            </p>
-            {selectedUnit && (
-              <div className="flex items-center gap-2 mt-0.5">
-                <div
-                  className="text-sm font-semibold"
-                  style={{ color: progressColor(overallProgress) }}
+            {/* Tower select */}
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4, fontWeight: 500 }}>Torre</label>
+              {loadingTowers ? (
+                <div style={{ height: 32, background: 'var(--s2)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
+              ) : (
+                <select
+                  value={selectedTowerId ?? ''}
+                  onChange={(e) => setSelectedTowerId(e.target.value || null)}
+                  style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
                 >
-                  {overallProgress}% concluído
+                  <option value="">Selecione a torre</option>
+                  {towers.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Building model 3D */}
+            {loadingFloors ? (
+              <div style={{ height: 290, background: 'var(--s2)', borderRadius: 8, marginBottom: 10 }} />
+            ) : (
+              <BuildingModel3D
+                floors={floors}
+                unitsCache={floorUnitsCache}
+                selectedFloorId={selectedFloorId}
+                onSelectFloor={setSelectedFloorId}
+                floorProgresses={floorProgresses}
+              />
+            )}
+
+            {/* Floor select */}
+            <div style={{ marginTop: 10 }}>
+              <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4, fontWeight: 500 }}>Andar</label>
+              <select
+                value={selectedFloorId ?? ''}
+                onChange={(e) => setSelectedFloorId(e.target.value || null)}
+                disabled={floors.length === 0}
+                style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+              >
+                <option value="">Selecione o andar</option>
+                {floors.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Floor summary */}
+            {selectedFloor && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '0.5px solid var(--bd)', fontSize: 11, color: 'var(--t2)' }}>
+                <p style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 3 }}>{selectedFloor.name}</p>
+                <p>{units.length} unidades</p>
+                <p>{units.filter((u) => (u.progressPercent ?? 0) >= 100).length} concluídas</p>
+              </div>
+            )}
+
+            {/* Heatmap Legend */}
+            <HeatmapLegend />
+          </div>
+        </div>
+
+        {/* Right: Units + Activities */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+
+          {/* Units card */}
+          <div className="ao-card">
+            <div className="ao-card-hdr" style={{ marginBottom: 10 }}>
+              <span className="ao-card-title">
+                Unidades {selectedFloor ? `— ${selectedFloor.name}` : ''}
+              </span>
+              {selectedUnit && (
+                <span className={statusBadgeClass(currentUnitProgress)}>
+                  {Math.round(currentUnitProgress)}% {statusLabel(currentUnitProgress)}
+                </span>
+              )}
+            </div>
+
+            {/* Filters */}
+            {units.length > 0 && <StatusFilterButtons current={statusFilter} onChange={setStatusFilter} />}
+
+            {loadingUnits ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} style={{ height: 60, background: 'var(--s2)', borderRadius: 8 }} />
+                ))}
+              </div>
+            ) : units.length === 0 ? (
+              <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+                Selecione um andar para ver as unidades
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
+                {filteredUnits.map((unit) => {
+                  const p = unit.progressPercent ?? 0;
+                  const state = unitState(p);
+                  const isSelected = unit.id === selectedUnitId;
+
+                  const bgColor = state === 'ni' ? 'var(--s1)' : state === 'co' ? 'var(--grn-bg)' : 'var(--amb-bg)';
+                  const textColor = state === 'ni' ? 'var(--t2)' : state === 'co' ? 'var(--grn-t)' : 'var(--amb-t)';
+
+                  return (
+                    <button
+                      key={unit.id}
+                      onClick={() => setSelectedUnitId(unit.id)}
+                      style={{
+                        padding: 7,
+                        borderRadius: 8,
+                        fontSize: 10,
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        border: isSelected ? '1.5px solid var(--blue)' : '1px solid var(--bd)',
+                        background: bgColor,
+                        color: textColor,
+                        transition: 'all .15s',
+                        boxShadow: isSelected ? '0 0 0 2px rgba(27,111,232,.18)' : 'none',
+                        fontFamily: 'var(--font)',
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{unit.name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{p.toFixed(0)}%</div>
+                      <div className="ao-pbar" style={{ marginTop: 4 }}>
+                        <div
+                          className="ao-pfill"
+                          style={{
+                            width: `${p}%`,
+                            background: heatmapColor(p),
+                          }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Activities card */}
+          <div className="ao-card">
+            <div className="ao-card-hdr" style={{ marginBottom: 4 }}>
+              <span className="ao-card-title">
+                {selectedUnit ? `Atividades — ${selectedUnit.name}` : 'Atividades'}
+              </span>
+              {selectedUnit && (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
+                    Tudo concluído
+                  </button>
+                  <button
+                    className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
+                    onClick={handleSave}
+                    disabled={saving || entries.every((e) => !e.isDirty)}
+                  >
+                    {saving ? 'Salvando…' : 'Salvar'}
+                  </button>
                 </div>
-                <div className="flex-1 max-w-[160px] bg-muted rounded-full h-2 overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${overallProgress}%`, backgroundColor: progressColor(overallProgress) }}
-                  />
+              )}
+            </div>
+
+            {!selectedUnitId ? (
+              <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+                Selecione uma unidade para registrar medições
+              </div>
+            ) : loadingMeasurements ? (
+              <div>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} style={{ height: 44, background: 'var(--s2)', borderRadius: 8, marginBottom: 6 }} />
+                ))}
+              </div>
+            ) : entries.length === 0 ? (
+              <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
+                Nenhum tipo de atividade cadastrado para este projeto.
+              </div>
+            ) : (
+              <div>
+                {entries.map((entry, idx) => {
+                  const isMetric = entry.mode === 'METRIC' && entry.measurementMethod !== 'PERCENT';
+                  const p = entry.computed;
+
+                  function handlePercentChange(val: string) {
+                    const n = Math.min(100, Math.max(0, parseFloat(val) || 0));
+                    handleEntryChange(idx, { percentValue: n, computed: n, isDirty: true });
+                  }
+
+                  function handleExecutedChange(val: string) {
+                    const executed = parseFloat(val) || 0;
+                    const computed = calcFromMetric(executed, entry.totalQty);
+                    handleEntryChange(idx, { executedQty: executed, computed, isDirty: true });
+                  }
+
+                  function handleTotalChange(val: string) {
+                    const total = parseFloat(val) || 0;
+                    const computed = calcFromMetric(entry.executedQty, total);
+                    handleEntryChange(idx, { totalQty: total, computed, isDirty: true });
+                  }
+
+                  return (
+                    <div
+                      key={entry.activityTypeId}
+                      style={{
+                        padding: '8px 0',
+                        borderBottom: '0.5px solid var(--bd)',
+                        background: entry.isDirty ? 'rgba(186,117,23,.04)' : undefined,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        {/* Name + method */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>{entry.name}</span>
+                            <span className="ao-badge ao-bk" style={{ flexShrink: 0 }}>{methodLabel(entry.measurementMethod)}</span>
+                          </div>
+                        </div>
+
+                        {/* Mode toggle */}
+                        {entry.measurementMethod !== 'PERCENT' && (
+                          <div style={{ display: 'flex', borderRadius: 6, border: '1px solid var(--bd)', overflow: 'hidden', flexShrink: 0 }}>
+                            <button
+                              onClick={() => handleEntryChange(idx, { mode: 'PERCENT', isDirty: true })}
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: 9,
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontFamily: 'var(--font)',
+                                background: !isMetric ? 'var(--blue)' : 'var(--s1)',
+                                color: !isMetric ? '#fff' : 'var(--t2)',
+                              }}
+                            >
+                              %
+                            </button>
+                            <button
+                              onClick={() => handleEntryChange(idx, { mode: 'METRIC', isDirty: true })}
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: 9,
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontFamily: 'var(--font)',
+                                background: isMetric ? 'var(--blue)' : 'var(--s1)',
+                                color: isMetric ? '#fff' : 'var(--t2)',
+                              }}
+                            >
+                              Métrica
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Progress display */}
+                        <span style={{ fontSize: 12, fontWeight: 600, minWidth: 36, textAlign: 'right', color: p >= 100 ? 'var(--green)' : p > 0 ? 'var(--amber)' : 'var(--t3)' }}>
+                          {p.toFixed(0)}%
+                        </span>
+
+                        {/* Status badge */}
+                        <span className={statusBadgeClass(p)} style={{ flexShrink: 0, minWidth: 66, justifyContent: 'center', fontSize: 9 }}>
+                          {statusLabel(p)}
+                        </span>
+
+                        {/* Mark done button */}
+                        <button
+                          onClick={() => handleMarkDone(idx)}
+                          title="Marcar 100%"
+                          className="ao-btn ao-btn-sm ao-btn-ok"
+                          style={{ flexShrink: 0, borderRadius: '50%', width: 22, height: 22, padding: 0 }}
+                        >
+                          ✓
+                        </button>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="ao-pbar" style={{ marginBottom: 6 }}>
+                        <div
+                          className="ao-pfill"
+                          style={{
+                            width: `${p}%`,
+                            background: heatmapColor(p),
+                          }}
+                        />
+                      </div>
+
+                      {/* Inputs */}
+                      {isMetric ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+                          <span style={{ color: 'var(--t2)' }}>Executado:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={entry.executedQty}
+                            onChange={(e) => handleExecutedChange(e.target.value)}
+                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                          />
+                          <span style={{ color: 'var(--t3)' }}>/</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={entry.totalQty}
+                            onChange={(e) => handleTotalChange(e.target.value)}
+                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                          />
+                          <span style={{ color: 'var(--t2)', fontWeight: 500 }}>{entry.unit}</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                          <span style={{ color: 'var(--t2)' }}>Percentual:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={entry.percentValue}
+                            onChange={(e) => handlePercentChange(e.target.value)}
+                            style={{ width: 70, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
+                          />
+                          <span style={{ color: 'var(--t2)', fontWeight: 500 }}>%</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Footer buttons */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 12 }}>
+                  <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
+                    Tudo concluído
+                  </button>
+                  <button
+                    className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
+                    onClick={handleSave}
+                    disabled={saving || entries.every((e) => !e.isDirty)}
+                  >
+                    {saving ? 'Salvando…' : 'Salvar Medição'}
+                  </button>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Progress Cascade */}
           {selectedUnit && (
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleAllDone}
-                className="gap-1"
-                disabled={saving}
-              >
-                <Check className="h-3.5 w-3.5" />
-                Tudo Concluído
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || entries.every((e) => !e.isDirty)}
-                className="gap-1"
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                Salvar
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {!selectedUnitId ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                <ChevronRight className="h-8 w-8 text-muted-foreground/40" />
-              </div>
-              <p className="text-muted-foreground text-sm">
-                Selecione uma unidade para registrar medições
-              </p>
-            </div>
-          ) : loadingMeasurements ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />
-              ))}
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 text-center text-sm text-muted-foreground">
-              <AlertTriangle className="h-8 w-8 opacity-30" />
-              <p>Nenhum tipo de atividade cadastrado para este projeto.</p>
-            </div>
-          ) : (
-            <div className="space-y-3 max-w-2xl">
-              {entries.map((entry, idx) => (
-                <ActivityRow
-                  key={entry.activityTypeId}
-                  entry={entry}
-                  onChange={(updated) => handleEntryChange(idx, updated)}
-                  onMarkDone={() => handleMarkDone(idx)}
-                />
-              ))}
-
-              {/* Footer save button for convenience */}
-              <div className="pt-4 flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleAllDone}
-                  disabled={saving}
-                  className="gap-1"
-                >
-                  <Check className="h-4 w-4" />
-                  Tudo Concluído
-                </Button>
-                <Button
-                  onClick={handleSave}
-                  disabled={saving || entries.every((e) => !e.isDirty)}
-                  className="gap-1"
-                >
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Salvar Medição
-                </Button>
-              </div>
-            </div>
+            <ProgressCascade
+              unitProgress={currentUnitProgress}
+              floorProgress={currentFloorProgress}
+              towerProgress={currentTowerProgress}
+              overallProgress={overallProgress}
+              selectedUnit={selectedUnit}
+              selectedFloor={selectedFloor}
+              selectedTower={selectedTower}
+            />
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }

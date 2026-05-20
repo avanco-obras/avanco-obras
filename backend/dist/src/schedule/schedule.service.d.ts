@@ -1,6 +1,14 @@
 import { PrismaService } from '../common/prisma.service';
+import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+export interface GanttDep {
+    id: string;
+    predecessorId: string;
+    successorId: string;
+    lagDays: number;
+    type: string;
+}
 export interface GanttRow {
     id: string;
     code: string;
@@ -15,6 +23,10 @@ export interface GanttRow {
     isCriticalPath: boolean;
     hasChildren: boolean;
     order: number;
+    weight: number;
+    responsible?: string;
+    predecessorDeps: GanttDep[];
+    successorDeps: GanttDep[];
 }
 export interface CurvaSPoint {
     label: string;
@@ -32,8 +44,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -44,14 +56,15 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     })[]>;
@@ -62,8 +75,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -74,14 +87,15 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -92,8 +106,8 @@ export declare class ScheduleService {
             projectId: string;
             measurementMethod: import(".prisma/client").$Enums.MeasurementMethod;
             unit: string;
-            defaultQuantity: import("@prisma/client/runtime/library").Decimal;
-            weight: import("@prisma/client/runtime/library").Decimal;
+            defaultQuantity: Prisma.Decimal;
+            weight: Prisma.Decimal;
             order: number;
         };
     } & {
@@ -104,14 +118,15 @@ export declare class ScheduleService {
         startDate: Date;
         endDate: Date;
         projectId: string;
-        weight: import("@prisma/client/runtime/library").Decimal;
+        weight: Prisma.Decimal;
         order: number;
         level: number;
         code: string;
         durationDays: number;
-        plannedProgress: import("@prisma/client/runtime/library").Decimal;
-        actualProgress: import("@prisma/client/runtime/library").Decimal;
+        plannedProgress: Prisma.Decimal;
+        actualProgress: Prisma.Decimal;
         isCriticalPath: boolean;
+        responsible: string | null;
         parentId: string | null;
         activityTypeId: string | null;
     }>;
@@ -120,4 +135,52 @@ export declare class ScheduleService {
     }>;
     getGanttData(projectId: string): Promise<GanttRow[]>;
     getCurvaS(projectId: string): Promise<CurvaSPoint[]>;
+    addDependency(successorId: string, predecessorId: string, lagDays?: number, type?: string): Promise<{
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        predecessorId: string;
+        successorId: string;
+        lagDays: number;
+    }>;
+    removeDependency(depId: string): Promise<{
+        message: string;
+    }>;
+    getItemDependencies(itemId: string): Promise<({
+        predecessor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+        successor: {
+            id: string;
+            name: string;
+            code: string;
+        };
+    } & {
+        id: string;
+        type: string;
+        predecessorId: string;
+        successorId: string;
+        lagDays: number;
+    })[]>;
+    private normalizeColumnName;
+    private mapColumnName;
+    private deriveLevelFromCode;
+    private deriveParentCode;
+    importBatch(projectId: string, buffer: Buffer, mimetype: string): Promise<{
+        imported: number;
+        skipped: number;
+        errors: string[];
+    }>;
 }

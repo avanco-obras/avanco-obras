@@ -1,0 +1,77 @@
+name: Deploy
+
+# Dispara automaticamente quando o CI passa em main,
+# ou manualmente via GitHub Actions → "Run workflow"
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Aborta se o CI falhou (só relevante no trigger automático)
+  # ────────────────────────────────────────────────────────────────
+  check-ci:
+    name: Verificar CI
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.check.outputs.result }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ────────────────────────────────────────────────────────────────
+  # Backend — Render.com (roda migrations + reinicia automaticamente)
+  #
+  # Secret necessário no GitHub:
+  #   RENDER_DEPLOY_HOOK_URL
+  #   → Render dashboard > seu serviço > Settings > Deploy Hook
+  # ────────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend (Render)
+    runs-on: ubuntu-latest
+    needs: check-ci
+    if: needs.check-ci.outputs.should-deploy == 'true'
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          [ -n "$RENDER_HOOK" ] \
+            && curl --fail -X POST "$RENDER_HOOK" \
+            || echo "Secret RENDER_DEPLOY_HOOK_URL não configurado — adicione em GitHub > Settings > Secrets"
+
+  # ────────────────────────────────────────────────────────────────
+  # Frontend — Vercel
+  #
+  # Secrets necessários no GitHub:
+  #   VERCEL_TOKEN      → vercel.com/account/tokens
+  #   VERCEL_ORG_ID     → vercel.com/teams/<org>/settings (campo "Team ID")
+  #   VERCEL_PROJECT_ID → rode `vercel link` localmente e leia .vercel/project.json
+  #
+  # Env var necessária no Vercel:
+  #   VITE_API_URL=https://<seu-app>.onrender.com/api
+  # ────────────────────────────────────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend (Vercel)
+    runs-on: ubuntu-latest
+    needs: check-ci
+    if: needs.check-ci.outputs.should-deploy == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./frontend
+          vercel-args: --prod
