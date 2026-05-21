@@ -543,6 +543,111 @@ function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
   return updated;
 }
 
+/**
+ * Recalcula datas e duração das tarefas pai com base nas filhas:
+ * - startDate = MIN(filhas.startDate)
+ * - endDate   = MAX(filhas.endDate)
+ * - durationDays = workDaysBetween(start, end) inclusivo
+ * Processa do nível mais profundo para o mais raso (children-first) e itera até estabilizar.
+ */
+interface ParentDateChange {
+  oldStart: string; oldEnd: string; oldDuration: number;
+  newStart: string; newEnd: string; newDuration: number;
+}
+function recalculateParentDates(tasks: GanttTask[]): { tasks: GanttTask[]; changes: Map<string, ParentDateChange> } {
+  const originalById = new Map(tasks.map(t => [t.id, t]));
+  const parentIds = new Set<string>();
+  tasks.forEach(t => { if (t.parentId) parentIds.add(t.parentId); });
+  const parentList = tasks
+    .filter(t => parentIds.has(t.id))
+    .sort((a, b) => b.level - a.level); // deepest first
+
+  let updated = [...tasks];
+  const changes = new Map<string, ParentDateChange>();
+
+  for (let iter = 0; iter < 20; iter++) {
+    let stable = true;
+    for (const parent of parentList) {
+      const children = updated.filter(t => t.parentId === parent.id);
+      if (children.length === 0) continue;
+      const currentParent = updated.find(t => t.id === parent.id);
+      if (!currentParent) continue;
+
+      let minStart = parseDate(children[0].startDate);
+      let maxEnd = parseDate(children[0].endDate);
+      for (const c of children) {
+        const s = parseDate(c.startDate);
+        const e = parseDate(c.endDate);
+        if (s < minStart) minStart = s;
+        if (e > maxEnd) maxEnd = e;
+      }
+      const newStart = minStart.toISOString().split('T')[0];
+      const newEnd = maxEnd.toISOString().split('T')[0];
+      const newDuration = Math.max(1, workDaysBetween(minStart, maxEnd));
+
+      const curStart = currentParent.startDate.slice(0, 10);
+      const curEnd = currentParent.endDate.slice(0, 10);
+      const curDuration = currentParent.durationDays ?? 0;
+
+      if (curStart !== newStart || curEnd !== newEnd || curDuration !== newDuration) {
+        stable = false;
+        updated = updated.map(t => t.id === parent.id
+          ? { ...t, startDate: newStart, endDate: newEnd, durationDays: newDuration }
+          : t);
+        const orig = originalById.get(parent.id)!;
+        changes.set(parent.id, {
+          oldStart: orig.startDate.slice(0, 10),
+          oldEnd: orig.endDate.slice(0, 10),
+          oldDuration: orig.durationDays ?? 0,
+          newStart, newEnd, newDuration,
+        });
+      }
+    }
+    if (stable) break;
+  }
+  return { tasks: updated, changes };
+}
+
+/**
+ * Roda propagateDates (cascata por dependências) e recalculateParentDates (rollup
+ * pais←filhas) em loop até convergir. Cobre o caso em que o ajuste de um pai dispara
+ * propagação por dependências e vice-versa.
+ */
+function propagateAndRollup(tasks: GanttTask[]): { tasks: GanttTask[]; parentChanges: Map<string, ParentDateChange> } {
+  let updated = tasks;
+  const aggregatedChanges = new Map<string, ParentDateChange>();
+  const baseById = new Map(tasks.map(t => [t.id, t]));
+
+  for (let i = 0; i < 10; i++) {
+    const afterDeps = propagateDates(updated);
+    const { tasks: afterParents, changes } = recalculateParentDates(afterDeps);
+    // Merge: keep original old* from first iteration, latest new*
+    changes.forEach((c, id) => {
+      const base = baseById.get(id)!;
+      const existing = aggregatedChanges.get(id);
+      aggregatedChanges.set(id, {
+        oldStart: existing?.oldStart ?? base.startDate.slice(0, 10),
+        oldEnd: existing?.oldEnd ?? base.endDate.slice(0, 10),
+        oldDuration: existing?.oldDuration ?? (base.durationDays ?? 0),
+        newStart: c.newStart, newEnd: c.newEnd, newDuration: c.newDuration,
+      });
+    });
+    let changed = false;
+    for (let j = 0; j < afterParents.length; j++) {
+      const a = afterParents[j];
+      const b = updated[j];
+      if (a.startDate.slice(0, 10) !== b.startDate.slice(0, 10) ||
+          a.endDate.slice(0, 10) !== b.endDate.slice(0, 10) ||
+          (a.durationDays ?? 0) !== (b.durationDays ?? 0)) {
+        changed = true; break;
+      }
+    }
+    updated = afterParents;
+    if (!changed) break;
+  }
+  return { tasks: updated, parentChanges: aggregatedChanges };
+}
+
 function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
   if (level === 0) return { background: 'var(--s2)', fontWeight: 700, fontSize: 12 };
   if (level === 1) return { background: hasChildren ? 'var(--s1)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
@@ -576,7 +681,8 @@ interface FormState {
 
 function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
   const today = new Date().toISOString().split('T')[0];
-  const in30 = addDays(new Date(), 30);
+  // endDate inclusive: para 30 dias úteis, end = start + 29 dias úteis
+  const in30 = addDays(new Date(), 29);
   if (parent) {
     const siblings = all.filter((t) => t.parentId === parent.id);
     return {
@@ -1071,12 +1177,14 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       if (key === 'startDate' || key === 'endDate') {
         const s = parseDate((key === 'startDate' ? value : prev.startDate) as string);
         const e = parseDate((key === 'endDate' ? value : prev.endDate) as string);
-        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e > s) {
-          next.durationDays = workDaysBetween(s, e);
+        // e >= s: aceita início e término no mesmo dia (duração = 1)
+        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+          next.durationDays = Math.max(1, workDaysBetween(s, e));
         }
       } else if (key === 'durationDays' && (value as number) > 0) {
         const s = parseDate(prev.startDate);
-        if (!isNaN(s.getTime())) next.endDate = addDays(s, value as number);
+        // endDate inclusive: duração N → end = start + (N-1) dias úteis (duração 1 = mesmo dia)
+        if (!isNaN(s.getTime())) next.endDate = addDays(s, (value as number) - 1);
       }
       return next;
     });
@@ -1098,11 +1206,25 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         weight: form.weight, isCriticalPath: form.isCriticalPath,
         responsible: form.responsible.trim() || undefined,
       };
+      let savedId: string | null = null;
+      let nextTasks: GanttTask[];
+
       if (editingTask) {
         const oldPayload = formFromTask(editingTask);
         const taskId = editingTask.id;
         await scheduleApi.update(taskId, payload);
         addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+        savedId = taskId;
+        nextTasks = allTasks.map(t => t.id === taskId ? {
+          ...t,
+          name: payload.name, code: payload.code, level: payload.level,
+          parentId: payload.parentId ?? undefined,
+          startDate: payload.startDate, endDate: payload.endDate,
+          durationDays: payload.durationDays,
+          plannedProgress: payload.plannedProgress, actualProgress: payload.actualProgress,
+          weight: payload.weight, isCriticalPath: payload.isCriticalPath,
+          responsible: payload.responsible,
+        } : t);
 
         push({
           description: `Editar: "${form.name.trim()}"`,
@@ -1128,6 +1250,26 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
 
         const newId = (created as { id: string }).id;
+        savedId = newId ?? null;
+        const newTask: GanttTask = {
+          id: newId,
+          code: payload.code, name: payload.name, level: payload.level,
+          parentId: payload.parentId ?? undefined,
+          startDate: payload.startDate, endDate: payload.endDate,
+          durationDays: payload.durationDays,
+          plannedProgress: payload.plannedProgress, actualProgress: payload.actualProgress,
+          isCriticalPath: payload.isCriticalPath,
+          hasChildren: false,
+          weight: payload.weight,
+          responsible: payload.responsible,
+          predecessorDeps: [], successorDeps: [],
+        } as unknown as GanttTask;
+        // Marca o pai como hasChildren para o cascade alcançá-lo
+        const tasksWithParentFlag = payload.parentId
+          ? allTasks.map(t => t.id === payload.parentId ? { ...t, hasChildren: true } : t)
+          : allTasks;
+        nextTasks = [...tasksWithParentFlag, newTask];
+
         if (newId) {
           push({
             description: `Criar: "${form.name.trim()}"`,
@@ -1142,6 +1284,26 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           });
         }
       }
+
+      // Rollup pais←filhas + cascata por dependências, persistindo pais alterados
+      if (savedId) {
+        const { tasks: cascaded } = propagateAndRollup(nextTasks);
+        const parentsToSave = cascaded.filter(t => {
+          const orig = nextTasks.find(o => o.id === t.id);
+          return orig && (
+            orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+            orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+            (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+          );
+        });
+        if (parentsToSave.length > 0) {
+          await Promise.all(parentsToSave.map(t => scheduleApi.update(t.id, {
+            startDate: t.startDate.slice(0, 10),
+            endDate: t.endDate.slice(0, 10),
+            durationDays: t.durationDays,
+          })));
+        }
+      }
       onSaved();
       onClose();
     } catch (err: unknown) {
@@ -1149,6 +1311,32 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Recarrega tasks atualizadas, roda cascata (deps + rollup pais) e persiste mudanças
+  async function cascadeAfterDepChange() {
+    if (!projectId) return;
+    try {
+      const fresh = await scheduleApi.ganttData(projectId);
+      const { tasks: cascaded } = propagateAndRollup(fresh);
+      const changed = cascaded.filter(t => {
+        const orig = fresh.find(o => o.id === t.id);
+        return orig && (
+          orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+          orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+        );
+      });
+      if (changed.length > 0) {
+        await Promise.all(changed.map(t => scheduleApi.update(t.id, {
+          startDate: t.startDate.slice(0, 10),
+          endDate: t.endDate.slice(0, 10),
+          durationDays: t.durationDays,
+        })));
+      }
+    } catch {
+      // silencioso — usuário verá no próximo reload
     }
   }
 
@@ -1164,6 +1352,8 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       setDeps((prev) => [...prev, dep]);
       setAddingDep(false);
       setDepSearch('');
+      await cascadeAfterDepChange();
+      onSaved();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       addToast({ type: 'error', title: 'Erro', description: msg ?? 'Não foi possível adicionar.' });
@@ -1174,6 +1364,8 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
     try {
       await scheduleApi.removeDependency(depId);
       setDeps((prev) => prev.filter((d) => d.id !== depId));
+      await cascadeAfterDepChange();
+      onSaved();
     } catch {
       addToast({ type: 'error', title: 'Erro', description: 'Não foi possível remover dependência.' });
     }
@@ -1243,20 +1435,37 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
             <input style={inp} type="number" min={0} max={10} value={form.level} onChange={(e) => change('level', parseInt(e.target.value) || 0)} />
           </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de início</label>
-            <input style={inp} type="date" value={form.startDate} onChange={(e) => change('startDate', e.target.value)} />
-          </div>
+          {(() => {
+            const parentLocked = !!editingTask?.hasChildren;
+            const lockedStyle: React.CSSProperties = parentLocked
+              ? { ...inp, background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed', fontStyle: 'italic' }
+              : inp;
+            const lockedTitle = parentLocked ? 'Calculado automaticamente a partir das tarefas filhas' : undefined;
+            return (
+              <>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de início</label>
+                  <input style={lockedStyle} type="date" value={form.startDate} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('startDate', e.target.value)} />
+                </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de término</label>
-            <input style={inp} type="date" value={form.endDate} onChange={(e) => change('endDate', e.target.value)} />
-          </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de término</label>
+                  <input style={lockedStyle} type="date" value={form.endDate} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('endDate', e.target.value)} />
+                </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Duração (dias)</label>
-            <input style={inp} type="number" min={1} value={form.durationDays} onChange={(e) => change('durationDays', parseInt(e.target.value) || 1)} />
-          </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Duração (dias)</label>
+                  <input style={lockedStyle} type="number" min={1} value={form.durationDays} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('durationDays', parseInt(e.target.value) || 1)} />
+                </div>
+
+                {parentLocked && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--t3)', fontStyle: 'italic', marginTop: -4 }}>
+                    Datas e duração são calculadas automaticamente a partir das tarefas filhas.
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Peso</label>
@@ -1979,15 +2188,18 @@ export default function Cronograma() {
       .then((data) => {
         const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
           .map((t, i) => ({ ...t, rowId: i + 1 }));
-        setTasks(sorted);
-        const ids = sorted.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        // Aplica rollup pais←filhas em memória (DB pode estar fora de sync com dados antigos/seed)
+        const { tasks: rolled } = propagateAndRollup(sorted);
+        setTasks(rolled);
+        const ids = rolled.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .catch(() => {
         const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
           .map((t, i) => ({ ...t, rowId: i + 1 }));
-        setTasks(mock);
-        const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        const { tasks: rolled } = propagateAndRollup(mock);
+        setTasks(rolled);
+        const ids = rolled.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .finally(() => setLoading(false));
@@ -2001,8 +2213,9 @@ export default function Cronograma() {
       .then((data) => {
         const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
           .map((t, i) => ({ ...t, rowId: i + 1 }));
-        setTasks(sorted);
-        const validHasChildren = new Set(sorted.filter(t => t.hasChildren).map(t => t.id));
+        const { tasks: rolled } = propagateAndRollup(sorted);
+        setTasks(rolled);
+        const validHasChildren = new Set(rolled.filter(t => t.hasChildren).map(t => t.id));
         setExpanded(new Set([...prevExpanded].filter(id => validHasChildren.has(id))));
       })
       .catch(() => {});
@@ -2162,6 +2375,15 @@ export default function Cronograma() {
       openEdit(task, { stopPropagation: () => {} } as any);
       return;
     }
+    // Tarefas pai: datas e duração são calculadas a partir das filhas (bloqueio de edição manual)
+    if (task.hasChildren && ['startDate', 'endDate', 'duration'].includes(colKey)) {
+      addToast({
+        type: 'info',
+        title: 'Campo automático',
+        description: 'Datas e duração da tarefa pai são calculadas a partir das filhas.',
+      });
+      return;
+    }
 
     let value: string;
     switch (colKey) {
@@ -2203,7 +2425,8 @@ export default function Cronograma() {
           if (days < 1) return;
           form.durationDays = days;
           const s = parseDate(task.startDate);
-          if (!isNaN(s.getTime())) form.endDate = addDays(s, days);
+          // endDate inclusive: duração N → end = start + (N-1) dias úteis (duração 1 = mesmo dia)
+          if (!isNaN(s.getTime())) form.endDate = addDays(s, days - 1);
           break;
         }
         case 'startDate': {
@@ -2304,33 +2527,49 @@ export default function Cronograma() {
         });
       }
 
-      // Date cascade: propagate to dependent tasks
-      type DateCascadeItem = { id: string; oldStart: string; oldEnd: string; newStart: string; newEnd: string };
+      // Date cascade: propagate to dependent tasks + roll up parent dates from children
+      type DateCascadeItem = { id: string; oldStart: string; oldEnd: string; oldDuration?: number; newStart: string; newEnd: string; newDuration?: number };
       const dateCascade: DateCascadeItem[] = [];
 
-      if (['duration', 'startDate', 'endDate'].includes(colKey)) {
-        updatedTasks = propagateDates(updatedTasks);
-        const dateChanged = updatedTasks.filter(t => {
-          const orig = tasks.find(o => o.id === t.id);
-          return orig && (orig.startDate.slice(0,10) !== t.startDate.slice(0,10) || orig.endDate.slice(0,10) !== t.endDate.slice(0,10));
-        });
-        if (dateChanged.length > 0 && projectId) {
-          await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
-            startDate: t.startDate.slice(0,10),
-            endDate: t.endDate.slice(0,10),
-          })));
-        }
-        dateChanged.forEach(t => {
-          const orig = tasks.find(o => o.id === t.id)!;
-          dateCascade.push({
-            id: t.id,
-            oldStart: orig.startDate.slice(0,10),
-            oldEnd: orig.endDate.slice(0,10),
-            newStart: t.startDate.slice(0,10),
-            newEnd: t.endDate.slice(0,10),
-          });
-        });
+      // Sempre roda o rollup de pais (cobre mudança de parentId, criação, exclusão, etc.).
+      // O propagateAndRollup também aplica a cascata por dependências quando aplicável.
+      const runDateCascade = ['duration', 'startDate', 'endDate'].includes(colKey);
+      if (runDateCascade) {
+        const result = propagateAndRollup(updatedTasks);
+        updatedTasks = result.tasks;
+      } else {
+        // Mesmo sem mudança de data, garante consistência dos pais (ex: troca de parentId via outras vias)
+        const result = recalculateParentDates(updatedTasks);
+        updatedTasks = result.tasks;
       }
+
+      const dateChanged = updatedTasks.filter(t => {
+        const orig = tasks.find(o => o.id === t.id);
+        return orig && (
+          orig.startDate.slice(0,10) !== t.startDate.slice(0,10) ||
+          orig.endDate.slice(0,10) !== t.endDate.slice(0,10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+        );
+      });
+      if (dateChanged.length > 0 && projectId) {
+        await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
+          startDate: t.startDate.slice(0,10),
+          endDate: t.endDate.slice(0,10),
+          durationDays: t.durationDays,
+        })));
+      }
+      dateChanged.forEach(t => {
+        const orig = tasks.find(o => o.id === t.id)!;
+        dateCascade.push({
+          id: t.id,
+          oldStart: orig.startDate.slice(0,10),
+          oldEnd: orig.endDate.slice(0,10),
+          oldDuration: orig.durationDays ?? 0,
+          newStart: t.startDate.slice(0,10),
+          newEnd: t.endDate.slice(0,10),
+          newDuration: t.durationDays ?? 0,
+        });
+      });
 
       setTasks(updatedTasks);
       addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
@@ -2354,13 +2593,21 @@ export default function Cronograma() {
         undo: async () => {
           await scheduleApi.update(taskId, undoPayload);
           await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.oldVal })));
-          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, { startDate: c.oldStart, endDate: c.oldEnd })));
+          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, {
+            startDate: c.oldStart,
+            endDate: c.oldEnd,
+            ...(c.oldDuration !== undefined ? { durationDays: c.oldDuration } : {}),
+          })));
           triggerDataOnly();
         },
         redo: async () => {
           await scheduleApi.update(taskId, payload);
           await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.newVal })));
-          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, { startDate: c.newStart, endDate: c.newEnd })));
+          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, {
+            startDate: c.newStart,
+            endDate: c.newEnd,
+            ...(c.newDuration !== undefined ? { durationDays: c.newDuration } : {}),
+          })));
           triggerDataOnly();
         },
       });
@@ -2858,6 +3105,25 @@ export default function Cronograma() {
       await scheduleApi.delete(deleteTarget.id);
       addToast({ type: 'success', title: 'Excluído', description: `"${deleteTarget.name}" removido.` });
       setDeleteTarget(null);
+
+      // Rollup: ao excluir uma filha, datas do pai podem encolher
+      const nextLocal = tasks.filter(t => t.id !== deleteTarget.id);
+      const { tasks: cascaded } = propagateAndRollup(nextLocal);
+      const parentsToSave = cascaded.filter(t => {
+        const orig = nextLocal.find(o => o.id === t.id);
+        return orig && (
+          orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+          orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+        );
+      });
+      if (parentsToSave.length > 0 && projectId) {
+        await Promise.all(parentsToSave.map(t => scheduleApi.update(t.id, {
+          startDate: t.startDate.slice(0, 10),
+          endDate: t.endDate.slice(0, 10),
+          durationDays: t.durationDays,
+        })));
+      }
       loadTasksOnly();
 
       // Record undo only for leaf tasks (parent deletion cascades children — complex to undo)
@@ -2895,7 +3161,11 @@ export default function Cronograma() {
   }
 
   function barLeft(task: GanttTask) { return daysBetween(minDate, parseDate(task.startDate)) * pxPerDay; }
-  function barWidth(task: GanttTask) { return Math.max(4, daysBetween(parseDate(task.startDate), parseDate(task.endDate)) * pxPerDay); }
+  function barWidth(task: GanttTask) {
+    // intervalo inclusivo: 1 dia (start=end) ocupa uma célula inteira (pxPerDay)
+    const spanDays = daysBetween(parseDate(task.startDate), parseDate(task.endDate)) + 1;
+    return Math.max(pxPerDay, spanDays * pxPerDay);
+  }
 
   // ── No project selected ──────────────────────────────────────────────────────
 
@@ -3313,7 +3583,9 @@ export default function Cronograma() {
                       >
                         {visibleColDefs.map((col, colIdx) => {
                           const isNameCol = col.key === 'name';
-                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key);
+                          // Tarefas pai: datas/duração são calculadas das filhas (não editáveis)
+                          const isParentLockedCol = task.hasChildren && ['startDate', 'endDate', 'duration'].includes(col.key);
+                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key) && !isParentLockedCol;
                           const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.colKey === col.key;
                           const isCellSelected = isSelected && colIdx === selectedColIdx;
 
@@ -3344,7 +3616,7 @@ export default function Cronograma() {
                             <div
                               key={col.key}
                               onDoubleClick={isEditable ? (e) => startInlineEdit(task, col.key, e) : undefined}
-                              title={isEditable ? 'Duplo clique para editar' : ''}
+                              title={isParentLockedCol ? 'Calculado automaticamente a partir das tarefas filhas' : (isEditable ? 'Duplo clique para editar' : '')}
                               style={{
                                 width: effectiveWidth(col),
                                 flexShrink: 0,
@@ -3353,11 +3625,13 @@ export default function Cronograma() {
                                 alignItems: 'center',
                                 gap: isNameCol && !isEditing ? 4 : 0,
                                 borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
-                                cursor: isEditable ? 'text' : 'default',
+                                cursor: isParentLockedCol ? 'not-allowed' : (isEditable ? 'text' : 'default'),
                                 overflow: 'hidden',
                                 backgroundColor: isEditing ? '#fff' : undefined,
                                 border: isEditing ? '2px solid #1A56A0' : (isCellSelected ? '1.5px solid #1A56A0' : undefined),
                                 borderRadius: isEditing || isCellSelected ? 4 : 0,
+                                fontStyle: isParentLockedCol ? 'italic' : undefined,
+                                color: isParentLockedCol ? 'var(--t3)' : undefined,
                                 ...(isNameCol && !isEditing ? lvStyle : { fontSize: 11 }),
                               }}
                             >

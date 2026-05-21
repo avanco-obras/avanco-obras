@@ -582,8 +582,10 @@ export class ScheduleService {
       }
 
       if (durationDays === 0) {
+        // Intervalo inclusivo: start == end → 1 dia. Mínimo de 1.
         const diffMs = endDate.getTime() - startDate.getTime();
-        durationDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        const calendarDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+        durationDays = Math.max(1, calendarDays + 1);
       }
 
       const level = mappedRow['level']
