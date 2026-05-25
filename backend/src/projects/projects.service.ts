@@ -69,6 +69,24 @@ export class ProjectsService {
             role: UserRole.ADMIN,
           },
         },
+        scheduleItems: {
+          create: {
+            code: '1',
+            name: dto.name,
+            level: 0,
+            startDate: new Date(dto.startDate),
+            endDate: new Date(dto.endDate),
+            durationDays: Math.max(
+              1,
+              Math.ceil(
+                (new Date(dto.endDate).getTime() -
+                  new Date(dto.startDate).getTime()) /
+                  86_400_000,
+              ),
+            ),
+            order: 0,
+          },
+        },
       },
       include: {
         _count: { select: { towers: true, members: true } },
@@ -89,6 +107,41 @@ export class ProjectsService {
     });
 
     return project;
+  }
+
+  /**
+   * Garante que o projeto tenha uma raiz de EAP (level 0, code "1"). Idempotente.
+   * Usado para retrofit de projetos existentes que ainda não têm raiz.
+   */
+  async ensureRoot(projectId: string): Promise<void> {
+    const root = await this.prisma.scheduleItem.findFirst({
+      where: { projectId, parentId: null, level: 0 },
+      select: { id: true },
+    });
+    if (root) return;
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { name: true, startDate: true, endDate: true },
+    });
+    if (!project) return;
+    await this.prisma.scheduleItem.create({
+      data: {
+        projectId,
+        code: '1',
+        name: project.name,
+        level: 0,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        durationDays: Math.max(
+          1,
+          Math.ceil(
+            (project.endDate.getTime() - project.startDate.getTime()) /
+              86_400_000,
+          ),
+        ),
+        order: 0,
+      },
+    });
   }
 
   async findOne(id: string, userId: string) {
@@ -124,7 +177,7 @@ export class ProjectsService {
             code: true,
             name: true,
             plannedProgress: true,
-            actualProgress: true,
+            physicalProgress: true,
             startDate: true,
             endDate: true,
             isCriticalPath: true,
@@ -176,7 +229,7 @@ export class ProjectsService {
       );
     }
 
-    return this.prisma.project.update({
+    const updated = await this.prisma.project.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -210,6 +263,16 @@ export class ProjectsService {
         },
       },
     });
+
+    // Sincroniza nome da raiz da EAP com o nome do projeto.
+    if (dto.name !== undefined) {
+      await this.prisma.scheduleItem.updateMany({
+        where: { projectId: id, parentId: null, level: 0 },
+        data: { name: dto.name },
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: string, userId: string) {

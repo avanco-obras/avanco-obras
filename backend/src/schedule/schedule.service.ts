@@ -28,7 +28,7 @@ export interface GanttRow {
   endDate: string;
   durationDays: number;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   isCriticalPath: boolean;
   hasChildren: boolean;
   order: number;
@@ -122,7 +122,7 @@ export class ScheduleService {
         endDate: new Date(dto.endDate),
         durationDays: dto.durationDays,
         plannedProgress: dto.plannedProgress ?? 0,
-        actualProgress: dto.actualProgress ?? 0,
+        physicalProgress: dto.physicalProgress ?? 0,
         weight: dto.weight ?? 1,
         isCriticalPath: dto.isCriticalPath ?? false,
         responsible: dto.responsible ?? null,
@@ -155,7 +155,7 @@ export class ScheduleService {
         ...(dto.endDate !== undefined && { endDate: new Date(dto.endDate) }),
         ...(dto.durationDays !== undefined && { durationDays: dto.durationDays }),
         ...(dto.plannedProgress !== undefined && { plannedProgress: dto.plannedProgress }),
-        ...(dto.actualProgress !== undefined && { actualProgress: dto.actualProgress }),
+        ...(dto.physicalProgress !== undefined && { physicalProgress: dto.physicalProgress }),
         ...(dto.weight !== undefined && { weight: dto.weight }),
         ...(dto.isCriticalPath !== undefined && { isCriticalPath: dto.isCriticalPath }),
         ...(dto.order !== undefined && { order: dto.order }),
@@ -184,10 +184,36 @@ export class ScheduleService {
   async getGanttData(projectId: string): Promise<GanttRow[]> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true },
+      select: { id: true, name: true, startDate: true, endDate: true },
     });
     if (!project) {
       throw new NotFoundException(`Projeto com ID "${projectId}" não encontrado`);
+    }
+
+    // Garante raiz da EAP (retrofit para projetos sem raiz)
+    const hasRoot = await this.prisma.scheduleItem.findFirst({
+      where: { projectId, parentId: null, level: 0 },
+      select: { id: true },
+    });
+    if (!hasRoot) {
+      await this.prisma.scheduleItem.create({
+        data: {
+          projectId,
+          code: '1',
+          name: project.name,
+          level: 0,
+          startDate: project.startDate,
+          endDate: project.endDate,
+          durationDays: Math.max(
+            1,
+            Math.ceil(
+              (project.endDate.getTime() - project.startDate.getTime()) /
+                86_400_000,
+            ),
+          ),
+          order: 0,
+        },
+      });
     }
 
     const items = await this.prisma.scheduleItem.findMany({
@@ -202,7 +228,7 @@ export class ScheduleService {
         endDate: true,
         durationDays: true,
         plannedProgress: true,
-        actualProgress: true,
+        physicalProgress: true,
         isCriticalPath: true,
         order: true,
         weight: true,
@@ -230,7 +256,7 @@ export class ScheduleService {
       endDate: item.endDate.toISOString(),
       durationDays: item.durationDays,
       plannedProgress: Number(item.plannedProgress),
-      actualProgress: Number(item.actualProgress),
+      physicalProgress: Number(item.physicalProgress),
       isCriticalPath: item.isCriticalPath,
       hasChildren: item._count.children > 0,
       order: item.order,
@@ -258,7 +284,7 @@ export class ScheduleService {
         startDate: true,
         endDate: true,
         plannedProgress: true,
-        actualProgress: true,
+        physicalProgress: true,
         weight: true,
         _count: { select: { children: true } },
       },
@@ -328,7 +354,7 @@ export class ScheduleService {
           // Zero-duration item: count it in the month it falls on
           if (itemStart >= monthStart && itemStart <= monthEnd) {
             plannedDelta += itemWeightFraction * Number(item.plannedProgress);
-            actualDelta += itemWeightFraction * Number(item.actualProgress);
+            actualDelta += itemWeightFraction * Number(item.physicalProgress);
           }
           continue;
         }
@@ -337,7 +363,7 @@ export class ScheduleService {
         const fraction = overlapDuration / totalDuration;
 
         plannedDelta += itemWeightFraction * Number(item.plannedProgress) * fraction;
-        actualDelta += itemWeightFraction * Number(item.actualProgress) * fraction;
+        actualDelta += itemWeightFraction * Number(item.physicalProgress) * fraction;
       }
 
       cumulativePlanned = Math.min(100, cumulativePlanned + plannedDelta);
@@ -431,10 +457,13 @@ export class ScheduleService {
       '% plan': 'plannedProgress',
       'prog. plan': 'plannedProgress',
       'planned progress': 'plannedProgress',
-      '% real': 'actualProgress',
-      'prog. real': 'actualProgress',
-      'actual progress': 'actualProgress',
-      '% concluído': 'actualProgress',
+      '% avanço físico': 'physicalProgress',
+      'avanço físico': 'physicalProgress',
+      'physical progress': 'physicalProgress',
+      '% real': 'physicalProgress',
+      'prog. real': 'physicalProgress',
+      'actual progress': 'physicalProgress',
+      '% concluído': 'physicalProgress',
       'caminho crítico': 'isCriticalPath',
       'critical': 'isCriticalPath',
       'peso': 'weight',
@@ -518,7 +547,7 @@ export class ScheduleService {
       endDate: Date;
       durationDays: number;
       plannedProgress: number;
-      actualProgress: number;
+      physicalProgress: number;
       isCriticalPath: boolean;
       weight: number;
     }> = [];
@@ -595,9 +624,9 @@ export class ScheduleService {
         0,
         Math.min(100, Number(mappedRow['plannedProgress'] || 0)),
       );
-      const actualProgress = Math.max(
+      const physicalProgress = Math.max(
         0,
-        Math.min(100, Number(mappedRow['actualProgress'] || 0)),
+        Math.min(100, Number(mappedRow['physicalProgress'] || 0)),
       );
       const weight = Math.max(0.01, Number(mappedRow['weight'] || 1));
       const isCriticalPath = Boolean(mappedRow['isCriticalPath']);
@@ -613,7 +642,7 @@ export class ScheduleService {
         endDate,
         durationDays,
         plannedProgress,
-        actualProgress,
+        physicalProgress,
         isCriticalPath,
         weight,
       });
@@ -648,7 +677,7 @@ export class ScheduleService {
             endDate: item.endDate,
             durationDays: item.durationDays,
             plannedProgress: new Prisma.Decimal(item.plannedProgress),
-            actualProgress: new Prisma.Decimal(item.actualProgress),
+            physicalProgress: new Prisma.Decimal(item.physicalProgress),
             isCriticalPath: item.isCriticalPath,
             weight: new Prisma.Decimal(item.weight),
             order: createdCount,

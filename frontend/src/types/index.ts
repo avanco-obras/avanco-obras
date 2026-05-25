@@ -114,7 +114,7 @@ export interface ScheduleItem {
   endDate: string;
   durationDays: number;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   weight: number;
   isCriticalPath: boolean;
   responsible?: string;
@@ -131,7 +131,7 @@ export interface GanttTask {
   startDate: string;
   endDate: string;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   isCriticalPath: boolean;
   isExpanded?: boolean;
   hasChildren?: boolean;
@@ -274,7 +274,7 @@ export interface DelayedActivity {
   code: string;
   name: string;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   deviation: number;
   delayDays: number;
   criticality: number; // 0-1
@@ -338,13 +338,13 @@ export interface BaselineComparison {
       startDate: string;
       endDate: string;
       durationDays: number;
-      actualProgress: number;
+      physicalProgress: number;
     };
     current?: {
       startDate: string;
       endDate: string;
       durationDays: number;
-      actualProgress: number;
+      physicalProgress: number;
     };
   }>;
 }

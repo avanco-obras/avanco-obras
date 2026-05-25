@@ -46,7 +46,7 @@ const COL_DEFS: ColDef[] = [
   { key: 'duration', label: 'Duração', width: 72, fixed: false },
   { key: 'startDate', label: 'Início', width: 86, fixed: false },
   { key: 'endDate', label: 'Término', width: 86, fixed: false },
-  { key: 'progress', label: '% Real', width: 62, fixed: false },
+  { key: 'progress', label: '% Avanço Físico', width: 100, fixed: false },
   { key: 'weight', label: 'Peso', width: 70, fixed: false },
   { key: 'responsible', label: 'Responsável', width: 120, fixed: false },
   { key: 'predecessors', label: 'Predecessora', width: 90, fixed: false },
@@ -62,19 +62,19 @@ function buildMockTasks(): GanttTask[] {
   const m = today.getMonth();
   const d = (om: number, od = 0) => new Date(y, m + om, 1 + od).toISOString().split('T')[0];
   return [
-    { id: '1', code: '1', name: 'OBRA', level: 0, startDate: d(-1), endDate: d(11), plannedProgress: 35, actualProgress: 30, isCriticalPath: false, hasChildren: true, durationDays: 365, weight: 1 },
-    { id: '2', code: '1.1', name: 'ESTRUTURA', level: 1, parentId: '1', startDate: d(-1), endDate: d(5), plannedProgress: 60, actualProgress: 50, isCriticalPath: true, hasChildren: true, durationDays: 180, weight: 0.4 },
-    { id: '3', code: '1.1.1', name: 'Fundação', level: 2, parentId: '2', startDate: d(-1), endDate: d(1), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: true, durationDays: 60, weight: 0.15 },
-    { id: '4', code: '1.1.1.1', name: 'Estacas', level: 3, parentId: '3', startDate: d(-1), endDate: d(0, 15), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: false, durationDays: 45, weight: 0.08 },
-    { id: '5', code: '1.1.1.2', name: 'Blocos', level: 3, parentId: '3', startDate: d(0, 10), endDate: d(1), plannedProgress: 100, actualProgress: 95, isCriticalPath: true, hasChildren: true, durationDays: 20, weight: 0.07 },
-    { id: '6', code: '1.1.1.2.1', name: 'Bloco tipo A', level: 4, parentId: '5', startDate: d(0, 10), endDate: d(0, 20), plannedProgress: 100, actualProgress: 100, isCriticalPath: false, hasChildren: false, durationDays: 10, weight: 0.03 },
-    { id: '7', code: '1.1.2', name: 'Pilares e Lajes', level: 2, parentId: '2', startDate: d(1), endDate: d(5), plannedProgress: 40, actualProgress: 25, isCriticalPath: true, hasChildren: false, durationDays: 120, weight: 0.25 },
-    { id: '8', code: '1.2', name: 'ALVENARIA', level: 1, parentId: '1', startDate: d(3), endDate: d(7), plannedProgress: 10, actualProgress: 5, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
-    { id: '9', code: '1.2.1', name: 'Vedação interna', level: 2, parentId: '8', startDate: d(3), endDate: d(6), plannedProgress: 15, actualProgress: 8, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
-    { id: '10', code: '1.2.2', name: 'Vedação externa', level: 2, parentId: '8', startDate: d(5), endDate: d(7), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
-    { id: '11', code: '1.3', name: 'ACABAMENTO', level: 1, parentId: '1', startDate: d(7), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
-    { id: '12', code: '1.3.1', name: 'Revestimento', level: 2, parentId: '11', startDate: d(7), endDate: d(10), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
-    { id: '13', code: '1.3.2', name: 'Pintura', level: 2, parentId: '11', startDate: d(9), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+    { id: '1', code: '1', name: 'OBRA', level: 0, startDate: d(-1), endDate: d(11), plannedProgress: 35, physicalProgress: 30, isCriticalPath: false, hasChildren: true, durationDays: 365, weight: 1 },
+    { id: '2', code: '1.1', name: 'ESTRUTURA', level: 1, parentId: '1', startDate: d(-1), endDate: d(5), plannedProgress: 60, physicalProgress: 50, isCriticalPath: true, hasChildren: true, durationDays: 180, weight: 0.4 },
+    { id: '3', code: '1.1.1', name: 'Fundação', level: 2, parentId: '2', startDate: d(-1), endDate: d(1), plannedProgress: 100, physicalProgress: 100, isCriticalPath: true, hasChildren: true, durationDays: 60, weight: 0.15 },
+    { id: '4', code: '1.1.1.1', name: 'Estacas', level: 3, parentId: '3', startDate: d(-1), endDate: d(0, 15), plannedProgress: 100, physicalProgress: 100, isCriticalPath: true, hasChildren: false, durationDays: 45, weight: 0.08 },
+    { id: '5', code: '1.1.1.2', name: 'Blocos', level: 3, parentId: '3', startDate: d(0, 10), endDate: d(1), plannedProgress: 100, physicalProgress: 95, isCriticalPath: true, hasChildren: true, durationDays: 20, weight: 0.07 },
+    { id: '6', code: '1.1.1.2.1', name: 'Bloco tipo A', level: 4, parentId: '5', startDate: d(0, 10), endDate: d(0, 20), plannedProgress: 100, physicalProgress: 100, isCriticalPath: false, hasChildren: false, durationDays: 10, weight: 0.03 },
+    { id: '7', code: '1.1.2', name: 'Pilares e Lajes', level: 2, parentId: '2', startDate: d(1), endDate: d(5), plannedProgress: 40, physicalProgress: 25, isCriticalPath: true, hasChildren: false, durationDays: 120, weight: 0.25 },
+    { id: '8', code: '1.2', name: 'ALVENARIA', level: 1, parentId: '1', startDate: d(3), endDate: d(7), plannedProgress: 10, physicalProgress: 5, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '9', code: '1.2.1', name: 'Vedação interna', level: 2, parentId: '8', startDate: d(3), endDate: d(6), plannedProgress: 15, physicalProgress: 8, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '10', code: '1.2.2', name: 'Vedação externa', level: 2, parentId: '8', startDate: d(5), endDate: d(7), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+    { id: '11', code: '1.3', name: 'ACABAMENTO', level: 1, parentId: '1', startDate: d(7), endDate: d(11), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '12', code: '1.3.1', name: 'Revestimento', level: 2, parentId: '11', startDate: d(7), endDate: d(10), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '13', code: '1.3.2', name: 'Pintura', level: 2, parentId: '11', startDate: d(9), endDate: d(11), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
   ];
 }
 
@@ -495,23 +495,23 @@ function badgeClass(actual: number, planned: number): string {
 }
 
 /**
- * Calcula o %Real de uma tarefa pai baseado nos filhos com pesos
+ * Calcula o % Avanço Físico de uma tarefa pai baseado nos filhos com pesos
  */
 function calculateParentProgress(parent: GanttTask, children: GanttTask[]): number {
-  if (children.length === 0) return parent.actualProgress;
+  if (children.length === 0) return parent.physicalProgress;
 
   const totalWeight = children.reduce((sum, child) => sum + (child.weight || 1), 0);
-  if (totalWeight === 0) return parent.actualProgress;
+  if (totalWeight === 0) return parent.physicalProgress;
 
   const weightedSum = children.reduce((sum, child) => {
-    return sum + (child.actualProgress || 0) * (child.weight || 1);
+    return sum + (child.physicalProgress || 0) * (child.weight || 1);
   }, 0);
 
   return Math.round((weightedSum / totalWeight) * 100) / 100;
 }
 
 /**
- * Recalcula o %Real de todas as tarefas pai em cascata
+ * Recalcula o % Avanço Físico de todas as tarefas pai em cascata
  */
 function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
   let updated = [...tasks];
@@ -530,9 +530,9 @@ function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
       const children = updated.filter(t => t.parentId === task.id);
       const newProgress = calculateParentProgress(task, children);
 
-      if (newProgress !== task.actualProgress) {
+      if (newProgress !== task.physicalProgress) {
         changed = true;
-        return { ...task, actualProgress: newProgress };
+        return { ...task, physicalProgress: newProgress };
       }
       return task;
     });
@@ -541,6 +541,51 @@ function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
   }
 
   return updated;
+}
+
+/**
+ * Recalcula o peso das tarefas pai como SOMA dos pesos das filhas.
+ * Folhas mantêm seu próprio peso (default 1 quando ausente).
+ * Processa do nível mais profundo para o mais raso (recursivo).
+ */
+interface ParentWeightChange { oldWeight: number; newWeight: number; }
+function recalculateParentWeights(tasks: GanttTask[]): { tasks: GanttTask[]; changes: Map<string, ParentWeightChange> } {
+  const originalById = new Map(tasks.map(t => [t.id, t]));
+  const parentIds = new Set<string>();
+  tasks.forEach(t => { if (t.parentId) parentIds.add(t.parentId); });
+  const parentList = tasks
+    .filter(t => parentIds.has(t.id))
+    .sort((a, b) => b.level - a.level);
+
+  let updated = [...tasks];
+  const changes = new Map<string, ParentWeightChange>();
+
+  for (let iter = 0; iter < 20; iter++) {
+    let stable = true;
+    for (const parent of parentList) {
+      const children = updated.filter(t => t.parentId === parent.id);
+      if (children.length === 0) continue;
+      const currentParent = updated.find(t => t.id === parent.id);
+      if (!currentParent) continue;
+
+      const sum = children.reduce((acc, c) => acc + (c.weight ?? 1), 0);
+      const newWeight = Math.round(sum * 10000) / 10000; // 4 casas decimais
+      const curWeight = currentParent.weight ?? 0;
+
+      if (Math.abs(curWeight - newWeight) > 0.0001) {
+        stable = false;
+        updated = updated.map(t => t.id === parent.id ? { ...t, weight: newWeight } : t);
+        const orig = originalById.get(parent.id)!;
+        if (!changes.has(parent.id)) {
+          changes.set(parent.id, { oldWeight: orig.weight ?? 1, newWeight });
+        } else {
+          changes.set(parent.id, { oldWeight: changes.get(parent.id)!.oldWeight, newWeight });
+        }
+      }
+    }
+    if (stable) break;
+  }
+  return { tasks: updated, changes };
 }
 
 /**
@@ -613,7 +658,11 @@ function recalculateParentDates(tasks: GanttTask[]): { tasks: GanttTask[]; chang
  * pais←filhas) em loop até convergir. Cobre o caso em que o ajuste de um pai dispara
  * propagação por dependências e vice-versa.
  */
-function propagateAndRollup(tasks: GanttTask[]): { tasks: GanttTask[]; parentChanges: Map<string, ParentDateChange> } {
+function propagateAndRollup(tasks: GanttTask[]): {
+  tasks: GanttTask[];
+  parentChanges: Map<string, ParentDateChange>;
+  parentWeightChanges: Map<string, ParentWeightChange>;
+} {
   let updated = tasks;
   const aggregatedChanges = new Map<string, ParentDateChange>();
   const baseById = new Map(tasks.map(t => [t.id, t]));
@@ -645,7 +694,12 @@ function propagateAndRollup(tasks: GanttTask[]): { tasks: GanttTask[]; parentCha
     updated = afterParents;
     if (!changed) break;
   }
-  return { tasks: updated, parentChanges: aggregatedChanges };
+
+  // Rollup de peso (pais = soma das filhas, recursivo). Independe de datas/dependências.
+  const weightResult = recalculateParentWeights(updated);
+  updated = weightResult.tasks;
+
+  return { tasks: updated, parentChanges: aggregatedChanges, parentWeightChanges: weightResult.changes };
 }
 
 function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
@@ -673,7 +727,7 @@ interface FormState {
   endDate: string;
   durationDays: number;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   weight: number;
   isCriticalPath: boolean;
   responsible: string;
@@ -689,7 +743,7 @@ function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
       name: '', code: `${parent.code}.${siblings.length + 1}`,
       level: parent.level + 1, parentId: parent.id,
       startDate: today, endDate: in30, durationDays: 30,
-      plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+      plannedProgress: 0, physicalProgress: 0, weight: 1, isCriticalPath: false,
       responsible: '',
     };
   }
@@ -698,7 +752,7 @@ function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
     name: '', code: String(roots.length + 1),
     level: 0, parentId: '',
     startDate: today, endDate: in30, durationDays: 30,
-    plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+    plannedProgress: 0, physicalProgress: 0, weight: 1, isCriticalPath: false,
     responsible: '',
   };
 }
@@ -715,7 +769,7 @@ function formFromTask(task: GanttTask): FormState {
     endDate: task.endDate.slice(0, 10),
     durationDays: task.durationDays ?? Math.max(1, workDaysBetween(start, end)),
     plannedProgress: task.plannedProgress,
-    actualProgress: task.actualProgress,
+    physicalProgress: task.physicalProgress,
     weight: task.weight ?? 1,
     isCriticalPath: task.isCriticalPath,
     responsible: task.responsible ?? '',
@@ -731,7 +785,7 @@ function getCellRawValue(task: GanttTask, colKey: string): string {
     case 'duration': return String(task.durationDays ?? '');
     case 'startDate': return task.startDate.slice(0, 10);
     case 'endDate': return task.endDate.slice(0, 10);
-    case 'progress': return String(task.actualProgress);
+    case 'progress': return String(task.physicalProgress);
     case 'weight': return String(task.weight ?? '');
     case 'responsible': return task.responsible ?? '';
     default: return '';
@@ -746,7 +800,7 @@ function formatCellForFilter(task: GanttTask, colKey: string): string {
     case 'startDate': return task.startDate.slice(0, 10);
     case 'endDate': return task.endDate.slice(0, 10);
     case 'duration': return String(task.durationDays ?? '');
-    case 'progress': return String(task.actualProgress);
+    case 'progress': return String(task.physicalProgress);
     case 'weight': return String(task.weight ?? '');
     case 'predecessors': return '';
     case 'successors': return '';
@@ -1022,7 +1076,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
 
           {/* Progress range */}
           <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real mínimo</label>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Avanço Físico mínimo</label>
             <input
               type="number"
               min="0"
@@ -1035,7 +1089,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real máximo</label>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Avanço Físico máximo</label>
             <input
               type="number"
               min="0"
@@ -1202,7 +1256,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         level: form.level, parentId: form.parentId || undefined,
         startDate: form.startDate, endDate: form.endDate,
         durationDays: form.durationDays,
-        plannedProgress: form.plannedProgress, actualProgress: form.actualProgress,
+        plannedProgress: form.plannedProgress, physicalProgress: form.physicalProgress,
         weight: form.weight, isCriticalPath: form.isCriticalPath,
         responsible: form.responsible.trim() || undefined,
       };
@@ -1221,7 +1275,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           parentId: payload.parentId ?? undefined,
           startDate: payload.startDate, endDate: payload.endDate,
           durationDays: payload.durationDays,
-          plannedProgress: payload.plannedProgress, actualProgress: payload.actualProgress,
+          plannedProgress: payload.plannedProgress, physicalProgress: payload.physicalProgress,
           weight: payload.weight, isCriticalPath: payload.isCriticalPath,
           responsible: payload.responsible,
         } : t);
@@ -1234,7 +1288,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
               name: oldPayload.name, code: oldPayload.code, level: oldPayload.level,
               parentId: oldPayload.parentId || undefined, startDate: oldPayload.startDate,
               endDate: oldPayload.endDate, durationDays: oldPayload.durationDays,
-              plannedProgress: oldPayload.plannedProgress, actualProgress: oldPayload.actualProgress,
+              plannedProgress: oldPayload.plannedProgress, physicalProgress: oldPayload.physicalProgress,
               weight: oldPayload.weight, isCriticalPath: oldPayload.isCriticalPath,
               responsible: oldPayload.responsible || undefined,
             });
@@ -1257,7 +1311,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           parentId: payload.parentId ?? undefined,
           startDate: payload.startDate, endDate: payload.endDate,
           durationDays: payload.durationDays,
-          plannedProgress: payload.plannedProgress, actualProgress: payload.actualProgress,
+          plannedProgress: payload.plannedProgress, physicalProgress: payload.physicalProgress,
           isCriticalPath: payload.isCriticalPath,
           hasChildren: false,
           weight: payload.weight,
@@ -1285,23 +1339,29 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         }
       }
 
-      // Rollup pais←filhas + cascata por dependências, persistindo pais alterados
+      // Rollup pais←filhas (datas + duração + peso) + cascata por dependências
       if (savedId) {
         const { tasks: cascaded } = propagateAndRollup(nextTasks);
         const parentsToSave = cascaded.filter(t => {
           const orig = nextTasks.find(o => o.id === t.id);
-          return orig && (
+          if (!orig) return false;
+          return (
             orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
             orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
-            (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+            (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+            Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
           );
         });
         if (parentsToSave.length > 0) {
-          await Promise.all(parentsToSave.map(t => scheduleApi.update(t.id, {
-            startDate: t.startDate.slice(0, 10),
-            endDate: t.endDate.slice(0, 10),
-            durationDays: t.durationDays,
-          })));
+          await Promise.all(parentsToSave.map(t => {
+            const orig = nextTasks.find(o => o.id === t.id)!;
+            const patch: Record<string, unknown> = {};
+            if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+            if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+            if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+            if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+            return scheduleApi.update(t.id, patch);
+          }));
         }
       }
       onSaved();
@@ -1314,7 +1374,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
     }
   }
 
-  // Recarrega tasks atualizadas, roda cascata (deps + rollup pais) e persiste mudanças
+  // Recarrega tasks atualizadas, roda cascata (deps + rollup pais: datas, duração e peso) e persiste
   async function cascadeAfterDepChange() {
     if (!projectId) return;
     try {
@@ -1322,18 +1382,24 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       const { tasks: cascaded } = propagateAndRollup(fresh);
       const changed = cascaded.filter(t => {
         const orig = fresh.find(o => o.id === t.id);
-        return orig && (
+        if (!orig) return false;
+        return (
           orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
           orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
-          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
         );
       });
       if (changed.length > 0) {
-        await Promise.all(changed.map(t => scheduleApi.update(t.id, {
-          startDate: t.startDate.slice(0, 10),
-          endDate: t.endDate.slice(0, 10),
-          durationDays: t.durationDays,
-        })));
+        await Promise.all(changed.map(t => {
+          const orig = fresh.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+          if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
       }
     } catch {
       // silencioso — usuário verá no próximo reload
@@ -1420,10 +1486,24 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
         {/* Form grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Nome *</label>
-            <input style={inp} value={form.name} onChange={(e) => change('name', e.target.value)} placeholder="Nome da atividade" autoFocus />
-          </div>
+          {(() => {
+            const isRootEdit = editingTask?.level === 0 && !editingTask?.parentId;
+            return (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>
+                  Nome *{isRootEdit && <span style={{ marginLeft: 6, color: 'var(--t3)', fontStyle: 'italic' }}>(sincronizado com o Cadastro)</span>}
+                </label>
+                <input
+                  style={{ ...inp, ...(isRootEdit ? { background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed' } : null) }}
+                  value={form.name}
+                  onChange={(e) => !isRootEdit && change('name', e.target.value)}
+                  placeholder="Nome da atividade"
+                  readOnly={isRootEdit}
+                  autoFocus={!isRootEdit}
+                />
+              </div>
+            );
+          })()}
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Código WBS</label>
@@ -1460,7 +1540,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
                 {parentLocked && (
                   <div style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--t3)', fontStyle: 'italic', marginTop: -4 }}>
-                    Datas e duração são calculadas automaticamente a partir das tarefas filhas.
+                    Datas, duração e peso são calculados automaticamente a partir das tarefas filhas.
                   </div>
                 )}
               </>
@@ -1469,7 +1549,23 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Peso</label>
-            <input style={inp} type="number" min={0} step={0.01} value={form.weight} onChange={(e) => change('weight', parseFloat(e.target.value) || 0)} />
+            <input
+              style={editingTask?.hasChildren
+                ? { ...inp, background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed', fontStyle: 'italic' }
+                : inp}
+              type="number"
+              min={0}
+              step={0.01}
+              value={form.weight}
+              disabled={!!editingTask?.hasChildren}
+              title={editingTask?.hasChildren ? 'Peso = soma dos pesos das tarefas filhas' : undefined}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                const n = parseFloat(raw);
+                // Campo vazio ou inválido → default 1
+                change('weight', raw === '' || isNaN(n) ? 1 : Math.max(0, n));
+              }}
+            />
           </div>
 
           <div>
@@ -1484,7 +1580,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Prog. Realizado (%)</label>
-            <input style={inp} type="number" min={0} max={100} value={form.actualProgress} onChange={(e) => change('actualProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+            <input style={inp} type="number" min={0} max={100} value={form.physicalProgress} onChange={(e) => change('physicalProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
           </div>
 
           <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1655,7 +1751,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 
   const generateTemplate = () => {
     const templateData = [
-      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Real', 'Caminho Crítico', 'Peso'],
+      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Avanço Físico', 'Caminho Crítico', 'Peso'],
       ['1', 'OBRA - Projeto Exemplo', '0', '2026-01-15', '2027-01-15', '365', '0', '0', 'N', '1'],
       ['1.1', 'ESTRUTURA', '1', '2026-01-15', '2026-07-15', '180', '10', '5', 'Y', '0.4'],
       ['1.1.1', 'Fundação', '2', '2026-01-15', '2026-03-15', '60', '100', '100', 'Y', '0.2'],
@@ -1679,7 +1775,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
       { wch: 12 }, // Término
       { wch: 10 }, // Duração
       { wch: 8 },  // % Plan
-      { wch: 8 },  // % Real
+      { wch: 16 }, // % Avanço Físico
       { wch: 16 }, // Caminho Crítico
       { wch: 8 },  // Peso
     ];
@@ -1798,7 +1894,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
                 <div><strong>% Plan</strong></div>
                 <div>0-100 (opcional)</div>
 
-                <div><strong>% Real</strong></div>
+                <div><strong>% Avanço Físico</strong></div>
                 <div>0-100 (opcional)</div>
 
                 <div><strong>Caminho Crítico</strong></div>
@@ -2112,6 +2208,11 @@ export default function Cronograma() {
   const colRefsMap = useRef<Map<string, HTMLButtonElement | null>>(new Map());
   const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
+  // Compensa no painel esquerdo a altura real da scrollbar horizontal do Gantt,
+  // para manter a última linha alinhada entre EAP e Gantt. Effect declarado
+  // mais abaixo, após totalWidth/visibleTasks (que entram nas deps).
+  const [scrollbarH, setScrollbarH] = useState(0);
+
   // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchRaw.trim().toLowerCase()), 250);
@@ -2152,31 +2253,6 @@ export default function Cronograma() {
     });
     keysToDelete.forEach(key => colRefsMap.current.delete(key));
   }, [visibleColDefs]);
-
-  // Get enterprise progress from root task (level 0 or no parent)
-  const enterpriseProgress = useMemo(() => {
-    // Try to find by ID first
-    let root = tasks.find(t => t.id === '1');
-
-    // If not found by ID, find first level-0 task
-    if (!root) {
-      root = tasks.find(t => t.level === 0 && !t.parentId);
-    }
-
-    // If still not found, use first task
-    if (!root && tasks.length > 0) {
-      root = tasks[0];
-    }
-
-    const progress = root?.actualProgress ?? 0;
-    console.log('[Cronograma] Enterprise Progress:', {
-      method: root?.id === '1' ? 'byId' : root?.level === 0 ? 'byLevel' : 'byFirst',
-      taskId: root?.id,
-      taskName: root?.name,
-      progress,
-    });
-    return progress;
-  }, [tasks]);
 
   // Keep expandedRef in sync so closures can read current value without stale deps
   useEffect(() => { expandedRef.current = expanded; }, [expanded]);
@@ -2300,17 +2376,17 @@ export default function Cronograma() {
     });
 
     // Step 3: Apply advanced filters
-    if (advFilters.onlyLate) result = result.filter(t => t.actualProgress < t.plannedProgress);
+    if (advFilters.onlyLate) result = result.filter(t => t.physicalProgress < t.plannedProgress);
     if (advFilters.onlyCritical) result = result.filter(t => t.isCriticalPath);
-    if (advFilters.onlyDone) result = result.filter(t => t.actualProgress === 100);
+    if (advFilters.onlyDone) result = result.filter(t => t.physicalProgress === 100);
     if (advFilters.responsibles.length > 0) {
       result = result.filter(t => advFilters.responsibles.includes(t.responsible ?? ''));
     }
     if (advFilters.progressMin !== '') {
-      result = result.filter(t => t.actualProgress >= parseFloat(advFilters.progressMin));
+      result = result.filter(t => t.physicalProgress >= parseFloat(advFilters.progressMin));
     }
     if (advFilters.progressMax !== '') {
-      result = result.filter(t => t.actualProgress <= parseFloat(advFilters.progressMax));
+      result = result.filter(t => t.physicalProgress <= parseFloat(advFilters.progressMax));
     }
     if (advFilters.dateStart) {
       result = result.filter(t => t.startDate >= advFilters.dateStart);
@@ -2368,19 +2444,53 @@ export default function Cronograma() {
 
   const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * pxPerDay, [minDate, pxPerDay]);
 
+  // Mede dinamicamente a altura real da scrollbar horizontal do painel Gantt
+  // (offsetHeight - clientHeight) e expõe via scrollbarH para o painel esquerdo
+  // renderizar um footer compensador. Reage a:
+  //  - resize do container do Gantt (ResizeObserver)
+  //  - mudanças em totalWidth (zoom de escala) que alteram scrollWidth
+  //  - mudanças em visibleTasks (expand/collapse, filtros)
+  //  - resize/zoom da janela
+  useEffect(() => {
+    const el = rightRef.current;
+    if (!el) return;
+    const measure = () => {
+      const hasHScroll = el.scrollWidth > el.clientWidth;
+      const h = hasHScroll ? Math.max(0, el.offsetHeight - el.clientHeight) : 0;
+      setScrollbarH(prev => prev === h ? prev : h);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [totalWidth, visibleTasks.length, finalLeftWidth]);
+
   // Inline edit handlers
   function startInlineEdit(task: GanttTask, colKey: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
+    // Raiz: nome é sincronizado com o Cadastro do Empreendimento (read-only).
+    if (task.level === 0 && !task.parentId && colKey === 'name') {
+      addToast({
+        type: 'info',
+        title: 'Campo bloqueado',
+        description: 'O nome da raiz reflete o Cadastro do Empreendimento. Edite em Cadastro → Nome do Projeto.',
+      });
+      return;
+    }
     if (['successors', 'critical'].includes(colKey)) {
       openEdit(task, { stopPropagation: () => {} } as any);
       return;
     }
-    // Tarefas pai: datas e duração são calculadas a partir das filhas (bloqueio de edição manual)
-    if (task.hasChildren && ['startDate', 'endDate', 'duration'].includes(colKey)) {
+    // Tarefas pai: datas, duração e peso são calculados a partir das filhas (bloqueio de edição manual)
+    if (task.hasChildren && ['startDate', 'endDate', 'duration', 'weight'].includes(colKey)) {
+      const isWeight = colKey === 'weight';
       addToast({
         type: 'info',
         title: 'Campo automático',
-        description: 'Datas e duração da tarefa pai são calculadas a partir das filhas.',
+        description: isWeight
+          ? 'O peso da tarefa pai é a soma dos pesos das filhas.'
+          : 'Datas e duração da tarefa pai são calculadas a partir das filhas.',
       });
       return;
     }
@@ -2392,7 +2502,7 @@ export default function Cronograma() {
       case 'duration': value = String(task.durationDays ?? ''); break;
       case 'startDate': value = task.startDate.slice(0, 10); break;
       case 'endDate': value = task.endDate.slice(0, 10); break;
-      case 'progress': value = String(task.actualProgress); break;
+      case 'progress': value = String(task.physicalProgress); break;
       case 'weight': value = String(task.weight ?? '0'); break;
       case 'responsible': value = task.responsible ?? ''; break;
       case 'predecessors': value = formatDepsAsText(task, tasks); break;
@@ -2448,11 +2558,14 @@ export default function Cronograma() {
           break;
         }
         case 'progress': {
-          form.actualProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
+          form.physicalProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
           break;
         }
         case 'weight': {
-          form.weight = Math.max(0, parseFloat(inlineEdit.value) || 0);
+          const raw = inlineEdit.value.trim();
+          const n = parseFloat(raw);
+          // Campo vazio ou inválido → default 1
+          form.weight = raw === '' || isNaN(n) ? 1 : Math.max(0, n);
           break;
         }
         case 'responsible': {
@@ -2480,7 +2593,7 @@ export default function Cronograma() {
         endDate: form.endDate,
         durationDays: form.durationDays,
         plannedProgress: form.plannedProgress,
-        actualProgress: form.actualProgress,
+        physicalProgress: form.physicalProgress,
         weight: form.weight,
         isCriticalPath: form.isCriticalPath,
         responsible: form.responsible || undefined,
@@ -2497,7 +2610,7 @@ export default function Cronograma() {
         startDate: form.startDate,
         endDate: form.endDate,
         durationDays: form.durationDays,
-        actualProgress: form.actualProgress,
+        physicalProgress: form.physicalProgress,
         weight: form.weight,
         responsible: form.responsible || undefined,
       } : t);
@@ -2512,63 +2625,74 @@ export default function Cronograma() {
 
         const parentsChanged = updatedTasks.filter(t => {
           const orig = originalTasks.find(o => o.id === t.id);
-          return orig && t.parentId && orig.actualProgress !== t.actualProgress;
+          return orig && t.parentId && orig.physicalProgress !== t.physicalProgress;
         });
 
         if (parentsChanged.length > 0 && projectId) {
           await Promise.all(parentsChanged.map(t => scheduleApi.update(t.id, {
-            actualProgress: t.actualProgress,
+            physicalProgress: t.physicalProgress,
           })));
         }
 
         parentsChanged.forEach(t => {
           const orig = originalTasks.find(o => o.id === t.id)!;
-          progressCascade.push({ id: t.id, oldVal: orig.actualProgress, newVal: t.actualProgress });
+          progressCascade.push({ id: t.id, oldVal: orig.physicalProgress, newVal: t.physicalProgress });
         });
       }
 
-      // Date cascade: propagate to dependent tasks + roll up parent dates from children
-      type DateCascadeItem = { id: string; oldStart: string; oldEnd: string; oldDuration?: number; newStart: string; newEnd: string; newDuration?: number };
+      // Parent rollup cascade: datas + duração (via propagateAndRollup) + peso (soma das filhas)
+      type DateCascadeItem = {
+        id: string;
+        oldStart?: string; newStart?: string;
+        oldEnd?: string;   newEnd?: string;
+        oldDuration?: number; newDuration?: number;
+        oldWeight?: number; newWeight?: number;
+      };
       const dateCascade: DateCascadeItem[] = [];
 
-      // Sempre roda o rollup de pais (cobre mudança de parentId, criação, exclusão, etc.).
-      // O propagateAndRollup também aplica a cascata por dependências quando aplicável.
-      const runDateCascade = ['duration', 'startDate', 'endDate'].includes(colKey);
-      if (runDateCascade) {
+      // Sempre roda o rollup completo (cobre mudança de parentId, criação, exclusão, peso, etc.)
+      {
         const result = propagateAndRollup(updatedTasks);
-        updatedTasks = result.tasks;
-      } else {
-        // Mesmo sem mudança de data, garante consistência dos pais (ex: troca de parentId via outras vias)
-        const result = recalculateParentDates(updatedTasks);
         updatedTasks = result.tasks;
       }
 
-      const dateChanged = updatedTasks.filter(t => {
+      const rollupChanged = updatedTasks.filter(t => {
         const orig = tasks.find(o => o.id === t.id);
-        return orig && (
+        if (!orig) return false;
+        return (
           orig.startDate.slice(0,10) !== t.startDate.slice(0,10) ||
           orig.endDate.slice(0,10) !== t.endDate.slice(0,10) ||
-          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
         );
       });
-      if (dateChanged.length > 0 && projectId) {
-        await Promise.all(dateChanged.map(t => scheduleApi.update(t.id, {
-          startDate: t.startDate.slice(0,10),
-          endDate: t.endDate.slice(0,10),
-          durationDays: t.durationDays,
-        })));
+      if (rollupChanged.length > 0 && projectId) {
+        await Promise.all(rollupChanged.map(t => {
+          const orig = tasks.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0,10) !== t.startDate.slice(0,10)) patch.startDate = t.startDate.slice(0,10);
+          if (orig.endDate.slice(0,10) !== t.endDate.slice(0,10)) patch.endDate = t.endDate.slice(0,10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
       }
-      dateChanged.forEach(t => {
+      rollupChanged.forEach(t => {
         const orig = tasks.find(o => o.id === t.id)!;
-        dateCascade.push({
-          id: t.id,
-          oldStart: orig.startDate.slice(0,10),
-          oldEnd: orig.endDate.slice(0,10),
-          oldDuration: orig.durationDays ?? 0,
-          newStart: t.startDate.slice(0,10),
-          newEnd: t.endDate.slice(0,10),
-          newDuration: t.durationDays ?? 0,
-        });
+        const item: DateCascadeItem = { id: t.id };
+        if (orig.startDate.slice(0,10) !== t.startDate.slice(0,10)) {
+          item.oldStart = orig.startDate.slice(0,10); item.newStart = t.startDate.slice(0,10);
+        }
+        if (orig.endDate.slice(0,10) !== t.endDate.slice(0,10)) {
+          item.oldEnd = orig.endDate.slice(0,10); item.newEnd = t.endDate.slice(0,10);
+        }
+        if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) {
+          item.oldDuration = orig.durationDays ?? 0; item.newDuration = t.durationDays;
+        }
+        if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) {
+          item.oldWeight = orig.weight ?? 1; item.newWeight = t.weight;
+        }
+        dateCascade.push(item);
       });
 
       setTasks(updatedTasks);
@@ -2582,7 +2706,7 @@ export default function Cronograma() {
         name: oldForm.name, code: oldForm.code, level: oldForm.level,
         parentId: oldForm.parentId || undefined, startDate: oldForm.startDate,
         endDate: oldForm.endDate, durationDays: oldForm.durationDays,
-        plannedProgress: oldForm.plannedProgress, actualProgress: oldForm.actualProgress,
+        plannedProgress: oldForm.plannedProgress, physicalProgress: oldForm.physicalProgress,
         weight: oldForm.weight, isCriticalPath: oldForm.isCriticalPath,
         responsible: oldForm.responsible || undefined,
       };
@@ -2592,22 +2716,28 @@ export default function Cronograma() {
         module: 'cronograma',
         undo: async () => {
           await scheduleApi.update(taskId, undoPayload);
-          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.oldVal })));
-          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, {
-            startDate: c.oldStart,
-            endDate: c.oldEnd,
-            ...(c.oldDuration !== undefined ? { durationDays: c.oldDuration } : {}),
-          })));
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { physicalProgress: c.oldVal })));
+          await Promise.all(dateCascade.map(c => {
+            const u: Record<string, unknown> = {};
+            if (c.oldStart !== undefined) u.startDate = c.oldStart;
+            if (c.oldEnd !== undefined) u.endDate = c.oldEnd;
+            if (c.oldDuration !== undefined) u.durationDays = c.oldDuration;
+            if (c.oldWeight !== undefined) u.weight = c.oldWeight;
+            return scheduleApi.update(c.id, u);
+          }));
           triggerDataOnly();
         },
         redo: async () => {
           await scheduleApi.update(taskId, payload);
-          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { actualProgress: c.newVal })));
-          await Promise.all(dateCascade.map(c => scheduleApi.update(c.id, {
-            startDate: c.newStart,
-            endDate: c.newEnd,
-            ...(c.newDuration !== undefined ? { durationDays: c.newDuration } : {}),
-          })));
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { physicalProgress: c.newVal })));
+          await Promise.all(dateCascade.map(c => {
+            const u: Record<string, unknown> = {};
+            if (c.newStart !== undefined) u.startDate = c.newStart;
+            if (c.newEnd !== undefined) u.endDate = c.newEnd;
+            if (c.newDuration !== undefined) u.durationDays = c.newDuration;
+            if (c.newWeight !== undefined) u.weight = c.newWeight;
+            return scheduleApi.update(c.id, u);
+          }));
           triggerDataOnly();
         },
       });
@@ -2754,6 +2884,10 @@ export default function Cronograma() {
     const idx = tasks.findIndex(t => t.id === taskId);
     if (idx <= 0) return;
     const task = tasks[idx];
+    if (task.level === 0 && !task.parentId) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'A raiz do cronograma não pode ser movida.' });
+      return;
+    }
     const prev = tasks[idx - 1];
     const levelDelta = (prev.level + 1) - task.level;
     const descendants = getAllDescendants(taskId, tasks);
@@ -2799,6 +2933,11 @@ export default function Cronograma() {
     if (!task?.parentId) return;
     const parent = tasks.find(t => t.id === task.parentId);
     if (!parent) return;
+    // Filho direto da raiz não pode ser outdented (criaria irmão da raiz).
+    if (parent.level === 0 && !parent.parentId) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'Nenhuma atividade pode ficar fora da raiz do cronograma.' });
+      return;
+    }
     const levelDelta = -1;
     const descendants = getAllDescendants(taskId, tasks);
     let updated = tasks.map(t => {
@@ -3028,7 +3167,7 @@ export default function Cronograma() {
     if (tasks.length === 0) return;
     const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
     const rows = tasks.map((t) =>
-      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.actualProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
+      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.physicalProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
     );
     const csv = [header, ...rows].join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -3088,10 +3227,30 @@ export default function Cronograma() {
   }
 
   // Modal handlers
-  function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
+  // Raiz da EAP: única, sempre level 0 sem pai. Nome = nome do projeto (read-only).
+  // Não pode ser excluída, movida, indentada/outdentada, e não admite irmãos.
+  const rootTask = useMemo(
+    () => tasks.find(t => t.level === 0 && !t.parentId) ?? null,
+    [tasks],
+  );
+  const isRootTask = (task: GanttTask) => task.level === 0 && !task.parentId;
+
+  function openNew() {
+    setEditingTask(null);
+    // Sem permitir irmãos da raiz: nova atividade vira filha direta da raiz.
+    setParentTask(rootTask);
+    setModalOpen(true);
+  }
   function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
   function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setModalOpen(true); }
-  function openDelete(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setDeleteTarget(task); }
+  function openDelete(task: GanttTask, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (isRootTask(task)) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'A raiz do cronograma representa o Empreendimento e não pode ser excluída.' });
+      return;
+    }
+    setDeleteTarget(task);
+  }
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -3106,23 +3265,29 @@ export default function Cronograma() {
       addToast({ type: 'success', title: 'Excluído', description: `"${deleteTarget.name}" removido.` });
       setDeleteTarget(null);
 
-      // Rollup: ao excluir uma filha, datas do pai podem encolher
+      // Rollup: ao excluir uma filha, datas/peso do pai podem mudar
       const nextLocal = tasks.filter(t => t.id !== deleteTarget.id);
       const { tasks: cascaded } = propagateAndRollup(nextLocal);
       const parentsToSave = cascaded.filter(t => {
         const orig = nextLocal.find(o => o.id === t.id);
-        return orig && (
+        if (!orig) return false;
+        return (
           orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
           orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
-          (orig.durationDays ?? 0) !== (t.durationDays ?? 0)
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
         );
       });
       if (parentsToSave.length > 0 && projectId) {
-        await Promise.all(parentsToSave.map(t => scheduleApi.update(t.id, {
-          startDate: t.startDate.slice(0, 10),
-          endDate: t.endDate.slice(0, 10),
-          durationDays: t.durationDays,
-        })));
+        await Promise.all(parentsToSave.map(t => {
+          const orig = nextLocal.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+          if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
       }
       loadTasksOnly();
 
@@ -3141,7 +3306,7 @@ export default function Cronograma() {
               endDate: snapshot.endDate.slice(0, 10),
               durationDays: snapshot.durationDays,
               plannedProgress: snapshot.plannedProgress,
-              actualProgress: snapshot.actualProgress,
+              physicalProgress: snapshot.physicalProgress,
               weight: snapshot.weight,
               isCriticalPath: snapshot.isCriticalPath,
               responsible: snapshot.responsible,
@@ -3347,30 +3512,26 @@ export default function Cronograma() {
           <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
         </div>
 
-        {/* Physical Progress Metrics */}
-        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--t1)', marginBottom: 4, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 8, alignItems: 'center', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>📊 % Real do Empreendimento:</span>
-            <span style={{ fontSize: 18, fontWeight: 700, color: '#10b981' }}>{enterpriseProgress.toFixed(1)}%</span>
+        {/* % Avanço Físico — consolidado: reflete apenas o último Report gravado.
+            Edições de atividades NÃO atualizam este indicador. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 4, padding: '10px 16px', background: 'var(--bg2)', borderRadius: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', letterSpacing: 0.3, textTransform: 'uppercase' }}>% Avanço Físico</span>
+            <span style={{ fontSize: 24, fontWeight: 600, color: '#10b981', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+              {(metrics?.physicalProgress ?? 0).toFixed(2)}%
+            </span>
           </div>
-          {metrics && (
-            <>
-              {metrics.lastReportDate && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
-                  <span>Último Report: {new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}</span>
-                </div>
+          {metrics && (metrics.lastReportNumber > 0 || metrics.activeBaselineVersion > 0) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 16, borderLeft: '1px solid var(--bd)', fontSize: 11, color: 'var(--t2)' }}>
+              {metrics.lastReportNumber > 0 ? (
+                <>
+                  <span>Report #{metrics.lastReportNumber}{metrics.lastReportDate ? ` · ${new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}` : ''}</span>
+                  {metrics.activeBaselineVersion > 0 && <span>Baseline v{metrics.activeBaselineVersion}</span>}
+                </>
+              ) : (
+                <span style={{ fontStyle: 'italic' }}>Nenhum Report gravado · grave para consolidar</span>
               )}
-              {metrics.lastReportNumber > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
-                  <span>Report #{metrics.lastReportNumber}</span>
-                </div>
-              )}
-              {metrics.activeBaselineVersion > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--t2)' }}>
-                  <span>Baseline v{metrics.activeBaselineVersion}</span>
-                </div>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -3583,8 +3744,8 @@ export default function Cronograma() {
                       >
                         {visibleColDefs.map((col, colIdx) => {
                           const isNameCol = col.key === 'name';
-                          // Tarefas pai: datas/duração são calculadas das filhas (não editáveis)
-                          const isParentLockedCol = task.hasChildren && ['startDate', 'endDate', 'duration'].includes(col.key);
+                          // Tarefas pai: datas/duração/peso são calculados das filhas (não editáveis)
+                          const isParentLockedCol = task.hasChildren && ['startDate', 'endDate', 'duration', 'weight'].includes(col.key);
                           const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key) && !isParentLockedCol;
                           const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.colKey === col.key;
                           const isCellSelected = isSelected && colIdx === selectedColIdx;
@@ -3616,7 +3777,7 @@ export default function Cronograma() {
                             <div
                               key={col.key}
                               onDoubleClick={isEditable ? (e) => startInlineEdit(task, col.key, e) : undefined}
-                              title={isParentLockedCol ? 'Calculado automaticamente a partir das tarefas filhas' : (isEditable ? 'Duplo clique para editar' : '')}
+                              title={isParentLockedCol ? (col.key === 'weight' ? 'Peso = soma dos pesos das tarefas filhas' : 'Calculado automaticamente a partir das tarefas filhas') : (isEditable ? 'Duplo clique para editar' : '')}
                               style={{
                                 width: effectiveWidth(col),
                                 flexShrink: 0,
@@ -3670,19 +3831,21 @@ export default function Cronograma() {
                                     {task.hasChildren ? (
                                       <button
                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                        style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                        style={{ width: 16, height: 16, marginLeft: task.level * 14, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
                                       >▶</button>
                                     ) : (
-                                      <span style={{ width: 16, flexShrink: 0 }} />
+                                      <span style={{ width: 16, marginLeft: task.level * 14, flexShrink: 0 }} />
                                     )}
-                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: task.level * 16 }} title={task.name}>
+                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.name}>
                                       {task.name}
                                     </span>
                                     {isHov && (
                                       <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
                                         <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
                                         <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
-                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: '#B91C1C', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                        {!isRootTask(task) && (
+                                          <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: '#B91C1C', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                        )}
                                       </div>
                                     )}
                                   </>
@@ -3703,8 +3866,8 @@ export default function Cronograma() {
                                   </span>
                                 )}
                                 {col.key === 'progress' && (
-                                  <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
-                                    {task.actualProgress}%
+                                  <span className={badgeClass(task.physicalProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                                    {Number(task.physicalProgress ?? 0).toFixed(2)}%
                                   </span>
                                 )}
                                 {col.key === 'predecessors' && (
@@ -3745,6 +3908,11 @@ export default function Cronograma() {
                     );
                   })}
             </div>
+            {/* Compensa altura da scrollbar horizontal do Gantt, garantindo
+                alinhamento vertical entre a última linha da EAP e do Gantt. */}
+            {scrollbarH > 0 && (
+              <div aria-hidden style={{ height: scrollbarH, flexShrink: 0, background: 'var(--s0)' }} />
+            )}
           </div>
 
           {/* Splitter */}
@@ -3806,8 +3974,8 @@ export default function Cronograma() {
                   const width = barWidth(task);
                   const barH = task.level <= 1 ? 12 : 8;
                   const barTop = Math.round((ROW_H - barH) / 2);
-                  const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
-                  const color = barColor(task.actualProgress, task.plannedProgress);
+                  const actualW = Math.max(2, Math.round((task.physicalProgress / 100) * width));
+                  const color = barColor(task.physicalProgress, task.plannedProgress);
                   const top = rowIdx * ROW_H;
                   const bg = hoveredRow === task.id ? 'var(--s1)' : rowBg(task.level);
 
@@ -3821,14 +3989,14 @@ export default function Cronograma() {
                       {/* Actual bar */}
                       <div style={{ position: 'absolute', left, width: actualW, height: barH, top: barTop, background: color, borderRadius: 3, opacity: task.level <= 1 ? 1 : 0.85 }} />
                       {task.level <= 2 && actualW > 20 && (
-                        <span style={{ position: 'absolute', left: left + actualW + 3, top: barTop - 1, fontSize: 9, color, whiteSpace: 'nowrap' }}>
-                          {task.actualProgress}%
+                        <span style={{ position: 'absolute', left: left + actualW + 3, top: barTop - 1, fontSize: 9, color, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                          {Number(task.physicalProgress ?? 0).toFixed(2)}%
                         </span>
                       )}
                       {/* Tooltip on bar hover */}
                       <div
                         style={{ position: 'absolute', left, width, height: ROW_H, top: 0, cursor: 'pointer', zIndex: 2 }}
-                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${task.plannedProgress}% | Realizado: ${task.actualProgress}%`}
+                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${Number(task.plannedProgress ?? 0).toFixed(2)}% | % Avanço Físico: ${Number(task.physicalProgress ?? 0).toFixed(2)}%`}
                       />
                     </div>
                   );
@@ -4127,7 +4295,7 @@ export default function Cronograma() {
                         <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 500 }}>Report #{String(r.reportNumber).padStart(3, '0')}</td>
                         <td style={{ padding: 8, color: 'var(--t2)' }}>{new Date(r.createdAt).toLocaleString('pt-BR')}</td>
                         <td style={{ padding: 8, color: 'var(--t2)' }}>{r.user.fullName || r.user.email}</td>
-                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600 }}>{r.physicalProgress.toFixed(1)}%</td>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{r.physicalProgress.toFixed(2)}%</td>
                         <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
                         <td style={{ padding: 8, textAlign: 'center' }}>
                           <button
@@ -4184,7 +4352,7 @@ export default function Cronograma() {
                               </span>
                               <br />
                               Progresso: <span style={{ fontWeight: 500, color: 'var(--t1)' }}>
-                                Planejado {change.baseline.progress.toFixed(1)}% → Real {change.report.progress.toFixed(1)}%
+                                Planejado {change.baseline.progress.toFixed(2)}% → % Avanço Físico {change.report.progress.toFixed(2)}%
                               </span>
                             </div>
                           </div>

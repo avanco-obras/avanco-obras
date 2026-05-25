@@ -427,7 +427,7 @@ export default function Cadastro() {
           level: item.level,
           durationDays: item.durationDays,
           plannedProgress: 0,
-          actualProgress: 0,
+          physicalProgress: 0,
           weight: item.weight,
           isCriticalPath: item.isCriticalPath,
           startDate: startDate.toISOString(),

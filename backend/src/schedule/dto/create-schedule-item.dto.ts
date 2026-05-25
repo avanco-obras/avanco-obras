@@ -50,10 +50,10 @@ export class CreateScheduleItemDto {
   @IsNumber()
   plannedProgress?: number;
 
-  @ApiPropertyOptional({ description: 'Actual progress percentage (0-100)' })
+  @ApiPropertyOptional({ description: 'Physical progress percentage (0-100)' })
   @IsOptional()
   @IsNumber()
-  actualProgress?: number;
+  physicalProgress?: number;
 
   @ApiPropertyOptional({ description: 'Relative weight for progress calculation' })
   @IsOptional()

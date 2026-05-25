@@ -304,7 +304,7 @@ export default function Dashboard() {
         setEtapas(
           top.map((i) => ({
             name: i.name,
-            actual: Number(i.actualProgress),
+            actual: Number(i.physicalProgress),
             planned: Number(i.plannedProgress),
           }))
         );

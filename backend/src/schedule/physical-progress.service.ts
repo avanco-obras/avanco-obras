@@ -15,7 +15,7 @@ export class PhysicalProgressService {
     if (totalWeight === 0) return 0;
 
     const weightedSum = children.reduce((sum, child) => {
-      const progress = Number(child.actualProgress || 0);
+      const progress = Number(child.physicalProgress || 0);
       const weight = Number(child.weight || 1);
       return sum + progress * weight;
     }, 0);
@@ -53,7 +53,7 @@ export class PhysicalProgressService {
     if (totalWeight === 0) return 0;
 
     const weightedSum = tasks.reduce((sum, task) => {
-      const progress = Number(task.actualProgress || 0);
+      const progress = Number(task.physicalProgress || 0);
       const weight = Number(task.weight || 1);
       return sum + progress * weight;
     }, 0);
@@ -103,10 +103,10 @@ export class PhysicalProgressService {
     const newProgress = this.calculateParentProgress(parent, children);
 
     // Update only if changed
-    if (Number(parent.actualProgress) !== newProgress) {
+    if (Number(parent.physicalProgress) !== newProgress) {
       await this.prisma.scheduleItem.update({
         where: { id: parentId },
-        data: { actualProgress: newProgress },
+        data: { physicalProgress: newProgress },
       });
     }
 
@@ -160,10 +160,10 @@ export class PhysicalProgressService {
 
     // Update root task (ID "1") with the calculated progress
     const rootTask = updatedItems.find(t => t.id === '1' || (t.code === '1' && !t.parentId));
-    if (rootTask && Number(rootTask.actualProgress) !== physicalProgress) {
+    if (rootTask && Number(rootTask.physicalProgress) !== physicalProgress) {
       await this.prisma.scheduleItem.update({
         where: { id: rootTask.id },
-        data: { actualProgress: physicalProgress },
+        data: { physicalProgress: physicalProgress },
       });
     }
 
@@ -297,7 +297,7 @@ export class PhysicalProgressService {
       const baselineEnd = new Date(baselineItem.endDate).getTime();
       const now = new Date().getTime();
 
-      const reportProgress = Number(reportItem.actualProgress || 0);
+      const reportProgress = Number(reportItem.physicalProgress || 0);
       const baselineProgress = Number(baselineItem.plannedProgress || 0);
 
       // Determine status
@@ -362,9 +362,9 @@ export class PhysicalProgressService {
       where: { projectId },
     });
 
-    const physicalProgress = this.calculateProjectProgress(tasks);
-
-    // Get latest report
+    // Source of truth: último Report consolidado (não recalcula em tempo real).
+    // Edições nas atividades NÃO devem alterar o indicador superior — só um novo
+    // Report o atualiza.
     const latestReport = await this.prisma.projectReport.findFirst({
       where: { projectId },
       orderBy: { reportNumber: 'desc' },
@@ -375,6 +375,10 @@ export class PhysicalProgressService {
         baseline: { select: { version: true } },
       },
     });
+
+    const physicalProgress = latestReport
+      ? Number(latestReport.physicalProgress)
+      : 0;
 
     // Get active baseline
     const activeBaseline = await this.prisma.projectBaseline.findFirst({
@@ -389,7 +393,7 @@ export class PhysicalProgressService {
       lastReportNumber: latestReport?.reportNumber || 0,
       activeBaselineVersion: activeBaseline?.version || 0,
       totalTasks: tasks.length,
-      completedTasks: tasks.filter((t) => Number(t.actualProgress || 0) === 100)
+      completedTasks: tasks.filter((t) => Number(t.physicalProgress || 0) === 100)
         .length,
     };
   }

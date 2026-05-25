@@ -18,7 +18,7 @@ export interface DelayedItem {
   code: string;
   name: string;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   gap: number;
   endDate: string;
   daysOverdue: number | null;
@@ -52,7 +52,7 @@ export class DashboardService {
       where: { projectId },
       select: {
         plannedProgress: true,
-        actualProgress: true,
+        physicalProgress: true,
         weight: true,
         endDate: true,
         _count: { select: { children: true } },
@@ -68,7 +68,7 @@ export class DashboardService {
 
     if (totalWeight > 0) {
       overallProgress = leafItems.reduce(
-        (sum, i) => sum + (Number(i.actualProgress) * Number(i.weight)) / totalWeight,
+        (sum, i) => sum + (Number(i.physicalProgress) * Number(i.weight)) / totalWeight,
         0,
       );
       plannedProgress = leafItems.reduce(
@@ -83,11 +83,11 @@ export class DashboardService {
 
     const totalActivities = items.length;
     const completedActivities = items.filter(
-      (i) => Number(i.actualProgress) === 100,
+      (i) => Number(i.physicalProgress) === 100,
     ).length;
     const delayedActivities = items.filter(
       (i) =>
-        Number(i.actualProgress) < Number(i.plannedProgress) &&
+        Number(i.physicalProgress) < Number(i.plannedProgress) &&
         i.endDate < now,
     ).length;
 
@@ -134,7 +134,7 @@ export class DashboardService {
         code: true,
         name: true,
         plannedProgress: true,
-        actualProgress: true,
+        physicalProgress: true,
         endDate: true,
       },
     });
@@ -144,7 +144,7 @@ export class DashboardService {
     const delayed = items
       .map((i) => {
         const planned = Number(i.plannedProgress);
-        const actual = Number(i.actualProgress);
+        const actual = Number(i.physicalProgress);
         const gap = planned - actual;
         const isPast = i.endDate < now;
         const daysOverdue = isPast
@@ -155,7 +155,7 @@ export class DashboardService {
           code: i.code,
           name: i.name,
           plannedProgress: planned,
-          actualProgress: actual,
+          physicalProgress: actual,
           gap,
           endDate: i.endDate.toISOString(),
           daysOverdue,
@@ -192,7 +192,7 @@ export class DashboardService {
         startDate: true,
         endDate: true,
         plannedProgress: true,
-        actualProgress: true,
+        physicalProgress: true,
         weight: true,
         _count: { select: { children: true } },
       },
@@ -251,7 +251,7 @@ export class DashboardService {
         if (totalDuration <= 0) {
           if (itemStart >= monthStart && itemStart <= monthEnd) {
             plannedDelta += itemWeightFraction * Number(item.plannedProgress);
-            actualDelta += itemWeightFraction * Number(item.actualProgress);
+            actualDelta += itemWeightFraction * Number(item.physicalProgress);
           }
           continue;
         }
@@ -260,7 +260,7 @@ export class DashboardService {
         const fraction = overlapDuration / totalDuration;
 
         plannedDelta += itemWeightFraction * Number(item.plannedProgress) * fraction;
-        actualDelta += itemWeightFraction * Number(item.actualProgress) * fraction;
+        actualDelta += itemWeightFraction * Number(item.physicalProgress) * fraction;
       }
 
       cumulativePlanned = Math.min(100, cumulativePlanned + plannedDelta);
