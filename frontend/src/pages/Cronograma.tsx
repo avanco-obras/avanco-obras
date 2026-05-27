@@ -1751,40 +1751,40 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 
   const generateTemplate = () => {
     const templateData = [
-      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Avanço Físico', 'Caminho Crítico', 'Peso'],
-      ['1', 'OBRA - Projeto Exemplo', '0', '2026-01-15', '2027-01-15', '365', '0', '0', 'N', '1'],
-      ['1.1', 'ESTRUTURA', '1', '2026-01-15', '2026-07-15', '180', '10', '5', 'Y', '0.4'],
-      ['1.1.1', 'Fundação', '2', '2026-01-15', '2026-03-15', '60', '100', '100', 'Y', '0.2'],
-      ['1.1.1.1', 'Estacas', '3', '2026-01-15', '2026-02-28', '45', '100', '100', 'Y', '0.1'],
-      ['1.1.1.2', 'Blocos', '3', '2026-03-01', '2026-03-15', '15', '100', '90', 'Y', '0.1'],
-      ['1.1.2', 'Pilares e Lajes', '2', '2026-03-16', '2026-07-15', '120', '5', '0', 'Y', '0.2'],
-      ['1.2', 'ALVENARIA', '1', '2026-05-15', '2026-09-15', '120', '0', '0', 'N', '0.3'],
-      ['1.2.1', 'Vedação interna', '2', '2026-05-15', '2026-08-15', '90', '0', '0', 'N', '0.15'],
-      ['1.2.2', 'Vedação externa', '2', '2026-07-15', '2026-09-15', '60', '0', '0', 'N', '0.15'],
-      ['1.3', 'ACABAMENTO', '1', '2026-09-16', '2027-01-15', '120', '0', '0', 'N', '0.3'],
-      ['1.3.1', 'Revestimento', '2', '2026-09-16', '2026-12-15', '90', '0', '0', 'N', '0.15'],
-      ['1.3.2', 'Pintura', '2', '2026-12-01', '2027-01-15', '45', '0', '0', 'N', '0.15'],
+      ['ID', 'Código WBS', 'Atividade', 'Duração', 'Início', 'Término', '% Avanço Físico', 'Peso', 'Responsável', 'Predecessora'],
+      [ '1', '1',       'OBRA - Projeto Exemplo', '365', '2026-01-15', '2027-01-15', '0',   '1',    '',                  ''],
+      [ '2', '1.1',     'ESTRUTURA',              '180', '2026-01-15', '2026-07-15', '5',   '0.4',  'Eng. João Silva',   ''],
+      [ '3', '1.1.1',   'Fundação',                '60', '2026-01-15', '2026-03-15', '100', '0.2',  'Eng. João Silva',   ''],
+      [ '4', '1.1.1.1', 'Estacas',                 '45', '2026-01-15', '2026-02-28', '100', '0.1',  'Empreiteira Alpha', ''],
+      [ '5', '1.1.1.2', 'Blocos',                  '15', '2026-03-01', '2026-03-15', '90',  '0.1',  'Empreiteira Alpha', '4'],
+      [ '6', '1.1.2',   'Pilares e Lajes',        '120', '2026-03-16', '2026-07-15', '0',   '0.2',  'Eng. João Silva',   '3'],
+      [ '7', '1.2',     'ALVENARIA',              '120', '2026-05-15', '2026-09-15', '0',   '0.3',  'Eng. Maria Souza',  ''],
+      [ '8', '1.2.1',   'Vedação interna',         '90', '2026-05-15', '2026-08-15', '0',   '0.15', 'Empreiteira Beta',  '6II+30'],
+      [ '9', '1.2.2',   'Vedação externa',         '60', '2026-07-15', '2026-09-15', '0',   '0.15', 'Empreiteira Beta',  '8II+60'],
+      ['10', '1.3',     'ACABAMENTO',             '120', '2026-09-16', '2027-01-15', '0',   '0.3',  'Eng. Maria Souza',  '7'],
+      ['11', '1.3.1',   'Revestimento',            '90', '2026-09-16', '2026-12-15', '0',   '0.15', 'Empreiteira Gamma', '9'],
+      ['12', '1.3.2',   'Pintura',                 '45', '2026-12-01', '2027-01-15', '0',   '0.15', 'Empreiteira Gamma', '11II+15;10TT'],
     ];
 
     const ws = xlsx.utils.aoa_to_sheet(templateData);
     ws['!cols'] = [
-      { wch: 12 }, // Código
-      { wch: 25 }, // Nome
-      { wch: 8 },  // Nível
+      { wch: 6 },  // ID
+      { wch: 12 }, // Código WBS
+      { wch: 28 }, // Atividade
+      { wch: 10 }, // Duração
       { wch: 12 }, // Início
       { wch: 12 }, // Término
-      { wch: 10 }, // Duração
-      { wch: 8 },  // % Plan
       { wch: 16 }, // % Avanço Físico
-      { wch: 16 }, // Caminho Crítico
       { wch: 8 },  // Peso
+      { wch: 22 }, // Responsável
+      { wch: 18 }, // Predecessora
     ];
 
     const wb = xlsx.utils.book_new();
     xlsx.utils.book_append_sheet(wb, ws, 'Cronograma');
     xlsx.writeFile(wb, 'template-cronograma.xlsx');
 
-    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo e adapte aos seus dados.' });
+    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo, adapte aos seus dados e reimporte.' });
   };
 
   const handleFileInput = (f: File | null) => {
@@ -1818,10 +1818,13 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
     setImporting(true);
     try {
       const result = await scheduleApi.import(projectId, file);
+      const parts: string[] = [`${result.imported} atividades importadas`];
+      if (result.dependencies > 0) parts.push(`${result.dependencies} vínculos criados`);
+      if (result.skipped > 0) parts.push(`${result.skipped} linhas puladas`);
       addToast({
         type: result.imported > 0 ? 'success' : 'warning',
         title: `Importação completa`,
-        description: `${result.imported} atividades importadas.${result.skipped > 0 ? ` ${result.skipped} linhas puladas.` : ''}`,
+        description: parts.join(' · ') + '.',
       });
       if (result.errors.length > 0) {
         console.log('Erros na importação:', result.errors);
@@ -1866,42 +1869,42 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               </button>
             </div>
             <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
-              Selecione um arquivo CSV ou XLSX com o formato correto. Clique em "Baixar template" para um exemplo de estrutura. O cronograma existente será substituído.
+              Selecione um arquivo CSV ou XLSX com o formato da EAP. A hierarquia é gerada a partir do <strong>Código WBS</strong> e os vínculos de predecessora são resolvidos pelo <strong>ID</strong> de cada linha. Todas as linhas do arquivo serão importadas. O cronograma existente será substituído.
             </p>
 
             {/* Colunas esperadas */}
             <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
-              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas:</div>
+              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas (na ordem do template):</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
-                <div><strong>Código</strong></div>
-                <div>WBS: 1, 1.1, 1.1.1 (obrigatório)</div>
+                <div><strong>ID</strong></div>
+                <div>Número inteiro único da linha. Usado nas predecessoras. (obrigatório quando houver predecessora)</div>
 
-                <div><strong>Nome</strong></div>
+                <div><strong>Código WBS</strong></div>
+                <div>Ex.: 1, 1.1, 1.1.1 — define a hierarquia da EAP (obrigatório)</div>
+
+                <div><strong>Atividade</strong></div>
                 <div>Descrição da atividade (obrigatório)</div>
 
-                <div><strong>Nível</strong></div>
-                <div>0-9 (opcional, derivado do código)</div>
+                <div><strong>Duração</strong></div>
+                <div>Dias (opcional, calculado a partir de Início/Término)</div>
 
                 <div><strong>Início</strong></div>
-                <div>YYYY-MM-DD (obrigatório)</div>
+                <div>YYYY-MM-DD ou DD/MM/YYYY (obrigatório)</div>
 
                 <div><strong>Término</strong></div>
-                <div>YYYY-MM-DD (obrigatório)</div>
-
-                <div><strong>Duração</strong></div>
-                <div>Dias (opcional, calculado se omitido)</div>
-
-                <div><strong>% Plan</strong></div>
-                <div>0-100 (opcional)</div>
+                <div>YYYY-MM-DD ou DD/MM/YYYY (obrigatório)</div>
 
                 <div><strong>% Avanço Físico</strong></div>
-                <div>0-100 (opcional)</div>
-
-                <div><strong>Caminho Crítico</strong></div>
-                <div>Y/N (opcional)</div>
+                <div>0–100 (opcional)</div>
 
                 <div><strong>Peso</strong></div>
-                <div>Número (opcional, padrão 1)</div>
+                <div>Número relativo (opcional, padrão 1)</div>
+
+                <div><strong>Responsável</strong></div>
+                <div>Pessoa/equipe (opcional)</div>
+
+                <div><strong>Predecessora</strong></div>
+                <div>IDs separados por <code>;</code>. Aceita tipo e lag: <code>5</code>, <code>5TI</code>, <code>5TI+2</code>, <code>5II</code>, <code>5TT</code>, <code>5IT</code> (opcional). Tipos: <strong>TI</strong> término-início (padrão), <strong>II</strong> início-início, <strong>TT</strong> término-término, <strong>IT</strong> início-término.</div>
               </div>
             </div>
 

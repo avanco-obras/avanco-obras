@@ -129,7 +129,7 @@ export const scheduleApi = {
   import: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post<{ imported: number; skipped: number; errors: string[] }>(
+    return api.post<{ imported: number; skipped: number; dependencies: number; errors: string[] }>(
       `/projects/${projectId}/schedule/import`,
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } },

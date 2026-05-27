@@ -428,48 +428,214 @@ export class ScheduleService {
   }
 
   private normalizeColumnName(name: string): string {
-    return name.toLowerCase().trim();
+    return name.replace(/^﻿/, '').toLowerCase().trim();
   }
 
   private mapColumnName(normalized: string): string | null {
     const columnMap: Record<string, string> = {
+      // ID (linha do cronograma — usado para vínculos de predecessora)
+      'id': 'rowId',
+      'nº': 'rowId',
+      'no': 'rowId',
+      'n°': 'rowId',
+      '#': 'rowId',
+      'task id': 'rowId',
+      'unique id': 'rowId',
+      // Código WBS
+      'código wbs': 'code',
+      'codigo wbs': 'code',
       'código': 'code',
+      'codigo': 'code',
       'wbs': 'code',
+      'eap': 'code',
       'code': 'code',
+      // Atividade / Nome
+      'atividade': 'name',
       'nome': 'name',
       'name': 'name',
       'tarefa': 'name',
       'task name': 'name',
+      'activity': 'name',
+      // Nível
       'nível': 'level',
+      'nivel': 'level',
       'level': 'level',
       'outline level': 'level',
+      // Duração
+      'duração': 'durationDays',
+      'duracao': 'durationDays',
+      'duration': 'durationDays',
+      'dur.': 'durationDays',
+      'dias': 'durationDays',
+      'days': 'durationDays',
+      // Início
       'início': 'startDate',
+      'inicio': 'startDate',
       'start': 'startDate',
       'data início': 'startDate',
+      'data inicio': 'startDate',
+      'start date': 'startDate',
+      // Término
       'término': 'endDate',
+      'termino': 'endDate',
       'fim': 'endDate',
       'finish': 'endDate',
       'end': 'endDate',
       'data término': 'endDate',
-      'duração': 'durationDays',
-      'duration': 'durationDays',
-      'dur.': 'durationDays',
-      '% plan': 'plannedProgress',
-      'prog. plan': 'plannedProgress',
-      'planned progress': 'plannedProgress',
+      'data termino': 'endDate',
+      'finish date': 'endDate',
+      // % Avanço Físico
       '% avanço físico': 'physicalProgress',
+      '% avanco fisico': 'physicalProgress',
       'avanço físico': 'physicalProgress',
+      'avanco fisico': 'physicalProgress',
       'physical progress': 'physicalProgress',
       '% real': 'physicalProgress',
       'prog. real': 'physicalProgress',
       'actual progress': 'physicalProgress',
       '% concluído': 'physicalProgress',
+      '% concluido': 'physicalProgress',
+      'progress': 'physicalProgress',
+      // % Planejado (opcional)
+      '% plan': 'plannedProgress',
+      '% planejado': 'plannedProgress',
+      'prog. plan': 'plannedProgress',
+      'planned progress': 'plannedProgress',
+      // Caminho Crítico (opcional, legado)
       'caminho crítico': 'isCriticalPath',
+      'caminho critico': 'isCriticalPath',
       'critical': 'isCriticalPath',
+      'critical path': 'isCriticalPath',
+      // Peso
       'peso': 'weight',
       'weight': 'weight',
+      // Responsável
+      'responsável': 'responsible',
+      'responsavel': 'responsible',
+      'responsible': 'responsible',
+      'resource': 'responsible',
+      'resource names': 'responsible',
+      // Predecessora
+      'predecessora': 'predecessors',
+      'predecessoras': 'predecessors',
+      'predecessor': 'predecessors',
+      'predecessors': 'predecessors',
+      'predecessores': 'predecessors',
+      'pred.': 'predecessors',
     };
     return columnMap[normalized] || null;
+  }
+
+  /**
+   * Parse a predecessors cell into structured dependency refs.
+   * Mirrors the cronograma UI parser (parsePredecessorText in Cronograma.tsx):
+   *  - Separator: `;` (apenas, igual à UI)
+   *  - Tipos PT-BR aceitos: TI (término-início, padrão), II (início-início),
+   *    TT (término-término), IT (início-término)
+   *  - Tipos EN também aceitos como sinônimos (FS/SS/FF/SF)
+   *  - Lag opcional: +N ou -N dias
+   *  - Default type quando omitido: TI (≡ FS no DB)
+   *
+   * O `ref` é opaco — pode ser ID de linha (inteiro) ou Código WBS como
+   * fallback. A resolução para `scheduleItem.id` acontece após a criação.
+   */
+  private parsePredecessorsCell(raw: unknown): {
+    deps: Array<{ ref: string; type: string; lagDays: number }>;
+    invalidTokens: string[];
+  } {
+    if (raw === null || raw === undefined) return { deps: [], invalidTokens: [] };
+    const text = String(raw).trim();
+    if (!text) return { deps: [], invalidTokens: [] };
+
+    // PT-BR (UI) → DB type
+    const PT_TO_DB: Record<string, string> = {
+      TI: 'FS', // término-início (padrão)
+      II: 'SS', // início-início
+      TT: 'FF', // término-término
+      IT: 'SF', // início-término
+    };
+    const DB_TYPES = new Set(['FS', 'SS', 'FF', 'SF']);
+
+    const deps: Array<{ ref: string; type: string; lagDays: number }> = [];
+    const invalidTokens: string[] = [];
+    for (const part of text.split(';').map((s) => s.trim()).filter(Boolean)) {
+      const m = part.match(
+        /^([0-9][0-9\.]*)(TI|II|TT|IT|FS|SS|FF|SF)?([+-]\d+)?$/i,
+      );
+      if (!m) {
+        invalidTokens.push(part);
+        continue;
+      }
+      const ref = m[1].replace(/\.+$/, '');
+      const typeRaw = (m[2] ?? 'TI').toUpperCase();
+      const type = PT_TO_DB[typeRaw] ?? typeRaw;
+      if (!DB_TYPES.has(type)) {
+        invalidTokens.push(part);
+        continue;
+      }
+      const lagDays = m[3] ? Math.trunc(Number(m[3])) : 0;
+      if (ref) deps.push({ ref, type, lagDays });
+    }
+    return { deps, invalidTokens };
+  }
+
+  /**
+   * Parse a date from a spreadsheet cell. Accepts:
+   *  - Date instance (XLSX cellDates)
+   *  - Excel serial number (days since 1900-01-01)
+   *  - "YYYY-MM-DD"
+   *  - "DD/MM/YYYY" (Brazilian) — assumed when first part > 12 OR when ambiguous
+   *  - "MM/DD/YYYY"
+   * Throws when the value is empty or unparseable.
+   */
+  private parseCellDate(raw: unknown): Date {
+    if (raw === undefined || raw === null || raw === '') {
+      throw new Error('Data vazia');
+    }
+    if (raw instanceof Date) {
+      if (isNaN(raw.getTime())) throw new Error('Data inválida');
+      return raw;
+    }
+    if (typeof raw === 'number') {
+      // Excel serial: days since 1899-12-30 (Lotus 1-2-3 bug compatibility)
+      const ms = (raw - 25569) * 86400 * 1000;
+      const d = new Date(ms);
+      if (isNaN(d.getTime())) throw new Error('Data inválida');
+      return d;
+    }
+    const s = String(raw).trim();
+    // ISO: YYYY-MM-DD (optionally with time)
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/);
+    if (m) {
+      const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+      if (isNaN(d.getTime())) throw new Error('Data inválida');
+      return d;
+    }
+    // DD/MM/YYYY or MM/DD/YYYY (also accept '-' or '.' separators)
+    m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+    if (m) {
+      let a = +m[1];
+      let b = +m[2];
+      let y = +m[3];
+      if (y < 100) y += 2000;
+      // Heuristic: if first part > 12, must be DD/MM. Otherwise default to DD/MM (pt-BR).
+      let day: number;
+      let month: number;
+      if (a > 12) {
+        day = a; month = b;
+      } else if (b > 12) {
+        day = b; month = a; // MM/DD/YYYY
+      } else {
+        day = a; month = b; // default pt-BR
+      }
+      const d = new Date(Date.UTC(y, month - 1, day));
+      if (isNaN(d.getTime())) throw new Error('Data inválida');
+      return d;
+    }
+    // Last resort: native parser
+    const d = new Date(s);
+    if (isNaN(d.getTime())) throw new Error('Data inválida');
+    return d;
   }
 
   private deriveLevelFromCode(code: string): number {
@@ -487,7 +653,7 @@ export class ScheduleService {
     projectId: string,
     buffer: Buffer,
     mimetype: string,
-  ): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  ): Promise<{ imported: number; skipped: number; dependencies: number; errors: string[] }> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       select: { id: true },
@@ -496,10 +662,19 @@ export class ScheduleService {
       throw new NotFoundException(`Projeto com ID "${projectId}" não encontrado`);
     }
 
-    // Parse file
+    // Parse file. For CSV, xlsx defaults to CP1252 which mangles UTF-8 headers
+    // ("Código" → "CÃ³digo") and auto-coerces strings like "1.2.2" into dates.
+    // Detect CSV by mimetype / magic bytes (XLSX is a zip starting with PK) and
+    // force UTF-8 + raw mode (we parse dates ourselves from string cells).
     let workbook: xlsx.WorkBook;
+    const looksCsv =
+      (mimetype && mimetype.includes('csv')) ||
+      !(buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b);
     try {
-      workbook = xlsx.read(buffer, { type: 'buffer', cellDates: true });
+      const readOpts: xlsx.ParsingOptions = looksCsv
+        ? { type: 'buffer', raw: true, codepage: 65001 }
+        : { type: 'buffer', cellDates: true };
+      workbook = xlsx.read(buffer, readOpts);
     } catch (err) {
       throw new BadRequestException('Arquivo inválido ou corrompido');
     }
@@ -539,6 +714,7 @@ export class ScheduleService {
 
     const errors: string[] = [];
     const importedItems: Array<{
+      rowId: string | null;
       code: string;
       name: string;
       level: number;
@@ -550,6 +726,8 @@ export class ScheduleService {
       physicalProgress: number;
       isCriticalPath: boolean;
       weight: number;
+      responsible: string | null;
+      predecessors: Array<{ ref: string; type: string; lagDays: number }>;
     }> = [];
 
     for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
@@ -574,29 +752,8 @@ export class ScheduleService {
       let endDate: Date;
 
       try {
-        if (startDateRaw instanceof Date) {
-          startDate = startDateRaw;
-        } else if (typeof startDateRaw === 'string' || typeof startDateRaw === 'number') {
-          startDate = new Date(startDateRaw);
-        } else {
-          throw new Error('Data inválida');
-        }
-
-        if (isNaN(startDate.getTime())) {
-          throw new Error('Data inválida');
-        }
-
-        if (endDateRaw instanceof Date) {
-          endDate = endDateRaw;
-        } else if (typeof endDateRaw === 'string' || typeof endDateRaw === 'number') {
-          endDate = new Date(endDateRaw);
-        } else {
-          throw new Error('Data inválida');
-        }
-
-        if (isNaN(endDate.getTime())) {
-          throw new Error('Data inválida');
-        }
+        startDate = this.parseCellDate(startDateRaw);
+        endDate = this.parseCellDate(endDateRaw);
       } catch (err) {
         errors.push(`Linha ${rowIdx + 2}: data inválida`);
         continue;
@@ -629,11 +786,38 @@ export class ScheduleService {
         Math.min(100, Number(mappedRow['physicalProgress'] || 0)),
       );
       const weight = Math.max(0.01, Number(mappedRow['weight'] || 1));
-      const isCriticalPath = Boolean(mappedRow['isCriticalPath']);
+
+      // Caminho Crítico: accept Y/N, S/N, Sim/Não, true/false, 1/0
+      const criticalRaw = mappedRow['isCriticalPath'];
+      let isCriticalPath = false;
+      if (criticalRaw !== undefined && criticalRaw !== null && criticalRaw !== '') {
+        const v = String(criticalRaw).trim().toLowerCase();
+        isCriticalPath = ['y', 's', 'sim', 'yes', 'true', '1'].includes(v);
+      }
+
+      const responsibleRaw = mappedRow['responsible'];
+      const responsible =
+        responsibleRaw === undefined || responsibleRaw === null
+          ? null
+          : String(responsibleRaw).trim() || null;
+
+      const { deps: predecessors, invalidTokens } = this.parsePredecessorsCell(
+        mappedRow['predecessors'],
+      );
+      for (const tok of invalidTokens) {
+        errors.push(`Linha ${rowIdx + 2}: predecessora com sintaxe inválida "${tok}"`);
+      }
+
+      const rowIdRaw = mappedRow['rowId'];
+      const rowId =
+        rowIdRaw === undefined || rowIdRaw === null || rowIdRaw === ''
+          ? null
+          : String(rowIdRaw).trim() || null;
 
       const parentCode = this.deriveParentCode(code);
 
       importedItems.push({
+        rowId,
         code,
         name,
         level: Math.max(0, level),
@@ -645,17 +829,20 @@ export class ScheduleService {
         physicalProgress,
         isCriticalPath,
         weight,
+        responsible,
+        predecessors,
       });
     }
 
-    // Delete existing schedule items in transaction
+    // Delete existing schedule items in transaction (cascades dependencies)
     await this.prisma.scheduleItem.deleteMany({ where: { projectId } });
 
     // Sort by level to ensure parents are created before children
     importedItems.sort((a, b) => a.level - b.level);
 
-    // Create items in order, maintaining code → id mapping
+    // Create items in order, maintaining code → id and rowId → id mappings
     const codeToIdMap = new Map<string, string>();
+    const rowIdToIdMap = new Map<string, string>();
     let createdCount = 0;
 
     for (const item of importedItems) {
@@ -681,19 +868,61 @@ export class ScheduleService {
             isCriticalPath: item.isCriticalPath,
             weight: new Prisma.Decimal(item.weight),
             order: createdCount,
+            responsible: item.responsible,
           },
         });
 
         codeToIdMap.set(item.code, created.id);
+        if (item.rowId) rowIdToIdMap.set(item.rowId, created.id);
         createdCount++;
       } catch (err) {
         errors.push(`Linha com código "${item.code}": falha ao criar (${String(err).slice(0, 50)})`);
       }
     }
 
+    // Second pass: create dependencies. Refs are resolved ID-first
+    // (rowId → scheduleItem.id), then WBS code as fallback.
+    let depsCreated = 0;
+    for (const item of importedItems) {
+      if (!item.predecessors.length) continue;
+      const successorId = codeToIdMap.get(item.code);
+      if (!successorId) continue;
+
+      for (const pred of item.predecessors) {
+        const predecessorId =
+          rowIdToIdMap.get(pred.ref) || codeToIdMap.get(pred.ref);
+        if (!predecessorId) {
+          errors.push(
+            `"${item.code}": predecessora "${pred.ref}" não encontrada (verifique ID ou Código WBS)`,
+          );
+          continue;
+        }
+        if (predecessorId === successorId) {
+          errors.push(`"${item.code}": predecessora aponta para si mesma — ignorada`);
+          continue;
+        }
+        try {
+          await this.prisma.scheduleDependency.create({
+            data: {
+              predecessorId,
+              successorId,
+              lagDays: pred.lagDays,
+              type: pred.type,
+            },
+          });
+          depsCreated++;
+        } catch (err) {
+          errors.push(
+            `"${item.code}" ← "${pred.ref}": falha ao criar vínculo (${String(err).slice(0, 50)})`,
+          );
+        }
+      }
+    }
+
     return {
       imported: createdCount,
       skipped: importedItems.length - createdCount,
+      dependencies: depsCreated,
       errors,
     };
   }
