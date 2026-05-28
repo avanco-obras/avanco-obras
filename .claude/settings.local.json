@@ -16,7 +16,8 @@
       "Bash(git am *)",
       "PowerShell($env:GIT_EDITOR = \"true\"; git rebase --continue)",
       "Bash(rm .git/AUTO_MERGE 2>&1 && git rebase --continue 2>&1)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(npm install *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Tamai\\Documents\\Projetos\\avanco-obras\\.git"
