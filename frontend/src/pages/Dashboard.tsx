@@ -27,54 +27,48 @@ import type {
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
-  bg1: '#fff',
-  bg2: '#F7F8FA',
-  bg3: '#E2E4E8',
-  t1: '#131720',
-  t2: '#5A6275',
-  t3: '#9AA0AD',
-  bd: '#E0E2E6',
-  amber: '#C47D0F',
-  ambBg: '#FEF3DC',
-  ambT: '#7A4D07',
-  green: '#16803C',
-  grnBg: '#E8F5EE',
-  grnT: '#0C4E25',
-  red: '#C9312F',
-  redBg: '#FDECEC',
-  redT: '#7A1A19',
-  blue: '#1B6FE8',
-  bluBg: '#EBF2FD',
-  bluT: '#0A3880',
-  chartBlue: '#1B6FE8',
-  chartRed: '#C9312F',
+  bg1: '#ffffff',
+  bg2: '#F8FAFC',
+  bg3: '#E2E8F0',
+  t1: '#0D1829',
+  t2: '#2D3D52',
+  t3: '#5A6A7E',
+  bd: '#E2E8F0',
+  amber: '#D97706',
+  ambBg: '#FFFBEB',
+  ambT: '#78350F',
+  green: '#16A34A',
+  grnBg: '#F0FDF4',
+  grnT: '#14532D',
+  red: '#DC2626',
+  redBg: '#FEF2F2',
+  redT: '#7F1D1D',
+  blue: '#1D4ED8',
+  bluBg: '#EFF6FF',
+  bluT: '#1E3A8A',
+  chartBlue: '#2563EB',
+  chartRed: '#DC2626',
 };
 
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
-function Skeleton({ w, h, radius = 6 }: { w: string | number; h: string | number; radius?: number }) {
+function Skeleton({ w, h, radius = 2 }: { w: string | number; h: string | number; radius?: number }) {
   return (
     <div
       style={{
-        width: w,
-        height: h,
-        borderRadius: radius,
-        background: C.bg3,
-        animation: 'pulse 1.5s ease-in-out infinite',
+        width: w, height: h, borderRadius: radius,
+        background: C.bg3, animation: 'pulse 1.5s ease-in-out infinite',
       }}
     />
   );
 }
 
 // ── Card wrapper ──────────────────────────────────────────────────────────────
-function AoCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+function AoCard({ children, style, accent }: { children: React.ReactNode; style?: React.CSSProperties; accent?: string }) {
   return (
     <div
       className="ao-card"
-      style={{
-        padding: '14px 16px',
-        ...style,
-      }}
+      style={{ borderLeftColor: accent, ...style }}
     >
       {children}
     </div>
@@ -83,73 +77,40 @@ function AoCard({ children, style }: { children: React.ReactNode; style?: React.
 
 function CardHdr({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: C.t1,
-        marginBottom: 10,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-      }}
-    >
-      {children}
+    <div className="ao-card-hdr">
+      <span className="ao-card-title">{children}</span>
     </div>
   );
 }
 
-// ── KPI Ring ──────────────────────────────────────────────────────────────────
-const RING_CIRC = 201.1; // 2 * π * 32
-
-function KpiRing({
-  value,
-  color,
-  sublabel,
-  formatter,
+// ── Enterprise Metric Block (replaces KPI Ring) ───────────────────────────────
+function AoMetric({
+  label, value, meta, barPct, color, loading,
 }: {
-  value: number;
-  color: string;
-  label?: string;
-  sublabel?: string;
-  formatter?: (v: number) => string;
+  label: string; value: string; meta: string;
+  barPct: number; color: string; loading?: boolean;
 }) {
-  const offset = RING_CIRC * (1 - Math.min(100, Math.max(0, value)) / 100);
-  const displayVal = formatter ? formatter(value) : `${value.toFixed(1).replace('.', ',')}%`;
-
+  if (loading) {
+    return (
+      <div className="ao-card" style={{ borderLeftColor: color }}>
+        <div className="ao-metric">
+          <Skeleton w={80} h={9} />
+          <div style={{ marginTop: 8 }}><Skeleton w={100} h={32} /></div>
+          <div style={{ marginTop: 6 }}><Skeleton w={120} h={9} /></div>
+          <div style={{ marginTop: 10 }}><Skeleton w="100%" h={2} /></div>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div style={{ position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
-      <svg viewBox="0 0 80 80" width="80" height="80">
-        <circle cx="40" cy="40" r="32" fill="none" stroke={C.bg3} strokeWidth="8" />
-        <circle
-          cx="40"
-          cy="40"
-          r="32"
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={RING_CIRC}
-          strokeDashoffset={offset}
-          transform="rotate(-90 40 40)"
-        />
-      </svg>
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          textAlign: 'center',
-          lineHeight: 1.1,
-        }}
-      >
-        <span style={{ fontSize: 11, fontWeight: 700, color: color }}>{displayVal}</span>
-        {sublabel && (
-          <span style={{ fontSize: 8, color: C.t3, marginTop: 1 }}>{sublabel}</span>
-        )}
+    <div className="ao-card" style={{ borderLeftColor: color }}>
+      <div className="ao-metric">
+        <div className="ao-metric-lbl">{label}</div>
+        <div className="ao-metric-val" style={{ color }}>{value}</div>
+        <div className="ao-metric-meta">{meta}</div>
+        <div className="ao-metric-bar">
+          <div className="ao-metric-fill" style={{ width: `${Math.min(100, Math.max(0, barPct))}%`, background: color }} />
+        </div>
       </div>
     </div>
   );
@@ -190,7 +151,7 @@ function PBar({ value, color, height = 5 }: { value: number; color?: string; hei
     <div
       style={{
         background: C.bg3,
-        borderRadius: 99,
+        borderRadius: 1,
         height,
         overflow: 'hidden',
         width: '100%',
@@ -201,7 +162,7 @@ function PBar({ value, color, height = 5 }: { value: number; color?: string; hei
           height: '100%',
           width: `${Math.min(100, Math.max(0, value))}%`,
           background: color ?? C.amber,
-          borderRadius: 99,
+          borderRadius: 1,
           transition: 'width .4s',
         }}
       />
@@ -343,7 +304,7 @@ export default function Dashboard() {
         setEtapas(
           top.map((i) => ({
             name: i.name,
-            actual: Number(i.actualProgress),
+            actual: Number(i.physicalProgress),
             planned: Number(i.plannedProgress),
           }))
         );
@@ -420,500 +381,222 @@ export default function Dashboard() {
       }}
     >
 
-      {/* ── ROW 1: KPI Rings ─────────────────────────────────────────── */}
+      {/* ── ROW 1: Enterprise Metric Blocks ──────────────────────────── */}
       <div style={g3}>
-
-        {/* KPI 1 — Avanço Físico */}
-        <AoCard>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {loadingKpis ? (
-              <Skeleton w={80} h={80} radius={99} />
-            ) : (
-              <KpiRing value={physicalProgress} color={C.blue} />
-            )}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p style={{ fontSize: 11, color: C.t2, margin: 0, fontWeight: 500 }}>Avanço físico</p>
-              {loadingKpis ? (
-                <>
-                  <Skeleton w={60} h={18} radius={4} />
-                  <div style={{ marginTop: 4 }}><Skeleton w={80} h={10} radius={4} /></div>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 20, fontWeight: 700, color: C.blue, margin: '2px 0 0' }}>
-                    {physicalProgress.toFixed(1).replace('.', ',')}%
-                  </p>
-                  <p style={{ fontSize: 10, color: C.t3, margin: '2px 0 4px' }}>
-                    Planejado: {plannedProgress.toFixed(1).replace('.', ',')}%
-                  </p>
-                  <PBar value={physicalProgress} color={C.blue} />
-                </>
-              )}
-            </div>
-          </div>
-        </AoCard>
-
-        {/* KPI 2 — SPI */}
-        <AoCard>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {loadingKpis ? (
-              <Skeleton w={80} h={80} radius={99} />
-            ) : (
-              <KpiRing
-                value={Math.min(100, spi * 100)}
-                color={spiColor(spi)}
-                formatter={(v) => (v / 100).toFixed(2)}
-              />
-            )}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p style={{ fontSize: 11, color: C.t2, margin: 0, fontWeight: 500 }}>SPI (Prazo)</p>
-              {loadingKpis ? (
-                <>
-                  <Skeleton w={60} h={18} radius={4} />
-                  <div style={{ marginTop: 4 }}><Skeleton w={80} h={10} radius={4} /></div>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 20, fontWeight: 700, color: spiColor(spi), margin: '2px 0 0' }}>
-                    {spi.toFixed(2)}
-                  </p>
-                  <p style={{ fontSize: 10, color: C.t3, margin: '2px 0 4px' }}>
-                    {spiLabel(spi)}{delayDays > 0 ? ` · −${delayDays}d` : ''}
-                  </p>
-                  <PBar value={Math.min(100, spi * 100)} color={spiColor(spi)} />
-                </>
-              )}
-            </div>
-          </div>
-        </AoCard>
-
-        {/* KPI 3 — PPC */}
-        <AoCard>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {loadingKpis ? (
-              <Skeleton w={80} h={80} radius={99} />
-            ) : (
-              <KpiRing value={ppcCurrent} color={ppcBarColor(ppcCurrent)} sublabel="meta 80%" />
-            )}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p style={{ fontSize: 11, color: C.t2, margin: 0, fontWeight: 500 }}>PPC Semana</p>
-              {loadingKpis ? (
-                <>
-                  <Skeleton w={60} h={18} radius={4} />
-                  <div style={{ marginTop: 4 }}><Skeleton w={80} h={10} radius={4} /></div>
-                  <div style={{ marginTop: 6 }}>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <Skeleton key={i} w={`${20 + i * 8}%`} h={5} radius={99} />
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 20, fontWeight: 700, color: ppcBarColor(ppcCurrent), margin: '2px 0 0' }}>
-                    {ppcCurrent.toFixed(0)}%
-                  </p>
-                  <p style={{ fontSize: 10, color: C.t3, margin: '2px 0 4px' }}>
-                    Média 8 sem.: {ppcAvg8}%
-                  </p>
-                  {/* mini history bars */}
-                  <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: 22 }}>
-                    {ppcHistory.map((p, i) => (
-                      <div
-                        key={i}
-                        title={`${p.weekLabel}: ${p.ppcActual}%`}
-                        style={{
-                          flex: 1,
-                          height: `${Math.max(8, (p.ppcActual / 100) * 22)}px`,
-                          background: ppcBarColor(p.ppcActual),
-                          borderRadius: 2,
-                          opacity: 0.75,
-                        }}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </AoCard>
+        <AoMetric
+          label="Avanço Físico"
+          value={`${physicalProgress.toFixed(1).replace('.', ',')}%`}
+          meta={`Planejado ${plannedProgress.toFixed(1).replace('.', ',')}%  ·  desvio ${(physicalProgress - plannedProgress).toFixed(1).replace('.', ',')}pp`}
+          barPct={physicalProgress}
+          color={C.blue}
+          loading={loadingKpis}
+        />
+        <AoMetric
+          label="SPI — Índice de Prazo"
+          value={spi.toFixed(2)}
+          meta={`${spiLabel(spi)}${delayDays > 0 ? `  ·  −${delayDays} dias` : ''}`}
+          barPct={Math.min(100, spi * 100)}
+          color={spiColor(spi)}
+          loading={loadingKpis}
+        />
+        <AoMetric
+          label="PPC — Semana Atual"
+          value={`${ppcCurrent.toFixed(0)}%`}
+          meta={`Média 8 semanas: ${ppcAvg8}%  ·  meta 80%`}
+          barPct={ppcCurrent}
+          color={ppcBarColor(ppcCurrent)}
+          loading={loadingKpis}
+        />
       </div>
 
       {/* ── ROW 2: Curva S + Etapas ────────────────────────────────── */}
       <div style={g2}>
 
         {/* Curva S */}
-        <AoCard>
+        <AoCard accent={C.blue}>
           <CardHdr>Curva S — Evolução do Avanço</CardHdr>
-          {/* Legend */}
-          <div style={{ display: 'flex', gap: 14, marginBottom: 8 }}>
-            {[
-              { color: C.bg3, label: 'Planejado' },
-              { color: C.blue, label: 'Realizado' },
-            ].map((l) => (
-              <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <div style={{ width: 18, height: 3, background: l.color, borderRadius: 99 }} />
-                <span style={{ fontSize: 10, color: C.t2 }}>{l.label}</span>
-              </div>
-            ))}
-          </div>
-          {loadingCurvaS ? (
-            <Skeleton w="100%" h={210} />
-          ) : curvaS.length === 0 ? (
-            <div style={{ height: 210, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <p style={{ fontSize: 12, color: C.t3 }}>Nenhum dado de cronograma cadastrado</p>
+          <div className="ao-card-body">
+            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+              {[{ color: C.bg3, label: 'Planejado' }, { color: C.blue, label: 'Realizado' }].map((l) => (
+                <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <div style={{ width: 18, height: 2, background: l.color, borderRadius: 1 }} />
+                  <span style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{l.label}</span>
+                </div>
+              ))}
             </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={210}>
-              <LineChart
-                data={curvaS}
-                margin={{ top: 14, right: 8, left: -20, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="fillBlue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.chartBlue} stopOpacity={0.15} />
-                    <stop offset="95%" stopColor={C.chartBlue} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="fillBlue2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.blue} stopOpacity={0.1} />
-                    <stop offset="95%" stopColor={C.blue} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.bg3} vertical={false} />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 9, fill: C.t3 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 9, fill: C.t3 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => `${v}%`}
-                />
-                <Tooltip
-                  contentStyle={{ fontSize: 11, border: `1px solid ${C.bd}`, borderRadius: 6, background: C.bg1 }}
-                  formatter={(v: number) => [`${v}%`]}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="planned"
-                  name="Planejado"
-                  stroke={C.bg3}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                  dot={false}
-                  connectNulls
-                >
-                  <LabelList
-                    dataKey="planned"
-                    content={(props) => (
-                      <CurvaSLabel {...props} color={C.t3} />
-                    )}
-                  />
-                </Line>
-                <Line
-                  type="monotone"
-                  dataKey="actual"
-                  name="Realizado"
-                  stroke={C.blue}
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls={false}
-                >
-                  <LabelList
-                    dataKey="actual"
-                    content={(props) => (
-                      <CurvaSLabel {...props} color={C.blue} />
-                    )}
-                  />
-                </Line>
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+            {loadingCurvaS ? (
+              <Skeleton w="100%" h={210} />
+            ) : curvaS.length === 0 ? (
+              <div style={{ height: 210, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: 12, color: C.t3 }}>Nenhum dado de cronograma cadastrado</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={210}>
+                <LineChart data={curvaS} margin={{ top: 14, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="2 3" stroke={C.bg3} vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: C.t3 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: C.t3 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={{ fontSize: 11, border: `1px solid ${C.bd}`, borderRadius: 2, background: C.bg1 }} formatter={(v: number) => [`${v}%`]} />
+                  <Line type="monotone" dataKey="planned" name="Planejado" stroke={C.bg3} strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls>
+                    <LabelList dataKey="planned" content={(props) => <CurvaSLabel {...props} color={C.t3} />} />
+                  </Line>
+                  <Line type="monotone" dataKey="actual" name="Realizado" stroke={C.blue} strokeWidth={2} dot={false} connectNulls={false}>
+                    <LabelList dataKey="actual" content={(props) => <CurvaSLabel {...props} color={C.blue} />} />
+                  </Line>
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </AoCard>
 
         {/* Etapas */}
         <AoCard>
-          <CardHdr>
-            Avanço por etapa{' '}
-            <span style={{ fontSize: 10, color: C.t2, fontWeight: 400 }}>(real × planejado)</span>
-          </CardHdr>
-          {loadingSchedule ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <Skeleton key={i} w="100%" h={24} radius={4} />
-              ))}
-            </div>
-          ) : etapas.length === 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120 }}>
-              <p style={{ fontSize: 12, color: C.t3 }}>Nenhuma etapa no cronograma</p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {etapas.map((e) => {
-                const color = etapaColor(e.actual, e.planned);
-                return (
-                  <div key={e.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                      style={{
-                        width: 112,
-                        fontSize: 11,
-                        color: C.t1,
-                        flexShrink: 0,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {e.name}
-                    </span>
-                    <div style={{ flex: 1, position: 'relative' }}>
-                      {/* Planned ghost bar */}
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          height: '100%',
-                          width: `${Math.min(100, e.planned)}%`,
-                          background: C.bg3,
-                          borderRadius: 99,
-                        }}
-                      />
-                      {/* Actual bar */}
-                      <div
-                        style={{
-                          position: 'relative',
-                          height: 8,
-                          borderRadius: 99,
-                          background: 'transparent',
-                          overflow: 'visible',
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: 8,
-                            width: `${Math.min(100, e.actual)}%`,
-                            background: color,
-                            borderRadius: 99,
-                          }}
-                        />
+          <CardHdr>Avanço por Etapa — real × planejado</CardHdr>
+          <div className="ao-card-body">
+            {loadingSchedule ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[1, 2, 3, 4, 5, 6].map((i) => <Skeleton key={i} w="100%" h={20} />)}
+              </div>
+            ) : etapas.length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 120 }}>
+                <p style={{ fontSize: 12, color: C.t3 }}>Nenhuma etapa no cronograma</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {etapas.map((e) => {
+                  const color = etapaColor(e.actual, e.planned);
+                  return (
+                    <div key={e.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ width: 112, fontSize: 11, color: C.t1, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {e.name}
+                      </span>
+                      <div style={{ flex: 1, position: 'relative', height: 6 }}>
+                        <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: `${Math.min(100, e.planned)}%`, background: C.bg3, borderRadius: 1 }} />
+                        <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: `${Math.min(100, e.actual)}%`, background: color, borderRadius: 1 }} />
                       </div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color, width: 34, textAlign: 'right', flexShrink: 0, fontFamily: 'var(--mono)' }}>
+                        {e.actual.toFixed(0)}%
+                      </span>
+                      <span style={{ fontSize: 9, color: C.t3, width: 40, flexShrink: 0, fontFamily: 'var(--mono)' }}>
+                        /{e.planned.toFixed(0)}%
+                      </span>
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color, width: 34, textAlign: 'right', flexShrink: 0 }}>
-                      {e.actual.toFixed(0)}%
-                    </span>
-                    <span style={{ fontSize: 10, color: C.t3, width: 40, flexShrink: 0 }}>
-                      ({e.planned.toFixed(0)}%)
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </AoCard>
       </div>
 
       {/* ── ROW 3: PPC history + Delays + Restrictions ───────────────── */}
       <div style={g3}>
 
-        {/* PPC History bar chart */}
+        {/* PPC History */}
         <AoCard>
-          <CardHdr>Histórico PPC</CardHdr>
-          {loadingPpc ? (
-            <Skeleton w="100%" h={140} />
-          ) : ppcHistory.length === 0 ? (
-            <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <p style={{ fontSize: 12, color: C.t3 }}>Nenhum registro de PPC ainda</p>
-            </div>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart
-                  data={ppcHistory}
-                  margin={{ top: 14, right: 4, left: -28, bottom: 0 }}
-                  barCategoryGap="30%"
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.bg3} vertical={false} />
-                  <XAxis
-                    dataKey="weekLabel"
-                    tick={{ fontSize: 10, fill: C.t2 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tick={{ fontSize: 10, fill: C.t2 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{ fontSize: 11, border: `1px solid ${C.bd}`, borderRadius: 6 }}
-                    formatter={(v: number) => [`${v}%`, 'PPC']}
-                  />
-                  <Bar dataKey="ppcActual" radius={[4, 4, 0, 0]}>
-                    <LabelList
-                      dataKey="ppcActual"
-                      position="top"
-                      style={{ fontSize: 9, fill: C.t2 }}
-                      formatter={(v: number) => `${v}%`}
-                    />
-                    {ppcHistory.map((entry, index) => (
-                      <Cell key={index} fill={ppcBarColor(entry.ppcActual)} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, color: C.t2 }}>
-                <span>
-                  Previsão S{(ppcHistory[ppcHistory.length - 1]?.weekNumber ?? 0) + 1}:{' '}
-                  <strong style={{ color: C.t1 }}>
-                    {kpis?.ppcForecast?.toFixed(0) ?? '--'}%
-                  </strong>
-                </span>
-                <span>
-                  Média 8 sem.:{' '}
-                  <strong style={{ color: C.t1 }}>{ppcAvg8}%</strong>
-                </span>
+          <CardHdr>Histórico PPC — Últimas 8 Semanas</CardHdr>
+          <div className="ao-card-body">
+            {loadingPpc ? (
+              <Skeleton w="100%" h={140} />
+            ) : ppcHistory.length === 0 ? (
+              <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: 12, color: C.t3 }}>Nenhum registro de PPC ainda</p>
               </div>
-            </>
-          )}
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={ppcHistory} margin={{ top: 14, right: 4, left: -28, bottom: 0 }} barCategoryGap="30%">
+                    <CartesianGrid strokeDasharray="2 3" stroke={C.bg3} vertical={false} />
+                    <XAxis dataKey="weekLabel" tick={{ fontSize: 9, fill: C.t2 }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: C.t2 }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 11, border: `1px solid ${C.bd}`, borderRadius: 2 }} formatter={(v: number) => [`${v}%`, 'PPC']} />
+                    <Bar dataKey="ppcActual" radius={[1, 1, 0, 0]}>
+                      <LabelList dataKey="ppcActual" position="top" style={{ fontSize: 9, fill: C.t2 }} formatter={(v: number) => `${v}%`} />
+                      {ppcHistory.map((entry, index) => <Cell key={index} fill={ppcBarColor(entry.ppcActual)} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, color: C.t2, fontFamily: 'var(--mono)' }}>
+                  <span>Prev. S{(ppcHistory[ppcHistory.length - 1]?.weekNumber ?? 0) + 1}: <strong style={{ color: C.t1 }}>{kpis?.ppcForecast?.toFixed(0) ?? '--'}%</strong></span>
+                  <span>Média 8s: <strong style={{ color: C.t1 }}>{ppcAvg8}%</strong></span>
+                </div>
+              </>
+            )}
+          </div>
         </AoCard>
 
         {/* Delays */}
-        <AoCard>
+        <AoCard accent={C.red}>
           <CardHdr>
-            <span style={{ color: C.red, display: 'flex', alignItems: 'center', gap: 5 }}>
-              <AlertTriangle size={14} color={C.red} />
-              Atividades em atraso
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <AlertTriangle size={13} color={C.red} />
+              Atividades em Atraso
             </span>
           </CardHdr>
-          {loadingDelays ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[1, 2, 3].map((i) => <Skeleton key={i} w="100%" h={36} radius={4} />)}
-            </div>
-          ) : delays.length === 0 ? (
-            <p style={{ fontSize: 12, color: C.t2, textAlign: 'center', padding: '24px 0' }}>
-              Nenhuma atividade em atraso
-            </p>
-          ) : (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 160, overflowY: 'auto' }}>
-                {delays.map((d) => (
-                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: C.t1,
-                        flex: 1,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        minWidth: 0,
-                      }}
-                    >
-                      {d.name}
-                    </span>
-                    {/* criticality bar */}
-                    <div
-                      style={{
-                        width: 48,
-                        height: 5,
-                        background: C.bg3,
-                        borderRadius: 99,
-                        flexShrink: 0,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: '100%',
-                          width: `${Math.min(100, (d.delayDays / 25) * 100)}%`,
-                          background: d.criticality >= 0.8 ? C.red : C.amber,
-                          borderRadius: 99,
-                        }}
-                      />
+          <div className="ao-card-body">
+            {loadingDelays ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[1, 2, 3].map((i) => <Skeleton key={i} w="100%" h={36} />)}
+              </div>
+            ) : delays.length === 0 ? (
+              <p style={{ fontSize: 12, color: C.t2, textAlign: 'center', padding: '24px 0' }}>Nenhuma atividade em atraso</p>
+            ) : (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 160, overflowY: 'auto' }}>
+                  {delays.map((d) => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: C.t1, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                        {d.name}
+                      </span>
+                      <div style={{ width: 40, height: 3, background: C.bg3, borderRadius: 1, flexShrink: 0, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(100, (d.delayDays / 25) * 100)}%`, background: d.criticality >= 0.8 ? C.red : C.amber, borderRadius: 1 }} />
+                      </div>
+                      <Badge bg={d.criticality >= 0.8 ? C.redBg : C.ambBg} color={d.criticality >= 0.8 ? C.redT : C.ambT}>
+                        −{d.delayDays}d
+                      </Badge>
                     </div>
-                    <Badge
-                      bg={d.criticality >= 0.8 ? C.redBg : C.ambBg}
-                      color={d.criticality >= 0.8 ? C.redT : C.ambT}
-                    >
-                      −{d.delayDays}d
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-              <div
-                style={{
-                  marginTop: 10,
-                  paddingTop: 8,
-                  borderTop: `1px solid ${C.bg3}`,
-                  fontSize: 10,
-                  color: C.t2,
-                }}
-              >
-                Desvio total: <strong style={{ color: C.red }}>−{totalDeviationDays} dias</strong>
-                {kpis && currentProject.endDate && (
-                  <>
-                    {' · '}Previsão conclusão:{' '}
-                    <strong style={{ color: C.t1 }}>
-                      {formatDate(
-                        new Date(
-                          new Date(currentProject.endDate).getTime() +
-                            delayDays * 24 * 60 * 60 * 1000
-                        )
-                      )}
-                    </strong>
-                  </>
-                )}
-              </div>
-            </>
-          )}
+                  ))}
+                </div>
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${C.bg3}`, fontSize: 10, color: C.t2, fontFamily: 'var(--mono)' }}>
+                  Desvio total: <strong style={{ color: C.red }}>−{totalDeviationDays} dias</strong>
+                  {kpis && currentProject.endDate && (
+                    <> · Prev. conclusão: <strong style={{ color: C.t1 }}>{formatDate(new Date(new Date(currentProject.endDate).getTime() + delayDays * 86400000))}</strong></>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </AoCard>
 
         {/* Restrictions */}
-        <AoCard>
+        <AoCard accent={C.amber}>
           <CardHdr>
             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <AlertCircle size={14} color={C.amber} />
-              Restrições pendentes
+              <AlertCircle size={13} color={C.amber} />
+              Restrições Pendentes
             </span>
           </CardHdr>
-          {loadingDelays ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[1, 2, 3].map((i) => <Skeleton key={i} w="100%" h={36} radius={4} />)}
-            </div>
-          ) : restrictions.length === 0 ? (
-            <p style={{ fontSize: 12, color: C.t2, textAlign: 'center', padding: '24px 0' }}>
-              Nenhuma restrição pendente
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 9, maxHeight: 180, overflowY: 'auto' }}>
-              {restrictions.map((r) => (
-                <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: C.t1,
-                        lineHeight: 1.3,
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      {r.description}
-                    </span>
-                    {restrictionBadge(r.status)}
+          <div className="ao-card-body">
+            {loadingDelays ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[1, 2, 3].map((i) => <Skeleton key={i} w="100%" h={36} />)}
+              </div>
+            ) : restrictions.length === 0 ? (
+              <p style={{ fontSize: 12, color: C.t2, textAlign: 'center', padding: '24px 0' }}>Nenhuma restrição pendente</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9, maxHeight: 180, overflowY: 'auto' }}>
+                {restrictions.map((r) => (
+                  <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: C.t1, lineHeight: 1.3, flex: 1, minWidth: 0 }}>{r.description}</span>
+                      {restrictionBadge(r.status)}
+                    </div>
+                    <span style={{ fontSize: 10, color: C.t3, fontFamily: 'var(--mono)' }}>{r.responsible} · {formatDate(r.dueDate)}</span>
                   </div>
-                  <span style={{ fontSize: 10, color: C.t3 }}>
-                    {r.responsible} · {formatDate(r.dueDate)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </AoCard>
       </div>
 

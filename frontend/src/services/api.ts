@@ -4,6 +4,7 @@ import type {
   ActivityType, ScheduleItem, GanttTask, CurvaSPoint, Measurement,
   WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
   PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
+  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison,
 } from '../types';
 import { useStore } from '../store';
 
@@ -128,7 +129,7 @@ export const scheduleApi = {
   import: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post<{ imported: number; skipped: number; errors: string[] }>(
+    return api.post<{ imported: number; skipped: number; dependencies: number; errors: string[] }>(
       `/projects/${projectId}/schedule/import`,
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } },
@@ -188,13 +189,56 @@ export const dashboardApi = {
 
 // ── Uploads ───────────────────────────────────────────────────────
 export const uploadsApi = {
-  list: (projectId: string) =>
-    api.get<Upload[]>(`/projects/${projectId}/uploads`).then((r) => r.data),
-  upload: (projectId: string, formData: FormData) =>
-    api.post<Upload>(`/projects/${projectId}/uploads`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data),
+  list: (projectId: string, params?: { category?: string; floorId?: string }) =>
+    api
+      .get<Upload[]>(`/projects/${projectId}/uploads`, { params })
+      .then((r) => r.data),
+  upload: (
+    projectId: string,
+    formData: FormData,
+    params?: { category?: string; floorId?: string },
+  ) =>
+    api
+      .post<Upload>(`/projects/${projectId}/uploads`, formData, {
+        params,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data),
+  getIfcModel: (projectId: string) =>
+    api
+      .get<(Upload & { url: string }) | null>(`/projects/${projectId}/uploads/ifc-model`)
+      .then((r) => r.data),
+  listFloorPlans: (floorId: string) =>
+    api
+      .get<Array<Upload & { url: string }>>(`/floors/${floorId}/plans`)
+      .then((r) => r.data),
   delete: (id: string) => api.delete(`/uploads/${id}`).then((r) => r.data),
+};
+
+// ── Baselines ─────────────────────────────────────────────────────
+export const baselineApi = {
+  create: (projectId: string, description?: string) =>
+    api.post<ProjectBaseline>(`/projects/${projectId}/baselines`, { description }).then((r) => r.data),
+  list: (projectId: string) =>
+    api.get<ProjectBaseline[]>(`/projects/${projectId}/baselines`).then((r) => r.data),
+  get: (projectId: string, baselineId: string) =>
+    api.get<ProjectBaseline>(`/projects/${projectId}/baselines/${baselineId}`).then((r) => r.data),
+  compare: (projectId: string, baselineId: string) =>
+    api.get<BaselineComparison>(`/projects/${projectId}/baselines/${baselineId}/comparison`).then((r) => r.data),
+  delete: (projectId: string, baselineId: string) =>
+    api.delete(`/projects/${projectId}/baselines/${baselineId}`).then((r) => r.data),
+};
+
+// ── Physical Progress ─────────────────────────────────────────────
+export const progressApi = {
+  metrics: (projectId: string) =>
+    api.get<ProjectMetrics>(`/projects/${projectId}/physical-progress/metrics`).then((r) => r.data),
+  createReport: (projectId: string, description?: string) =>
+    api.post<ProjectReport>(`/projects/${projectId}/physical-progress/report`, { description }).then((r) => r.data),
+  listReports: (projectId: string) =>
+    api.get<ProjectReport[]>(`/projects/${projectId}/physical-progress/reports`).then((r) => r.data),
+  getReport: (projectId: string, reportId: string) =>
+    api.get<ReportComparison>(`/projects/${projectId}/physical-progress/reports/${reportId}`).then((r) => r.data),
 };
 
 // ── AI Import ─────────────────────────────────────────────────────

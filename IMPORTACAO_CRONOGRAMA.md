@@ -1,231 +1,166 @@
-# 📊 Guia de Importação de Cronograma (CSV/XLSX)
+# Guia de Importação de Cronograma (CSV/XLSX)
 
-## 📋 Visão Geral
+## Visão Geral
 
-O sistema permite importar atividades do cronograma a partir de arquivos CSV ou XLSX (padrão MS Project). Esta funcionalidade é ideal para:
+O sistema importa atividades do cronograma a partir de um arquivo CSV ou XLSX no formato da EAP. O software:
 
-- ✅ Importar dados de projetos em MS Project, Excel ou outras ferramentas
-- ✅ Atualizar cronogramas completos de uma só vez
-- ✅ Manter a hierarquia de atividades (EAP/WBS) automaticamente
+- Lê **todas as linhas** do arquivo (sem limite de quantidade)
+- Cria a **hierarquia** automaticamente a partir do **Código WBS**
+- Cria os **vínculos de predecessoras** automaticamente a partir do **ID** da linha referenciada na coluna *Predecessora*
 
-⚠️ **Importante:** A importação **substitui todo o cronograma existente**. Faça backup se necessário.
-
----
-
-## 📁 Formato do Arquivo
-
-### Colunas Esperadas
-
-O arquivo deve conter as seguintes colunas:
-
-| Coluna | Tipo | Obrigatório | Descrição | Exemplo |
-|--------|------|-------------|-----------|---------|
-| **Código** | Texto | ✅ SIM | WBS/EAP da atividade. Define a hierarquia. | `1`, `1.1`, `1.1.1` |
-| **Nome** | Texto | ✅ SIM | Descrição da atividade | `Fundação`, `Estrutura` |
-| **Nível** | Número | ❌ Não | Nível hierárquico (0-9). Derivado do código se omitido. | `0`, `1`, `2` |
-| **Início** | Data | ✅ SIM | Data de início da atividade | `2026-01-15` ou `15/01/2026` |
-| **Término** | Data | ✅ SIM | Data de término da atividade | `2026-03-15` ou `15/03/2026` |
-| **Duração** | Número | ❌ Não | Duração em dias. Calculado automaticamente se omitido. | `45`, `60` |
-| **% Plan** | Número | ❌ Não | Progresso planejado (0-100) | `80`, `100` |
-| **% Real** | Número | ❌ Não | Progresso realizado (0-100) | `50`, `95` |
-| **Caminho Crítico** | Texto | ❌ Não | Y/N, S/N ou Sim/Não | `Y`, `N`, `S` |
-| **Peso** | Número | ❌ Não | Peso relativo para cálculo de progresso. Padrão: 1 | `0.5`, `1`, `2` |
+> A importação **substitui todo o cronograma existente** do projeto. Faça backup (baseline) antes se necessário.
 
 ---
 
-## 🏗️ Estrutura Hierárquica (WBS/EAP)
+## Formato do Arquivo
 
-### Como funciona
+O template padrão segue exatamente as colunas da EAP, **nesta ordem**:
 
-O sistema derivará automaticamente a hierarquia a partir do **Código WBS**:
+| # | Coluna | Tipo | Obrigatório | Descrição | Exemplo |
+|---|--------|------|-------------|-----------|---------|
+| 1 | **ID** | Número inteiro | Sim (quando houver predecessora) | Identificador único da linha. Usado para vincular predecessoras. | `1`, `2`, `3` |
+| 2 | **Código WBS** | Texto | Sim | Identificador WBS/EAP. Define a hierarquia. | `1`, `1.1`, `1.1.1` |
+| 3 | **Atividade** | Texto | Sim | Descrição da atividade. | `Fundação`, `Estrutura` |
+| 4 | **Duração** | Número | Não | Duração em dias. Calculado a partir de Início/Término se omitido. | `45`, `60` |
+| 5 | **Início** | Data | Sim | Data de início. | `2026-01-15` ou `15/01/2026` |
+| 6 | **Término** | Data | Sim | Data de término. | `2026-03-15` ou `15/03/2026` |
+| 7 | **% Avanço Físico** | Número (0–100) | Não | Progresso realizado. | `0`, `50`, `100` |
+| 8 | **Peso** | Número | Não | Peso relativo para cálculo de progresso. Padrão: `1`. | `0.5`, `1`, `2` |
+| 9 | **Responsável** | Texto | Não | Pessoa ou equipe responsável. | `Eng. João Silva`, `Empreiteira Alpha` |
+| 10 | **Predecessora** | Texto | Não | **IDs** das predecessoras. Aceita tipo e lag. | `4`, `4TI+2`, `8;10TT` |
+
+---
+
+## Hierarquia (EAP/WBS)
+
+A hierarquia é derivada automaticamente do **Código WBS**:
 
 ```
-1              → Nível 0 (Projeto raiz)
-1.1            → Nível 1 (Filho de 1)
-1.1.1          → Nível 2 (Filho de 1.1)
-1.1.1.1        → Nível 3 (Filho de 1.1.1)
+1              → Nível 0 (raiz)
+1.1            → Nível 1 (filho de 1)
+1.1.1          → Nível 2 (filho de 1.1)
+1.1.1.1        → Nível 3 (filho de 1.1.1)
 ```
 
-### Exemplo de Hierarquia Completa
+Não é necessário declarar o nível: o software cria a árvore automaticamente.
+
+---
+
+## Predecessoras (vínculos pelo ID)
+
+A coluna **Predecessora** referencia outras atividades pelo **ID** da linha, exatamente como na edição direta do cronograma na interface. Após importar todas as linhas, o software cria os vínculos resolvendo os IDs declarados.
+
+### Sintaxe
+
+```
+<ID>[<tipo>][<lag>]
+```
+
+- **Separador entre predecessoras:** `;` (ponto-e-vírgula)
+- **Tipo (opcional, padrão `TI`):**
+  - `TI` — **término-início** (uma só começa após a outra terminar) — padrão
+  - `II` — **início-início** (ambas começam juntas)
+  - `TT` — **término-término** (ambas terminam juntas)
+  - `IT` — **início-término** (uma termina quando a outra começa)
+- **Lag (opcional):** `+N` ou `-N` dias
+
+> Tipos em inglês (`FS`, `SS`, `FF`, `SF`) também são aceitos como sinônimos.
+
+### Exemplos
+
+| Célula | Significado |
+|--------|-------------|
+| `5` | Predecessora ID 5, tipo TI, lag 0 |
+| `5TI+2` | TI, lag de 2 dias |
+| `8II-1` | Início-início, lag −1 dia |
+| `5;8TT` | Duas predecessoras: ID 5 (TI) e ID 8 (TT) |
+| `5IT+5` | IT (início-término), lag +5 dias |
+
+Se a célula estiver vazia, a atividade não terá predecessora.
+
+> Se o ID referenciado não existir no arquivo, a importação registra o erro e a atividade é criada sem aquele vínculo. Como fallback, valores no formato de WBS (ex.: `1.1.1`) também são aceitos.
+
+---
+
+## Exemplo de planilha
 
 ```csv
-Código,Nome,Nível,Início,Término,Duração,% Plan,% Real,Caminho Crítico,Peso
-1,OBRA - Condomínio Vila Nova,0,2026-01-15,2027-01-15,365,0,0,N,1
-1.1,ESTRUTURA,1,2026-01-15,2026-07-15,180,10,5,Y,0.4
-1.1.1,Fundação,2,2026-01-15,2026-03-15,60,100,100,Y,0.2
-1.1.1.1,Estacas,3,2026-01-15,2026-02-28,45,100,100,Y,0.1
-1.1.1.2,Blocos,3,2026-03-01,2026-03-15,15,100,90,Y,0.1
-1.1.2,Pilares e Lajes,2,2026-03-16,2026-07-15,120,5,0,Y,0.2
-1.2,ALVENARIA,1,2026-05-15,2026-09-15,120,0,0,N,0.3
-1.2.1,Vedação interna,2,2026-05-15,2026-08-15,90,0,0,N,0.15
-1.2.2,Vedação externa,2,2026-07-15,2026-09-15,60,0,0,N,0.15
-1.3,ACABAMENTO,1,2026-09-16,2027-01-15,120,0,0,N,0.3
-1.3.1,Revestimento,2,2026-09-16,2026-12-15,90,0,0,N,0.15
-1.3.2,Pintura,2,2026-12-01,2027-01-15,45,0,0,N,0.15
+ID,Código WBS,Atividade,Duração,Início,Término,% Avanço Físico,Peso,Responsável,Predecessora
+1,1,OBRA - Projeto Exemplo,365,2026-01-15,2027-01-15,0,1,,
+2,1.1,ESTRUTURA,180,2026-01-15,2026-07-15,5,0.4,Eng. João Silva,
+3,1.1.1,Fundação,60,2026-01-15,2026-03-15,100,0.2,Eng. João Silva,
+4,1.1.1.1,Estacas,45,2026-01-15,2026-02-28,100,0.1,Empreiteira Alpha,
+5,1.1.1.2,Blocos,15,2026-03-01,2026-03-15,90,0.1,Empreiteira Alpha,4
+6,1.1.2,Pilares e Lajes,120,2026-03-16,2026-07-15,0,0.2,Eng. João Silva,3
+7,1.2,ALVENARIA,120,2026-05-15,2026-09-15,0,0.3,Eng. Maria Souza,
+8,1.2.1,Vedação interna,90,2026-05-15,2026-08-15,0,0.15,Empreiteira Beta,6II+30
+9,1.2.2,Vedação externa,60,2026-07-15,2026-09-15,0,0.15,Empreiteira Beta,8II+60
+10,1.3,ACABAMENTO,120,2026-09-16,2027-01-15,0,0.3,Eng. Maria Souza,7
+11,1.3.1,Revestimento,90,2026-09-16,2026-12-15,0,0.15,Empreiteira Gamma,9
+12,1.3.2,Pintura,45,2026-12-01,2027-01-15,0,0.15,Empreiteira Gamma,11II+15;10TT
 ```
 
 ---
 
-## 📝 Formatos Aceitos
+## Nomes de colunas aceitos
 
-### Nomes de Colunas Aceitos (português e inglês)
+O leitor é tolerante a variações em português e inglês:
 
-O sistema é flexível e aceita diferentes nomes:
+| Campo | Aceita |
+|-------|--------|
+| ID | `ID`, `Nº`, `N°`, `#`, `Task ID`, `Unique ID` |
+| Código WBS | `Código WBS`, `Código`, `WBS`, `EAP`, `Code` |
+| Atividade | `Atividade`, `Nome`, `Tarefa`, `Task Name`, `Activity` |
+| Duração | `Duração`, `Duration`, `Dias`, `Days`, `Dur.` |
+| Início | `Início`, `Start`, `Start Date`, `Data Início` |
+| Término | `Término`, `Fim`, `Finish`, `End`, `Data Término` |
+| % Avanço Físico | `% Avanço Físico`, `Avanço Físico`, `% Real`, `% Concluído`, `Progress`, `Actual Progress` |
+| Peso | `Peso`, `Weight` |
+| Responsável | `Responsável`, `Responsible`, `Resource`, `Resource Names` |
+| Predecessora | `Predecessora`, `Predecessoras`, `Predecessor`, `Predecessors`, `Pred.` |
 
-- **Código:** `Código`, `Code`, `WBS`, `EAP`
-- **Nome:** `Nome`, `Name`, `Tarefa`, `Task Name`, `Activity`
-- **Nível:** `Nível`, `Level`, `Outline Level`
-- **Início:** `Início`, `Start`, `Data Início`, `Start Date`
-- **Término:** `Término`, `Fim`, `Finish`, `End`, `Data Término`
-- **Duração:** `Duração`, `Duration`, `Dur.`, `Days`
-- **% Plano:** `% Plan`, `% Planejado`, `Prog. Plan`, `Planned Progress`
-- **% Real:** `% Real`, `% Realizado`, `% Concluído`, `Actual Progress`, `Progress`
-- **Caminho Crítico:** `Caminho Crítico`, `Critical`, `Critical Path`
-- **Peso:** `Peso`, `Weight`
+### Formatos de data aceitos
 
-### Formatos de Data Aceitos
+- `YYYY-MM-DD` (recomendado): `2026-01-15`
+- `DD/MM/YYYY`: `15/01/2026`
+- `MM/DD/YYYY`: `01/15/2026`
+- Datas nativas de Excel (XLSX) também são reconhecidas
 
-- ✅ `YYYY-MM-DD` (recomendado): `2026-01-15`
-- ✅ `DD/MM/YYYY`: `15/01/2026`
-- ✅ `MM/DD/YYYY`: `01/15/2026`
+### Arquivos suportados
 
-### Arquivos Suportados
-
-- ✅ **CSV** (.csv) — Texto separado por vírgulas
-- ✅ **XLSX** (.xlsx) — Excel moderno (recomendado)
-- ✅ **XLS** (.xls) — Excel antigo
-
----
-
-## 🔧 Campos Obrigatórios
-
-Estes campos **devem estar presentes** em todas as linhas:
-
-1. **Código** — Identificador WBS único (ex: `1.2.3`)
-2. **Nome** — Descrição da atividade (não pode estar vazio)
-3. **Início** — Data de início em formato válido
-4. **Término** — Data de término em formato válido
-
-Se qualquer desses campos estiver vazio ou inválido, a linha será **pulada** e listada nos erros de importação.
+- CSV (`.csv`)
+- XLSX (`.xlsx`) — recomendado
+- XLS (`.xls`)
 
 ---
 
-## 📥 Como Importar
-
-### Passo 1: Acessar a Importação
+## Como importar
 
 1. Abra a aba **Cronograma** de um projeto
-2. Clique no botão **"↑ Importar CSV/XLSX"** na toolbar
-
-### Passo 2: Preparar o Arquivo
-
-**Opção A:** Usar o template padrão
-- No modal, clique em **"📥 Baixar template"**
-- Abra o arquivo em Excel ou editor de texto
-- Modifique os dados conforme necessário
-- Salve como CSV ou XLSX
-
-**Opção B:** Criar seu próprio arquivo
-- Use a tabela de colunas acima como referência
-- Mantenha o WBS consistente e único
-- Valide as datas antes de importar
-
-### Passo 3: Selecionar o Arquivo
-
-- Arraste o arquivo para a área de drop, ou
-- Clique para selecionar manualmente
-- O sistema previsualizará as 5 primeiras linhas
-
-### Passo 4: Confirmar Importação
-
-- Revise a prévia dos dados
-- Leia o aviso: **"Isso substituirá todas as atividades"**
-- Clique em **"Importar cronograma"** para confirmar
+2. Clique em **↑ Importar**
+3. (Opcional) Clique em **📥 Baixar template** para obter um XLSX com a estrutura correta
+4. Arraste o arquivo CSV/XLSX para a área indicada (ou clique para selecionar)
+5. Revise a pré-visualização
+6. Clique em **Importar cronograma**
 
 ---
 
-## ✔️ Validações Realizadas
+## Validações
 
-O sistema valida:
+- Arquivos CSV/XLSX/XLS bem formados
+- Presença das colunas obrigatórias: **Código WBS, Atividade, Início, Término**
+- Datas em formato válido
+- Linhas com Código/Atividade vazios são puladas e listadas em erros
+- Predecessora apontando para si mesma é ignorada com aviso
+- IDs duplicados: prevalece o último registrado
 
-- ✅ Arquivos bem formados (CSV/XLSX válidos)
-- ✅ Colunas obrigatórias presentes
-- ✅ Datas em formato válido
-- ✅ Códigos WBS únicos por arquivo
-- ✅ Hierarquia derivada corretamente do WBS
+---
 
-Se há erros, você receberá um relatório informando:
-- Número de atividades importadas com sucesso
+## Resultado da importação
+
+Ao finalizar, o sistema retorna:
+
+- Número de atividades importadas
+- Número de vínculos de predecessoras criados
 - Número de linhas puladas
-- Lista de erros específicos (ex: `Linha 5: data inválida`)
-
----
-
-## 📊 Resultado da Importação
-
-Após importar com sucesso, você verá:
-
-- ✅ Mensagem de sucesso com número de atividades importadas
-- ✅ Cronograma atualizado com todas as atividades
-- ✅ Hierarquia WBS mantida
-- ✅ Progresso planejado e realizado carregados
-- ✅ Caminhos críticos marcados (se informado)
-
----
-
-## ⚠️ Dicas Importantes
-
-### ✅ Faça
-
-- ✅ Use o template fornecido como base
-- ✅ Mantenha códigos WBS consistentes (ex: `1`, `1.1`, `1.1.1`)
-- ✅ Use datas no formato `YYYY-MM-DD` para evitar ambiguidades
-- ✅ Teste com um arquivo pequeno primeiro
-- ✅ Verifique se as percentagens estão entre 0-100
-- ✅ Salve backup do cronograma anterior
-
-### ❌ Não Faça
-
-- ❌ Deixar linhas com Código ou Nome vazios
-- ❌ Usar códigos WBS duplicados
-- ❌ Datas inversas (Término antes de Início)
-- ❌ Percentagens > 100 ou < 0
-- ❌ Espaços extras nos códigos WBS
-- ❌ Importar sem revisar a prévia
-
----
-
-## 🆘 Troubleshooting
-
-### "Arquivo inválido ou corrompido"
-- Verifique se o arquivo está bem formado
-- Tente salvar novamente em XLSX
-- Abra em um editor para verificar caracteres especiais
-
-### "Colunas obrigatórias não encontradas"
-- Verifique os nomes das colunas
-- Use os nomes sugeridos na tabela
-- Baixe o template e use como referência
-
-### "Linha X: data inválida"
-- Formato deve ser `YYYY-MM-DD` ou `DD/MM/YYYY`
-- Evite formatos como `01-15-2026`
-- Não use texto nas datas
-
-### "Linhas puladas na importação"
-- Revise o relatório de erros
-- Corrija os dados que causaram erro
-- Re-importe o arquivo corrigido
-
----
-
-## 📞 Suporte
-
-Se encontrar problemas, verifique:
-
-1. A seção **Troubleshooting** acima
-2. O formato do seu arquivo contra o template
-3. Se os dados obrigatórios estão preenchidos
-4. Se as datas estão válidas
-
-Bom uso! 🚀
+- Lista de erros (se houver)

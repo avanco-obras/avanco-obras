@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Undo2, Redo2 } from 'lucide-react';
 import { useStore } from '@/store';
-import { scheduleApi } from '@/services/api';
+import { scheduleApi, baselineApi, progressApi } from '@/services/api';
+import { useHistoryStore } from '@/store/historyStore';
 import * as xlsx from 'xlsx';
-import type { GanttTask, ScheduleDependencyItem } from '@/types';
+import type { GanttTask, ScheduleDependencyItem, ProjectMetrics, ProjectReport, ReportComparison } from '@/types';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ const COL_DEFS: ColDef[] = [
   { key: 'duration', label: 'Duração', width: 72, fixed: false },
   { key: 'startDate', label: 'Início', width: 86, fixed: false },
   { key: 'endDate', label: 'Término', width: 86, fixed: false },
-  { key: 'progress', label: '% Real', width: 62, fixed: false },
+  { key: 'progress', label: '% Avanço Físico', width: 100, fixed: false },
   { key: 'weight', label: 'Peso', width: 70, fixed: false },
   { key: 'responsible', label: 'Responsável', width: 120, fixed: false },
   { key: 'predecessors', label: 'Predecessora', width: 90, fixed: false },
@@ -60,19 +62,19 @@ function buildMockTasks(): GanttTask[] {
   const m = today.getMonth();
   const d = (om: number, od = 0) => new Date(y, m + om, 1 + od).toISOString().split('T')[0];
   return [
-    { id: '1', code: '1', name: 'OBRA', level: 0, startDate: d(-1), endDate: d(11), plannedProgress: 35, actualProgress: 30, isCriticalPath: false, hasChildren: true, durationDays: 365, weight: 1 },
-    { id: '2', code: '1.1', name: 'ESTRUTURA', level: 1, parentId: '1', startDate: d(-1), endDate: d(5), plannedProgress: 60, actualProgress: 50, isCriticalPath: true, hasChildren: true, durationDays: 180, weight: 0.4 },
-    { id: '3', code: '1.1.1', name: 'Fundação', level: 2, parentId: '2', startDate: d(-1), endDate: d(1), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: true, durationDays: 60, weight: 0.15 },
-    { id: '4', code: '1.1.1.1', name: 'Estacas', level: 3, parentId: '3', startDate: d(-1), endDate: d(0, 15), plannedProgress: 100, actualProgress: 100, isCriticalPath: true, hasChildren: false, durationDays: 45, weight: 0.08 },
-    { id: '5', code: '1.1.1.2', name: 'Blocos', level: 3, parentId: '3', startDate: d(0, 10), endDate: d(1), plannedProgress: 100, actualProgress: 95, isCriticalPath: true, hasChildren: true, durationDays: 20, weight: 0.07 },
-    { id: '6', code: '1.1.1.2.1', name: 'Bloco tipo A', level: 4, parentId: '5', startDate: d(0, 10), endDate: d(0, 20), plannedProgress: 100, actualProgress: 100, isCriticalPath: false, hasChildren: false, durationDays: 10, weight: 0.03 },
-    { id: '7', code: '1.1.2', name: 'Pilares e Lajes', level: 2, parentId: '2', startDate: d(1), endDate: d(5), plannedProgress: 40, actualProgress: 25, isCriticalPath: true, hasChildren: false, durationDays: 120, weight: 0.25 },
-    { id: '8', code: '1.2', name: 'ALVENARIA', level: 1, parentId: '1', startDate: d(3), endDate: d(7), plannedProgress: 10, actualProgress: 5, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
-    { id: '9', code: '1.2.1', name: 'Vedação interna', level: 2, parentId: '8', startDate: d(3), endDate: d(6), plannedProgress: 15, actualProgress: 8, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
-    { id: '10', code: '1.2.2', name: 'Vedação externa', level: 2, parentId: '8', startDate: d(5), endDate: d(7), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
-    { id: '11', code: '1.3', name: 'ACABAMENTO', level: 1, parentId: '1', startDate: d(7), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
-    { id: '12', code: '1.3.1', name: 'Revestimento', level: 2, parentId: '11', startDate: d(7), endDate: d(10), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
-    { id: '13', code: '1.3.2', name: 'Pintura', level: 2, parentId: '11', startDate: d(9), endDate: d(11), plannedProgress: 0, actualProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+    { id: '1', code: '1', name: 'OBRA', level: 0, startDate: d(-1), endDate: d(11), plannedProgress: 35, physicalProgress: 30, isCriticalPath: false, hasChildren: true, durationDays: 365, weight: 1 },
+    { id: '2', code: '1.1', name: 'ESTRUTURA', level: 1, parentId: '1', startDate: d(-1), endDate: d(5), plannedProgress: 60, physicalProgress: 50, isCriticalPath: true, hasChildren: true, durationDays: 180, weight: 0.4 },
+    { id: '3', code: '1.1.1', name: 'Fundação', level: 2, parentId: '2', startDate: d(-1), endDate: d(1), plannedProgress: 100, physicalProgress: 100, isCriticalPath: true, hasChildren: true, durationDays: 60, weight: 0.15 },
+    { id: '4', code: '1.1.1.1', name: 'Estacas', level: 3, parentId: '3', startDate: d(-1), endDate: d(0, 15), plannedProgress: 100, physicalProgress: 100, isCriticalPath: true, hasChildren: false, durationDays: 45, weight: 0.08 },
+    { id: '5', code: '1.1.1.2', name: 'Blocos', level: 3, parentId: '3', startDate: d(0, 10), endDate: d(1), plannedProgress: 100, physicalProgress: 95, isCriticalPath: true, hasChildren: true, durationDays: 20, weight: 0.07 },
+    { id: '6', code: '1.1.1.2.1', name: 'Bloco tipo A', level: 4, parentId: '5', startDate: d(0, 10), endDate: d(0, 20), plannedProgress: 100, physicalProgress: 100, isCriticalPath: false, hasChildren: false, durationDays: 10, weight: 0.03 },
+    { id: '7', code: '1.1.2', name: 'Pilares e Lajes', level: 2, parentId: '2', startDate: d(1), endDate: d(5), plannedProgress: 40, physicalProgress: 25, isCriticalPath: true, hasChildren: false, durationDays: 120, weight: 0.25 },
+    { id: '8', code: '1.2', name: 'ALVENARIA', level: 1, parentId: '1', startDate: d(3), endDate: d(7), plannedProgress: 10, physicalProgress: 5, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '9', code: '1.2.1', name: 'Vedação interna', level: 2, parentId: '8', startDate: d(3), endDate: d(6), plannedProgress: 15, physicalProgress: 8, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '10', code: '1.2.2', name: 'Vedação externa', level: 2, parentId: '8', startDate: d(5), endDate: d(7), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
+    { id: '11', code: '1.3', name: 'ACABAMENTO', level: 1, parentId: '1', startDate: d(7), endDate: d(11), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: true, durationDays: 120, weight: 0.3 },
+    { id: '12', code: '1.3.1', name: 'Revestimento', level: 2, parentId: '11', startDate: d(7), endDate: d(10), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 90, weight: 0.15 },
+    { id: '13', code: '1.3.2', name: 'Pintura', level: 2, parentId: '11', startDate: d(9), endDate: d(11), plannedProgress: 0, physicalProgress: 0, isCriticalPath: false, hasChildren: false, durationDays: 60, weight: 0.15 },
   ];
 }
 
@@ -160,21 +162,25 @@ function calculateScheduledStart(task: GanttTask, tasks: GanttTask[]): { start: 
     const predEnd = parseDate(pred.endDate);
     switch (dep.type) {
       case 'FS': {
-        const candidate = addWorkDays(predEnd, dep.lagDays);
+        // FS: successor starts 1 day after predecessor ends + lag
+        const candidate = addWorkDays(predEnd, 1 + dep.lagDays);
         if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
         break;
       }
       case 'SS': {
+        // SS: successor starts when predecessor starts + lag
         const candidate = addWorkDays(predStart, dep.lagDays);
         if (!forcedStart || candidate > forcedStart) forcedStart = candidate;
         break;
       }
       case 'FF': {
+        // FF: successor ends when predecessor ends + lag (same day if lag=0)
         const endCandidate = addWorkDays(predEnd, dep.lagDays);
         if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
         break;
       }
       case 'SF': {
+        // SF: successor ends when predecessor starts + lag
         const endCandidate = addWorkDays(predStart, dep.lagDays);
         if (!forcedEnd || endCandidate > forcedEnd) forcedEnd = endCandidate;
         break;
@@ -251,12 +257,28 @@ function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
 
+function workDaysBetween(start: Date, end: Date): number {
+  // Count only business days (Mon-Fri) between start and end, inclusive
+  if (start > end) return 0;
+  let count = 0;
+  const current = new Date(start);
+  while (current <= end) {
+    const dow = current.getDay();
+    if (dow !== 0 && dow !== 6) count++; // Not Sunday (0) or Saturday (6)
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+}
+
 function parseDate(s: string) {
   return new Date(s.slice(0, 10) + 'T00:00:00');
 }
 
 function addDays(date: Date, days: number): string {
-  return new Date(date.getTime() + days * 86_400_000).toISOString().split('T')[0];
+  // Use addWorkDays to count only business days (excluding weekends)
+  if (days === 0) return date.toISOString().split('T')[0];
+  const result = addWorkDays(date, days);
+  return result.toISOString().split('T')[0];
 }
 
 interface HeaderCell { label: string; left: number; width: number; }
@@ -461,9 +483,9 @@ function generateHeaderCells(scale: TimeScale, minDate: Date, maxDate: Date, pxP
 }
 
 function barColor(actual: number, planned: number): string {
-  if (actual >= planned) return '#16803C';
-  if (actual >= planned - 15) return '#C47D0F';
-  return '#C9312F';
+  if (actual >= planned) return '#15803D';
+  if (actual >= planned - 15) return '#D97706';
+  return '#B91C1C';
 }
 
 function badgeClass(actual: number, planned: number): string {
@@ -472,17 +494,225 @@ function badgeClass(actual: number, planned: number): string {
   return 'ao-badge ao-br';
 }
 
+/**
+ * Calcula o % Avanço Físico de uma tarefa pai baseado nos filhos com pesos
+ */
+function calculateParentProgress(parent: GanttTask, children: GanttTask[]): number {
+  if (children.length === 0) return parent.physicalProgress;
+
+  const totalWeight = children.reduce((sum, child) => sum + (child.weight || 1), 0);
+  if (totalWeight === 0) return parent.physicalProgress;
+
+  const weightedSum = children.reduce((sum, child) => {
+    return sum + (child.physicalProgress || 0) * (child.weight || 1);
+  }, 0);
+
+  return Math.round((weightedSum / totalWeight) * 100) / 100;
+}
+
+/**
+ * Recalcula o % Avanço Físico de todas as tarefas pai em cascata
+ */
+function recalculateParentProgress(tasks: GanttTask[]): GanttTask[] {
+  let updated = [...tasks];
+
+  // Identificar todas as tarefas pai
+  const parentIds = new Set(updated.filter(t => t.parentId).map(t => t.parentId));
+
+  // Processar cada pai, começando dos filhos diretos até a raiz
+  // Iterar até estabilizar (max 10 vezes para evitar loop infinito)
+  for (let iter = 0; iter < 10; iter++) {
+    let changed = false;
+
+    updated = updated.map(task => {
+      if (!parentIds.has(task.id)) return task;
+
+      const children = updated.filter(t => t.parentId === task.id);
+      const newProgress = calculateParentProgress(task, children);
+
+      if (newProgress !== task.physicalProgress) {
+        changed = true;
+        return { ...task, physicalProgress: newProgress };
+      }
+      return task;
+    });
+
+    if (!changed) break;
+  }
+
+  return updated;
+}
+
+/**
+ * Recalcula o peso das tarefas pai como SOMA dos pesos das filhas.
+ * Folhas mantêm seu próprio peso (default 1 quando ausente).
+ * Processa do nível mais profundo para o mais raso (recursivo).
+ */
+interface ParentWeightChange { oldWeight: number; newWeight: number; }
+function recalculateParentWeights(tasks: GanttTask[]): { tasks: GanttTask[]; changes: Map<string, ParentWeightChange> } {
+  const originalById = new Map(tasks.map(t => [t.id, t]));
+  const parentIds = new Set<string>();
+  tasks.forEach(t => { if (t.parentId) parentIds.add(t.parentId); });
+  const parentList = tasks
+    .filter(t => parentIds.has(t.id))
+    .sort((a, b) => b.level - a.level);
+
+  let updated = [...tasks];
+  const changes = new Map<string, ParentWeightChange>();
+
+  for (let iter = 0; iter < 20; iter++) {
+    let stable = true;
+    for (const parent of parentList) {
+      const children = updated.filter(t => t.parentId === parent.id);
+      if (children.length === 0) continue;
+      const currentParent = updated.find(t => t.id === parent.id);
+      if (!currentParent) continue;
+
+      const sum = children.reduce((acc, c) => acc + (c.weight ?? 1), 0);
+      const newWeight = Math.round(sum * 10000) / 10000; // 4 casas decimais
+      const curWeight = currentParent.weight ?? 0;
+
+      if (Math.abs(curWeight - newWeight) > 0.0001) {
+        stable = false;
+        updated = updated.map(t => t.id === parent.id ? { ...t, weight: newWeight } : t);
+        const orig = originalById.get(parent.id)!;
+        if (!changes.has(parent.id)) {
+          changes.set(parent.id, { oldWeight: orig.weight ?? 1, newWeight });
+        } else {
+          changes.set(parent.id, { oldWeight: changes.get(parent.id)!.oldWeight, newWeight });
+        }
+      }
+    }
+    if (stable) break;
+  }
+  return { tasks: updated, changes };
+}
+
+/**
+ * Recalcula datas e duração das tarefas pai com base nas filhas:
+ * - startDate = MIN(filhas.startDate)
+ * - endDate   = MAX(filhas.endDate)
+ * - durationDays = workDaysBetween(start, end) inclusivo
+ * Processa do nível mais profundo para o mais raso (children-first) e itera até estabilizar.
+ */
+interface ParentDateChange {
+  oldStart: string; oldEnd: string; oldDuration: number;
+  newStart: string; newEnd: string; newDuration: number;
+}
+function recalculateParentDates(tasks: GanttTask[]): { tasks: GanttTask[]; changes: Map<string, ParentDateChange> } {
+  const originalById = new Map(tasks.map(t => [t.id, t]));
+  const parentIds = new Set<string>();
+  tasks.forEach(t => { if (t.parentId) parentIds.add(t.parentId); });
+  const parentList = tasks
+    .filter(t => parentIds.has(t.id))
+    .sort((a, b) => b.level - a.level); // deepest first
+
+  let updated = [...tasks];
+  const changes = new Map<string, ParentDateChange>();
+
+  for (let iter = 0; iter < 20; iter++) {
+    let stable = true;
+    for (const parent of parentList) {
+      const children = updated.filter(t => t.parentId === parent.id);
+      if (children.length === 0) continue;
+      const currentParent = updated.find(t => t.id === parent.id);
+      if (!currentParent) continue;
+
+      let minStart = parseDate(children[0].startDate);
+      let maxEnd = parseDate(children[0].endDate);
+      for (const c of children) {
+        const s = parseDate(c.startDate);
+        const e = parseDate(c.endDate);
+        if (s < minStart) minStart = s;
+        if (e > maxEnd) maxEnd = e;
+      }
+      const newStart = minStart.toISOString().split('T')[0];
+      const newEnd = maxEnd.toISOString().split('T')[0];
+      const newDuration = Math.max(1, workDaysBetween(minStart, maxEnd));
+
+      const curStart = currentParent.startDate.slice(0, 10);
+      const curEnd = currentParent.endDate.slice(0, 10);
+      const curDuration = currentParent.durationDays ?? 0;
+
+      if (curStart !== newStart || curEnd !== newEnd || curDuration !== newDuration) {
+        stable = false;
+        updated = updated.map(t => t.id === parent.id
+          ? { ...t, startDate: newStart, endDate: newEnd, durationDays: newDuration }
+          : t);
+        const orig = originalById.get(parent.id)!;
+        changes.set(parent.id, {
+          oldStart: orig.startDate.slice(0, 10),
+          oldEnd: orig.endDate.slice(0, 10),
+          oldDuration: orig.durationDays ?? 0,
+          newStart, newEnd, newDuration,
+        });
+      }
+    }
+    if (stable) break;
+  }
+  return { tasks: updated, changes };
+}
+
+/**
+ * Roda propagateDates (cascata por dependências) e recalculateParentDates (rollup
+ * pais←filhas) em loop até convergir. Cobre o caso em que o ajuste de um pai dispara
+ * propagação por dependências e vice-versa.
+ */
+function propagateAndRollup(tasks: GanttTask[]): {
+  tasks: GanttTask[];
+  parentChanges: Map<string, ParentDateChange>;
+  parentWeightChanges: Map<string, ParentWeightChange>;
+} {
+  let updated = tasks;
+  const aggregatedChanges = new Map<string, ParentDateChange>();
+  const baseById = new Map(tasks.map(t => [t.id, t]));
+
+  for (let i = 0; i < 10; i++) {
+    const afterDeps = propagateDates(updated);
+    const { tasks: afterParents, changes } = recalculateParentDates(afterDeps);
+    // Merge: keep original old* from first iteration, latest new*
+    changes.forEach((c, id) => {
+      const base = baseById.get(id)!;
+      const existing = aggregatedChanges.get(id);
+      aggregatedChanges.set(id, {
+        oldStart: existing?.oldStart ?? base.startDate.slice(0, 10),
+        oldEnd: existing?.oldEnd ?? base.endDate.slice(0, 10),
+        oldDuration: existing?.oldDuration ?? (base.durationDays ?? 0),
+        newStart: c.newStart, newEnd: c.newEnd, newDuration: c.newDuration,
+      });
+    });
+    let changed = false;
+    for (let j = 0; j < afterParents.length; j++) {
+      const a = afterParents[j];
+      const b = updated[j];
+      if (a.startDate.slice(0, 10) !== b.startDate.slice(0, 10) ||
+          a.endDate.slice(0, 10) !== b.endDate.slice(0, 10) ||
+          (a.durationDays ?? 0) !== (b.durationDays ?? 0)) {
+        changed = true; break;
+      }
+    }
+    updated = afterParents;
+    if (!changed) break;
+  }
+
+  // Rollup de peso (pais = soma das filhas, recursivo). Independe de datas/dependências.
+  const weightResult = recalculateParentWeights(updated);
+  updated = weightResult.tasks;
+
+  return { tasks: updated, parentChanges: aggregatedChanges, parentWeightChanges: weightResult.changes };
+}
+
 function levelStyle(level: number, hasChildren?: boolean): React.CSSProperties {
-  if (level === 0) return { background: 'var(--bg3)', fontWeight: 700, fontSize: 12 };
-  if (level === 1) return { background: hasChildren ? 'var(--bg2)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
+  if (level === 0) return { background: 'var(--s2)', fontWeight: 700, fontSize: 12 };
+  if (level === 1) return { background: hasChildren ? 'var(--s1)' : undefined, fontWeight: hasChildren ? 600 : 400, fontSize: 11 };
   if (level === 2) return { fontSize: 11, fontWeight: hasChildren ? 500 : 400 };
   if (level === 3) return { fontSize: 10, color: 'var(--t2)' };
   return { fontSize: 10, color: 'var(--t3)' };
 }
 
 function rowBg(level: number): string {
-  if (level === 0) return 'var(--bg3)';
-  if (level === 1) return 'var(--bg2)';
+  if (level === 0) return 'var(--s2)';
+  if (level === 1) return 'var(--s1)';
   return 'transparent';
 }
 
@@ -497,7 +727,7 @@ interface FormState {
   endDate: string;
   durationDays: number;
   plannedProgress: number;
-  actualProgress: number;
+  physicalProgress: number;
   weight: number;
   isCriticalPath: boolean;
   responsible: string;
@@ -505,14 +735,15 @@ interface FormState {
 
 function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
   const today = new Date().toISOString().split('T')[0];
-  const in30 = addDays(new Date(), 30);
+  // endDate inclusive: para 30 dias úteis, end = start + 29 dias úteis
+  const in30 = addDays(new Date(), 29);
   if (parent) {
     const siblings = all.filter((t) => t.parentId === parent.id);
     return {
       name: '', code: `${parent.code}.${siblings.length + 1}`,
       level: parent.level + 1, parentId: parent.id,
       startDate: today, endDate: in30, durationDays: 30,
-      plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+      plannedProgress: 0, physicalProgress: 0, weight: 1, isCriticalPath: false,
       responsible: '',
     };
   }
@@ -521,7 +752,7 @@ function defaultForm(parent: GanttTask | null, all: GanttTask[]): FormState {
     name: '', code: String(roots.length + 1),
     level: 0, parentId: '',
     startDate: today, endDate: in30, durationDays: 30,
-    plannedProgress: 0, actualProgress: 0, weight: 1, isCriticalPath: false,
+    plannedProgress: 0, physicalProgress: 0, weight: 1, isCriticalPath: false,
     responsible: '',
   };
 }
@@ -536,9 +767,9 @@ function formFromTask(task: GanttTask): FormState {
     parentId: task.parentId ?? '',
     startDate: task.startDate.slice(0, 10),
     endDate: task.endDate.slice(0, 10),
-    durationDays: task.durationDays ?? Math.max(1, daysBetween(start, end)),
+    durationDays: task.durationDays ?? Math.max(1, workDaysBetween(start, end)),
     plannedProgress: task.plannedProgress,
-    actualProgress: task.actualProgress,
+    physicalProgress: task.physicalProgress,
     weight: task.weight ?? 1,
     isCriticalPath: task.isCriticalPath,
     responsible: task.responsible ?? '',
@@ -554,7 +785,7 @@ function getCellRawValue(task: GanttTask, colKey: string): string {
     case 'duration': return String(task.durationDays ?? '');
     case 'startDate': return task.startDate.slice(0, 10);
     case 'endDate': return task.endDate.slice(0, 10);
-    case 'progress': return String(task.actualProgress);
+    case 'progress': return String(task.physicalProgress);
     case 'weight': return String(task.weight ?? '');
     case 'responsible': return task.responsible ?? '';
     default: return '';
@@ -569,7 +800,7 @@ function formatCellForFilter(task: GanttTask, colKey: string): string {
     case 'startDate': return task.startDate.slice(0, 10);
     case 'endDate': return task.endDate.slice(0, 10);
     case 'duration': return String(task.durationDays ?? '');
-    case 'progress': return String(task.actualProgress);
+    case 'progress': return String(task.physicalProgress);
     case 'weight': return String(task.weight ?? '');
     case 'predecessors': return '';
     case 'successors': return '';
@@ -582,8 +813,8 @@ function formatCellForFilter(task: GanttTask, colKey: string): string {
 
 const inp: React.CSSProperties = {
   padding: '5px 8px', fontSize: 12,
-  border: '0.5px solid var(--bd2)', borderRadius: 6,
-  background: 'var(--bg1)', color: 'var(--t1)',
+  border: '1px solid var(--bd)', borderRadius: 6,
+  background: 'var(--s0)', color: 'var(--t1)',
   width: '100%', boxSizing: 'border-box',
 };
 
@@ -598,7 +829,7 @@ interface ColFilterDropdownProps {
   onSortChange: (dir: 'asc' | 'desc' | null) => void;
   onFilterChange: (values: string[]) => void;
   onClose: () => void;
-  triggerRef: React.RefObject<HTMLButtonElement>;
+  triggerRef: HTMLButtonElement | null | undefined;
 }
 
 function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSortChange, onFilterChange, onClose, triggerRef }: ColFilterDropdownProps) {
@@ -606,8 +837,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
   const [coords, setCoords] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
+    if (triggerRef) {
+      const rect = triggerRef.getBoundingClientRect();
       setCoords({ top: rect.bottom + 4, left: rect.left });
     }
   }, [triggerRef]);
@@ -622,8 +853,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
         top: coords.top,
         left: coords.left,
         zIndex: 10000,
-        background: 'var(--bg1)',
-        border: '0.5px solid var(--bd)',
+        background: 'var(--s0)',
+        border: '1px solid var(--bd)',
         borderRadius: 6,
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         width: 240,
@@ -643,8 +874,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
             flex: 1,
             padding: '4px 6px',
             fontSize: 11,
-            border: `0.5px solid ${sortDir === 'asc' ? '#2563EB' : 'var(--bd)'}`,
-            background: sortDir === 'asc' ? '#2563EB' : 'var(--bg2)',
+            border: `0.5px solid ${sortDir === 'asc' ? '#1A56A0' : 'var(--bd)'}`,
+            background: sortDir === 'asc' ? '#1A56A0' : 'var(--s1)',
             color: sortDir === 'asc' ? '#fff' : 'var(--t1)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -658,8 +889,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
             flex: 1,
             padding: '4px 6px',
             fontSize: 11,
-            border: `0.5px solid ${sortDir === 'desc' ? '#2563EB' : 'var(--bd)'}`,
-            background: sortDir === 'desc' ? '#2563EB' : 'var(--bg2)',
+            border: `0.5px solid ${sortDir === 'desc' ? '#1A56A0' : 'var(--bd)'}`,
+            background: sortDir === 'desc' ? '#1A56A0' : 'var(--s1)',
             color: sortDir === 'desc' ? '#fff' : 'var(--t1)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -678,9 +909,9 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
         style={{
           padding: '4px 6px',
           fontSize: 11,
-          border: '0.5px solid var(--bd)',
+          border: '1px solid var(--bd)',
           borderRadius: 4,
-          background: 'var(--bg2)',
+          background: 'var(--s1)',
           color: 'var(--t1)',
           width: '100%',
           boxSizing: 'border-box',
@@ -726,8 +957,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
           style={{
             flex: 1,
             padding: '4px 6px',
-            border: '0.5px solid var(--bd)',
-            background: 'var(--bg2)',
+            border: '1px solid var(--bd)',
+            background: 'var(--s1)',
             color: 'var(--t2)',
             borderRadius: 4,
             cursor: 'pointer',
@@ -740,8 +971,8 @@ function ColFilterDropdown({ colKey, label, allValues, selected, sortDir, onSort
           style={{
             flex: 1,
             padding: '4px 6px',
-            border: '0.5px solid #2563EB',
-            background: '#2563EB',
+            border: '0.5px solid #1A56A0',
+            background: '#1A56A0',
             color: '#fff',
             borderRadius: 4,
             cursor: 'pointer',
@@ -797,8 +1028,8 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
           bottom: 0,
           zIndex: 2000,
           width: 320,
-          background: 'var(--bg1)',
-          border: '0.5px solid var(--bd)',
+          background: 'var(--s0)',
+          border: '1px solid var(--bd)',
           borderLeft: '1px solid var(--bd)',
           display: 'flex',
           flexDirection: 'column',
@@ -810,7 +1041,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
         <div style={{ padding: 12, borderBottom: '0.5px solid var(--bd)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)' }}>Filtros avançados</span>
-            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#2563EB', fontWeight: 500 }}>({activeCount})</span>}
+            {activeCount > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: '#1A56A0', fontWeight: 500 }}>({activeCount})</span>}
           </div>
           <button
             onClick={onClose}
@@ -845,7 +1076,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
 
           {/* Progress range */}
           <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real mínimo</label>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Avanço Físico mínimo</label>
             <input
               type="number"
               min="0"
@@ -858,7 +1089,7 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Real máximo</label>
+            <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, color: 'var(--t1)' }}>% Avanço Físico máximo</label>
             <input
               type="number"
               min="0"
@@ -930,13 +1161,13 @@ function AdvancedFiltersPanel({ filters, allResponsibles, onChange, onClose }: A
         <div style={{ padding: 12, borderTop: '0.5px solid var(--bd)', display: 'flex', gap: 8 }}>
           <button
             onClick={() => onChange({ dateStart: '', dateEnd: '', progressMin: '', progressMax: '', onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: [] })}
-            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '0.5px solid var(--bd)', background: 'var(--bg2)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: '1px solid var(--bd)', background: 'var(--s1)', color: 'var(--t1)', borderRadius: 4, cursor: 'pointer' }}
           >
             Limpar tudo
           </button>
           <button
             onClick={onClose}
-            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#2563EB', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+            style={{ flex: 1, padding: '6px 8px', fontSize: 11, border: 'none', background: '#1A56A0', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
           >
             Fechar
           </button>
@@ -967,6 +1198,7 @@ interface TaskModalProps {
 }
 
 function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
+  const { push, triggerDataOnly } = useHistoryStore();
   const [form, setForm] = useState<FormState>(() =>
     editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks)
   );
@@ -999,12 +1231,14 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       if (key === 'startDate' || key === 'endDate') {
         const s = parseDate((key === 'startDate' ? value : prev.startDate) as string);
         const e = parseDate((key === 'endDate' ? value : prev.endDate) as string);
-        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e > s) {
-          next.durationDays = daysBetween(s, e);
+        // e >= s: aceita início e término no mesmo dia (duração = 1)
+        if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+          next.durationDays = Math.max(1, workDaysBetween(s, e));
         }
       } else if (key === 'durationDays' && (value as number) > 0) {
         const s = parseDate(prev.startDate);
-        if (!isNaN(s.getTime())) next.endDate = addDays(s, value as number);
+        // endDate inclusive: duração N → end = start + (N-1) dias úteis (duração 1 = mesmo dia)
+        if (!isNaN(s.getTime())) next.endDate = addDays(s, (value as number) - 1);
       }
       return next;
     });
@@ -1022,16 +1256,113 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
         level: form.level, parentId: form.parentId || undefined,
         startDate: form.startDate, endDate: form.endDate,
         durationDays: form.durationDays,
-        plannedProgress: form.plannedProgress, actualProgress: form.actualProgress,
+        plannedProgress: form.plannedProgress, physicalProgress: form.physicalProgress,
         weight: form.weight, isCriticalPath: form.isCriticalPath,
         responsible: form.responsible.trim() || undefined,
       };
+      let savedId: string | null = null;
+      let nextTasks: GanttTask[];
+
       if (editingTask) {
-        await scheduleApi.update(editingTask.id, payload);
+        const oldPayload = formFromTask(editingTask);
+        const taskId = editingTask.id;
+        await scheduleApi.update(taskId, payload);
         addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+        savedId = taskId;
+        nextTasks = allTasks.map(t => t.id === taskId ? {
+          ...t,
+          name: payload.name, code: payload.code, level: payload.level,
+          parentId: payload.parentId ?? undefined,
+          startDate: payload.startDate, endDate: payload.endDate,
+          durationDays: payload.durationDays,
+          plannedProgress: payload.plannedProgress, physicalProgress: payload.physicalProgress,
+          weight: payload.weight, isCriticalPath: payload.isCriticalPath,
+          responsible: payload.responsible,
+        } : t);
+
+        push({
+          description: `Editar: "${form.name.trim()}"`,
+          module: 'cronograma',
+          undo: async () => {
+            await scheduleApi.update(taskId, {
+              name: oldPayload.name, code: oldPayload.code, level: oldPayload.level,
+              parentId: oldPayload.parentId || undefined, startDate: oldPayload.startDate,
+              endDate: oldPayload.endDate, durationDays: oldPayload.durationDays,
+              plannedProgress: oldPayload.plannedProgress, physicalProgress: oldPayload.physicalProgress,
+              weight: oldPayload.weight, isCriticalPath: oldPayload.isCriticalPath,
+              responsible: oldPayload.responsible || undefined,
+            });
+            triggerDataOnly();
+          },
+          redo: async () => {
+            await scheduleApi.update(taskId, payload);
+            triggerDataOnly();
+          },
+        });
       } else {
-        await scheduleApi.create(projectId, payload);
+        const created = await scheduleApi.create(projectId, payload);
         addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
+
+        const newId = (created as { id: string }).id;
+        savedId = newId ?? null;
+        const newTask: GanttTask = {
+          id: newId,
+          code: payload.code, name: payload.name, level: payload.level,
+          parentId: payload.parentId ?? undefined,
+          startDate: payload.startDate, endDate: payload.endDate,
+          durationDays: payload.durationDays,
+          plannedProgress: payload.plannedProgress, physicalProgress: payload.physicalProgress,
+          isCriticalPath: payload.isCriticalPath,
+          hasChildren: false,
+          weight: payload.weight,
+          responsible: payload.responsible,
+          predecessorDeps: [], successorDeps: [],
+        } as unknown as GanttTask;
+        // Marca o pai como hasChildren para o cascade alcançá-lo
+        const tasksWithParentFlag = payload.parentId
+          ? allTasks.map(t => t.id === payload.parentId ? { ...t, hasChildren: true } : t)
+          : allTasks;
+        nextTasks = [...tasksWithParentFlag, newTask];
+
+        if (newId) {
+          push({
+            description: `Criar: "${form.name.trim()}"`,
+            module: 'cronograma',
+            undo: async () => {
+              await scheduleApi.delete(newId);
+              triggerDataOnly();
+            },
+            redo: async () => {
+              triggerDataOnly();
+            },
+          });
+        }
+      }
+
+      // Rollup pais←filhas (datas + duração + peso) + cascata por dependências
+      if (savedId) {
+        const { tasks: cascaded } = propagateAndRollup(nextTasks);
+        const parentsToSave = cascaded.filter(t => {
+          const orig = nextTasks.find(o => o.id === t.id);
+          if (!orig) return false;
+          return (
+            orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+            orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+            (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+            Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
+          );
+        });
+        if (parentsToSave.length > 0) {
+          await Promise.all(parentsToSave.map(t => {
+            const orig = nextTasks.find(o => o.id === t.id)!;
+            const patch: Record<string, unknown> = {};
+            if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+            if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+            if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+            if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+            return scheduleApi.update(t.id, patch);
+          }));
+        }
       }
       onSaved();
       onClose();
@@ -1040,6 +1371,38 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Recarrega tasks atualizadas, roda cascata (deps + rollup pais: datas, duração e peso) e persiste
+  async function cascadeAfterDepChange() {
+    if (!projectId) return;
+    try {
+      const fresh = await scheduleApi.ganttData(projectId);
+      const { tasks: cascaded } = propagateAndRollup(fresh);
+      const changed = cascaded.filter(t => {
+        const orig = fresh.find(o => o.id === t.id);
+        if (!orig) return false;
+        return (
+          orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+          orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
+        );
+      });
+      if (changed.length > 0) {
+        await Promise.all(changed.map(t => {
+          const orig = fresh.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+          if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
+      }
+    } catch {
+      // silencioso — usuário verá no próximo reload
     }
   }
 
@@ -1055,6 +1418,8 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       setDeps((prev) => [...prev, dep]);
       setAddingDep(false);
       setDepSearch('');
+      await cascadeAfterDepChange();
+      onSaved();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       addToast({ type: 'error', title: 'Erro', description: msg ?? 'Não foi possível adicionar.' });
@@ -1065,6 +1430,8 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
     try {
       await scheduleApi.removeDependency(depId);
       setDeps((prev) => prev.filter((d) => d.id !== depId));
+      await cascadeAfterDepChange();
+      onSaved();
     } catch {
       addToast({ type: 'error', title: 'Erro', description: 'Não foi possível remover dependência.' });
     }
@@ -1094,7 +1461,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       <div key={dep.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: 11 }}>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{item?.code}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--t1)' }}>{item?.name}</span>
-        <span style={{ color: 'var(--t3)', fontSize: 9, background: 'var(--bg2)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>
+        <span style={{ color: 'var(--t3)', fontSize: 9, background: 'var(--s1)', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>
           {dep.type}{dep.lagDays ? `+${dep.lagDays}d` : ''}
         </span>
         <button onClick={() => handleRemoveDep(dep.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>
@@ -1107,7 +1474,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
       style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 14, padding: '1.25rem', width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 6, padding: '1.25rem', width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1119,10 +1486,24 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
         {/* Form grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Nome *</label>
-            <input style={inp} value={form.name} onChange={(e) => change('name', e.target.value)} placeholder="Nome da atividade" autoFocus />
-          </div>
+          {(() => {
+            const isRootEdit = editingTask?.level === 0 && !editingTask?.parentId;
+            return (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>
+                  Nome *{isRootEdit && <span style={{ marginLeft: 6, color: 'var(--t3)', fontStyle: 'italic' }}>(sincronizado com o Cadastro)</span>}
+                </label>
+                <input
+                  style={{ ...inp, ...(isRootEdit ? { background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed' } : null) }}
+                  value={form.name}
+                  onChange={(e) => !isRootEdit && change('name', e.target.value)}
+                  placeholder="Nome da atividade"
+                  readOnly={isRootEdit}
+                  autoFocus={!isRootEdit}
+                />
+              </div>
+            );
+          })()}
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Código WBS</label>
@@ -1134,24 +1515,57 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
             <input style={inp} type="number" min={0} max={10} value={form.level} onChange={(e) => change('level', parseInt(e.target.value) || 0)} />
           </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de início</label>
-            <input style={inp} type="date" value={form.startDate} onChange={(e) => change('startDate', e.target.value)} />
-          </div>
+          {(() => {
+            const parentLocked = !!editingTask?.hasChildren;
+            const lockedStyle: React.CSSProperties = parentLocked
+              ? { ...inp, background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed', fontStyle: 'italic' }
+              : inp;
+            const lockedTitle = parentLocked ? 'Calculado automaticamente a partir das tarefas filhas' : undefined;
+            return (
+              <>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de início</label>
+                  <input style={lockedStyle} type="date" value={form.startDate} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('startDate', e.target.value)} />
+                </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de término</label>
-            <input style={inp} type="date" value={form.endDate} onChange={(e) => change('endDate', e.target.value)} />
-          </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Data de término</label>
+                  <input style={lockedStyle} type="date" value={form.endDate} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('endDate', e.target.value)} />
+                </div>
 
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Duração (dias)</label>
-            <input style={inp} type="number" min={1} value={form.durationDays} onChange={(e) => change('durationDays', parseInt(e.target.value) || 1)} />
-          </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Duração (dias)</label>
+                  <input style={lockedStyle} type="number" min={1} value={form.durationDays} disabled={parentLocked} title={lockedTitle} onChange={(e) => change('durationDays', parseInt(e.target.value) || 1)} />
+                </div>
+
+                {parentLocked && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--t3)', fontStyle: 'italic', marginTop: -4 }}>
+                    Datas, duração e peso são calculados automaticamente a partir das tarefas filhas.
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Peso</label>
-            <input style={inp} type="number" min={0} step={0.01} value={form.weight} onChange={(e) => change('weight', parseFloat(e.target.value) || 0)} />
+            <input
+              style={editingTask?.hasChildren
+                ? { ...inp, background: 'var(--s1)', color: 'var(--t3)', cursor: 'not-allowed', fontStyle: 'italic' }
+                : inp}
+              type="number"
+              min={0}
+              step={0.01}
+              value={form.weight}
+              disabled={!!editingTask?.hasChildren}
+              title={editingTask?.hasChildren ? 'Peso = soma dos pesos das tarefas filhas' : undefined}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                const n = parseFloat(raw);
+                // Campo vazio ou inválido → default 1
+                change('weight', raw === '' || isNaN(n) ? 1 : Math.max(0, n));
+              }}
+            />
           </div>
 
           <div>
@@ -1166,11 +1580,11 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
 
           <div>
             <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 3 }}>Prog. Realizado (%)</label>
-            <input style={inp} type="number" min={0} max={100} value={form.actualProgress} onChange={(e) => change('actualProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
+            <input style={inp} type="number" min={0} max={100} value={form.physicalProgress} onChange={(e) => change('physicalProgress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))} />
           </div>
 
           <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input type="checkbox" id="cp-chk" checked={form.isCriticalPath} onChange={(e) => change('isCriticalPath', e.target.checked)} style={{ cursor: 'pointer', accentColor: '#C9312F' }} />
+            <input type="checkbox" id="cp-chk" checked={form.isCriticalPath} onChange={(e) => change('isCriticalPath', e.target.checked)} style={{ cursor: 'pointer', accentColor: '#B91C1C' }} />
             <label htmlFor="cp-chk" style={{ fontSize: 12, color: 'var(--t1)', cursor: 'pointer' }}>Caminho crítico</label>
           </div>
         </div>
@@ -1209,7 +1623,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
                     <button className="ao-btn ao-btn-sm" onClick={() => { setAddingDep(true); setAddDepRole('successor'); }}>+ Sucessora</button>
                   </div>
                 ) : (
-                  <div style={{ background: 'var(--bg2)', borderRadius: 8, padding: 10, border: '0.5px solid var(--bd)' }}>
+                  <div style={{ background: 'var(--s1)', borderRadius: 8, padding: 10, border: '1px solid var(--bd)' }}>
                     <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 6 }}>
                       Selecionar {addDepRole === 'predecessor' ? 'predecessora' : 'sucessora'}:
                     </div>
@@ -1228,7 +1642,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
                             key={t.id}
                             onClick={() => handleAddDep(t.id)}
                             style={{ cursor: 'pointer', padding: '4px 6px', borderRadius: 4, fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}
-                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg3)'; }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--s2)'; }}
                             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ''; }}
                           >
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--t3)', minWidth: 32, flexShrink: 0 }}>{t.code}</span>
@@ -1250,7 +1664,7 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           <button className="ao-btn ao-btn-sm" onClick={onClose} disabled={saving}>Cancelar</button>
           <button
             className="ao-btn ao-btn-sm"
-            style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: saving || !form.name.trim() ? 0.6 : 1 }}
+            style={{ background: '#1A56A0', color: '#fff', border: 'none', opacity: saving || !form.name.trim() ? 0.6 : 1 }}
             onClick={handleSave}
             disabled={saving || !form.name.trim()}
           >
@@ -1286,13 +1700,13 @@ function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteC
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 360 }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 360 }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t1)', marginBottom: 8 }}>Excluir atividade</div>
         <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: childCount > 0 ? 6 : 16 }}>
           Tem certeza que deseja excluir <strong style={{ color: 'var(--t1)' }}>"{task.name}"</strong>?
         </p>
         {childCount > 0 && (
-          <p style={{ fontSize: 12, color: '#C9312F', marginBottom: 16 }}>
+          <p style={{ fontSize: 12, color: '#B91C1C', marginBottom: 16 }}>
             ⚠ {childCount} atividade{childCount > 1 ? 's filha' : ' filha'} também {childCount > 1 ? 'serão excluídas' : 'será excluída'}.
           </p>
         )}
@@ -1300,7 +1714,7 @@ function DeleteConfirm({ task, allTasks, loading, onConfirm, onCancel }: DeleteC
           <button className="ao-btn ao-btn-sm" onClick={onCancel} disabled={loading}>Cancelar</button>
           <button
             className="ao-btn ao-btn-sm"
-            style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: loading ? 0.6 : 1 }}
+            style={{ background: '#B91C1C', color: '#fff', border: 'none', opacity: loading ? 0.6 : 1 }}
             onClick={onConfirm}
             disabled={loading}
           >
@@ -1337,40 +1751,40 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 
   const generateTemplate = () => {
     const templateData = [
-      ['Código', 'Nome', 'Nível', 'Início', 'Término', 'Duração', '% Plan', '% Real', 'Caminho Crítico', 'Peso'],
-      ['1', 'OBRA - Projeto Exemplo', '0', '2026-01-15', '2027-01-15', '365', '0', '0', 'N', '1'],
-      ['1.1', 'ESTRUTURA', '1', '2026-01-15', '2026-07-15', '180', '10', '5', 'Y', '0.4'],
-      ['1.1.1', 'Fundação', '2', '2026-01-15', '2026-03-15', '60', '100', '100', 'Y', '0.2'],
-      ['1.1.1.1', 'Estacas', '3', '2026-01-15', '2026-02-28', '45', '100', '100', 'Y', '0.1'],
-      ['1.1.1.2', 'Blocos', '3', '2026-03-01', '2026-03-15', '15', '100', '90', 'Y', '0.1'],
-      ['1.1.2', 'Pilares e Lajes', '2', '2026-03-16', '2026-07-15', '120', '5', '0', 'Y', '0.2'],
-      ['1.2', 'ALVENARIA', '1', '2026-05-15', '2026-09-15', '120', '0', '0', 'N', '0.3'],
-      ['1.2.1', 'Vedação interna', '2', '2026-05-15', '2026-08-15', '90', '0', '0', 'N', '0.15'],
-      ['1.2.2', 'Vedação externa', '2', '2026-07-15', '2026-09-15', '60', '0', '0', 'N', '0.15'],
-      ['1.3', 'ACABAMENTO', '1', '2026-09-16', '2027-01-15', '120', '0', '0', 'N', '0.3'],
-      ['1.3.1', 'Revestimento', '2', '2026-09-16', '2026-12-15', '90', '0', '0', 'N', '0.15'],
-      ['1.3.2', 'Pintura', '2', '2026-12-01', '2027-01-15', '45', '0', '0', 'N', '0.15'],
+      ['ID', 'Código WBS', 'Atividade', 'Duração', 'Início', 'Término', '% Avanço Físico', 'Peso', 'Responsável', 'Predecessora'],
+      [ '1', '1',       'OBRA - Projeto Exemplo', '365', '2026-01-15', '2027-01-15', '0',   '1',    '',                  ''],
+      [ '2', '1.1',     'ESTRUTURA',              '180', '2026-01-15', '2026-07-15', '5',   '0.4',  'Eng. João Silva',   ''],
+      [ '3', '1.1.1',   'Fundação',                '60', '2026-01-15', '2026-03-15', '100', '0.2',  'Eng. João Silva',   ''],
+      [ '4', '1.1.1.1', 'Estacas',                 '45', '2026-01-15', '2026-02-28', '100', '0.1',  'Empreiteira Alpha', ''],
+      [ '5', '1.1.1.2', 'Blocos',                  '15', '2026-03-01', '2026-03-15', '90',  '0.1',  'Empreiteira Alpha', '4'],
+      [ '6', '1.1.2',   'Pilares e Lajes',        '120', '2026-03-16', '2026-07-15', '0',   '0.2',  'Eng. João Silva',   '3'],
+      [ '7', '1.2',     'ALVENARIA',              '120', '2026-05-15', '2026-09-15', '0',   '0.3',  'Eng. Maria Souza',  ''],
+      [ '8', '1.2.1',   'Vedação interna',         '90', '2026-05-15', '2026-08-15', '0',   '0.15', 'Empreiteira Beta',  '6II+30'],
+      [ '9', '1.2.2',   'Vedação externa',         '60', '2026-07-15', '2026-09-15', '0',   '0.15', 'Empreiteira Beta',  '8II+60'],
+      ['10', '1.3',     'ACABAMENTO',             '120', '2026-09-16', '2027-01-15', '0',   '0.3',  'Eng. Maria Souza',  '7'],
+      ['11', '1.3.1',   'Revestimento',            '90', '2026-09-16', '2026-12-15', '0',   '0.15', 'Empreiteira Gamma', '9'],
+      ['12', '1.3.2',   'Pintura',                 '45', '2026-12-01', '2027-01-15', '0',   '0.15', 'Empreiteira Gamma', '11II+15;10TT'],
     ];
 
     const ws = xlsx.utils.aoa_to_sheet(templateData);
     ws['!cols'] = [
-      { wch: 12 }, // Código
-      { wch: 25 }, // Nome
-      { wch: 8 },  // Nível
+      { wch: 6 },  // ID
+      { wch: 12 }, // Código WBS
+      { wch: 28 }, // Atividade
+      { wch: 10 }, // Duração
       { wch: 12 }, // Início
       { wch: 12 }, // Término
-      { wch: 10 }, // Duração
-      { wch: 8 },  // % Plan
-      { wch: 8 },  // % Real
-      { wch: 16 }, // Caminho Crítico
+      { wch: 16 }, // % Avanço Físico
       { wch: 8 },  // Peso
+      { wch: 22 }, // Responsável
+      { wch: 18 }, // Predecessora
     ];
 
     const wb = xlsx.utils.book_new();
     xlsx.utils.book_append_sheet(wb, ws, 'Cronograma');
     xlsx.writeFile(wb, 'template-cronograma.xlsx');
 
-    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo e adapte aos seus dados.' });
+    addToast({ type: 'success', title: 'Template baixado', description: 'Abra o arquivo, adapte aos seus dados e reimporte.' });
   };
 
   const handleFileInput = (f: File | null) => {
@@ -1404,10 +1818,13 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
     setImporting(true);
     try {
       const result = await scheduleApi.import(projectId, file);
+      const parts: string[] = [`${result.imported} atividades importadas`];
+      if (result.dependencies > 0) parts.push(`${result.dependencies} vínculos criados`);
+      if (result.skipped > 0) parts.push(`${result.skipped} linhas puladas`);
       addToast({
         type: result.imported > 0 ? 'success' : 'warning',
         title: `Importação completa`,
-        description: `${result.imported} atividades importadas.${result.skipped > 0 ? ` ${result.skipped} linhas puladas.` : ''}`,
+        description: parts.join(' · ') + '.',
       });
       if (result.errors.length > 0) {
         console.log('Erros na importação:', result.errors);
@@ -1428,7 +1845,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1002, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div style={{ background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div style={{ background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 12, padding: '1.25rem', width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }}>
 
         {/* Step 1: File selection */}
         {step === 1 && (
@@ -1452,42 +1869,42 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               </button>
             </div>
             <p style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 16 }}>
-              Selecione um arquivo CSV ou XLSX com o formato correto. Clique em "Baixar template" para um exemplo de estrutura. O cronograma existente será substituído.
+              Selecione um arquivo CSV ou XLSX com o formato da EAP. A hierarquia é gerada a partir do <strong>Código WBS</strong> e os vínculos de predecessora são resolvidos pelo <strong>ID</strong> de cada linha. Todas as linhas do arquivo serão importadas. O cronograma existente será substituído.
             </p>
 
             {/* Colunas esperadas */}
-            <div style={{ background: 'var(--bg2)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
-              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas:</div>
+            <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 11, color: 'var(--t2)' }}>
+              <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>Colunas esperadas (na ordem do template):</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
-                <div><strong>Código</strong></div>
-                <div>WBS: 1, 1.1, 1.1.1 (obrigatório)</div>
+                <div><strong>ID</strong></div>
+                <div>Número inteiro único da linha. Usado nas predecessoras. (obrigatório quando houver predecessora)</div>
 
-                <div><strong>Nome</strong></div>
+                <div><strong>Código WBS</strong></div>
+                <div>Ex.: 1, 1.1, 1.1.1 — define a hierarquia da EAP (obrigatório)</div>
+
+                <div><strong>Atividade</strong></div>
                 <div>Descrição da atividade (obrigatório)</div>
 
-                <div><strong>Nível</strong></div>
-                <div>0-9 (opcional, derivado do código)</div>
+                <div><strong>Duração</strong></div>
+                <div>Dias (opcional, calculado a partir de Início/Término)</div>
 
                 <div><strong>Início</strong></div>
-                <div>YYYY-MM-DD (obrigatório)</div>
+                <div>YYYY-MM-DD ou DD/MM/YYYY (obrigatório)</div>
 
                 <div><strong>Término</strong></div>
-                <div>YYYY-MM-DD (obrigatório)</div>
+                <div>YYYY-MM-DD ou DD/MM/YYYY (obrigatório)</div>
 
-                <div><strong>Duração</strong></div>
-                <div>Dias (opcional, calculado se omitido)</div>
-
-                <div><strong>% Plan</strong></div>
-                <div>0-100 (opcional)</div>
-
-                <div><strong>% Real</strong></div>
-                <div>0-100 (opcional)</div>
-
-                <div><strong>Caminho Crítico</strong></div>
-                <div>Y/N (opcional)</div>
+                <div><strong>% Avanço Físico</strong></div>
+                <div>0–100 (opcional)</div>
 
                 <div><strong>Peso</strong></div>
-                <div>Número (opcional, padrão 1)</div>
+                <div>Número relativo (opcional, padrão 1)</div>
+
+                <div><strong>Responsável</strong></div>
+                <div>Pessoa/equipe (opcional)</div>
+
+                <div><strong>Predecessora</strong></div>
+                <div>IDs separados por <code>;</code>. Aceita tipo e lag: <code>5</code>, <code>5TI</code>, <code>5TI+2</code>, <code>5II</code>, <code>5TT</code>, <code>5IT</code> (opcional). Tipos: <strong>TI</strong> término-início (padrão), <strong>II</strong> início-início, <strong>TT</strong> término-término, <strong>IT</strong> início-término.</div>
               </div>
             </div>
 
@@ -1498,23 +1915,23 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
                 padding: '2rem',
                 textAlign: 'center',
                 cursor: 'pointer',
-                background: 'var(--bg2)',
+                background: 'var(--s1)',
                 marginBottom: 12,
                 transition: 'all 0.2s',
               }}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => {
                 e.preventDefault();
-                e.currentTarget.style.background = 'var(--bg3)';
-                e.currentTarget.style.borderColor = '#2563EB';
+                e.currentTarget.style.background = 'var(--s2)';
+                e.currentTarget.style.borderColor = '#1A56A0';
               }}
               onDragLeave={(e) => {
-                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.background = 'var(--s1)';
                 e.currentTarget.style.borderColor = 'var(--bd)';
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                e.currentTarget.style.background = 'var(--bg2)';
+                e.currentTarget.style.background = 'var(--s1)';
                 e.currentTarget.style.borderColor = 'var(--bd)';
                 const f = e.dataTransfer.files[0];
                 handleFileInput(f);
@@ -1538,7 +1955,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={onClose}>Cancelar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#2563EB', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
+                style={{ background: '#1A56A0', color: '#fff', border: 'none', opacity: !file || preview.length === 0 ? 0.5 : 1 }}
                 disabled={!file || preview.length === 0}
                 onClick={() => setStep(2)}
               >
@@ -1556,7 +1973,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               {file?.name} — {preview.length > 0 ? `Primeiras ${preview.length} linhas` : 'Nenhuma linha'}
             </p>
             {preview.length > 0 ? (
-              <div style={{ overflowX: 'auto', marginBottom: 16, border: '0.5px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)' }}>
+              <div style={{ overflowX: 'auto', marginBottom: 16, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s1)' }}>
                 <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
@@ -1586,7 +2003,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={() => setStep(1)}>← Voltar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+                style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
                 onClick={() => setStep(3)}
               >
                 Avançar →
@@ -1612,7 +2029,7 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
               <button className="ao-btn ao-btn-sm" onClick={() => setStep(2)} disabled={importing}>← Voltar</button>
               <button
                 className="ao-btn ao-btn-sm"
-                style={{ background: '#C9312F', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
+                style={{ background: '#B91C1C', color: '#fff', border: 'none', opacity: importing ? 0.6 : 1 }}
                 onClick={handleImport}
                 disabled={importing}
               >
@@ -1631,10 +2048,12 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
 export default function Cronograma() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
+  const { push, triggerReload, reloadTrigger, triggerDataOnly, dataOnlyTrigger, past, future, undo, redo, isProcessing: historyProcessing } = useHistoryStore();
 
   const [tasks, setTasks] = useState<GanttTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const expandedRef = useRef<Set<string>>(new Set());
   const [outlineLevel, setOutlineLevel] = useState<number | 'all'>('all');
   const [searchRaw, setSearchRaw] = useState('');
   const [search, setSearch] = useState('');
@@ -1657,13 +2076,55 @@ export default function Cronograma() {
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
-  // Column visibility state
+  // Column visibility state (ID column always visible)
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set(COL_DEFS.map(c => c.key));
-    const saved = localStorage.getItem('cronograma_cols');
-    return saved ? new Set(JSON.parse(saved)) : new Set(COL_DEFS.map(c => c.key));
+    try {
+      const saved = localStorage.getItem('cronograma_cols');
+      let cols: Set<string>;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          cols = new Set(parsed);
+        } else {
+          console.warn('Invalid cronograma_cols format, resetting');
+          cols = new Set(COL_DEFS.map(c => c.key));
+        }
+      } else {
+        cols = new Set(COL_DEFS.map(c => c.key));
+      }
+      cols.add('rowId'); // Ensure ID column is always included
+      return cols;
+    } catch (e) {
+      console.error('Error loading visible columns:', e);
+      // Clear corrupted data
+      try {
+        localStorage.removeItem('cronograma_cols');
+      } catch {}
+      return new Set(COL_DEFS.map(c => c.key));
+    }
   });
   const [showColPicker, setShowColPicker] = useState(false);
+
+  // Baseline state
+  const [baselines, setBaselines] = useState<any[]>([]);
+  const [showBaselineConfirm, setShowBaselineConfirm] = useState(false);
+  const [baselineDescription, setBaselineDescription] = useState('');
+  const [showBaselineHistory, setShowBaselineHistory] = useState(false);
+  const [selectedBaseline, setSelectedBaseline] = useState<any | null>(null);
+  const [baselineComparison, setBaselineComparison] = useState<any | null>(null);
+  const [savingBaseline, setSavingBaseline] = useState(false);
+  const [showBaselineMenu, setShowBaselineMenu] = useState(false);
+
+  // Physical progress state
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
+  const [reports, setReports] = useState<ProjectReport[]>([]);
+  const [showSaveReportConfirm, setShowSaveReportConfirm] = useState(false);
+  const [reportDescription, setReportDescription] = useState('');
+  const [savingReport, setSavingReport] = useState(false);
+  const [showReportHistory, setShowReportHistory] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
+  const [showReportMenu, setShowReportMenu] = useState(false);
 
   // Inline edit state
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -1702,8 +2163,26 @@ export default function Cronograma() {
   // Column widths state
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     if (typeof window === 'undefined') return {};
-    const saved = localStorage.getItem('cronograma_col_widths');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('cronograma_col_widths');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed;
+        } else {
+          console.warn('Invalid cronograma_col_widths format, resetting');
+          return {};
+        }
+      }
+      return {};
+    } catch (e) {
+      console.error('Error loading column widths:', e);
+      // Clear corrupted data
+      try {
+        localStorage.removeItem('cronograma_col_widths');
+      } catch {}
+      return {};
+    }
   });
 
   // Time scale state
@@ -1729,13 +2208,57 @@ export default function Cronograma() {
   const hdrRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
   const dragRef = useRef<{ colKey: string; startX: number; startWidth: number } | null>(null);
+  const colRefsMap = useRef<Map<string, HTMLButtonElement | null>>(new Map());
   const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Compensa no painel esquerdo a altura real da scrollbar horizontal do Gantt,
+  // para manter a última linha alinhada entre EAP e Gantt. Effect declarado
+  // mais abaixo, após totalWidth/visibleTasks (que entram nas deps).
+  const [scrollbarH, setScrollbarH] = useState(0);
 
   // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchRaw.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
   }, [searchRaw]);
+
+  // Sync visible columns to localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const data = Array.from(visibleCols);
+      localStorage.setItem('cronograma_cols', JSON.stringify(data));
+      console.log('[Cronograma] Saved visible columns:', data);
+    } catch (e) {
+      console.error('[Cronograma] Failed to save visible columns:', e);
+    }
+  }, [visibleCols]);
+
+  // Sync column widths to localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('cronograma_col_widths', JSON.stringify(colWidths));
+      console.log('[Cronograma] Saved column widths');
+    } catch (e) {
+      console.error('[Cronograma] Failed to save column widths:', e);
+    }
+  }, [colWidths]);
+
+  // Clean up column refs map when visible columns change
+  useEffect(() => {
+    const visibleKeys = new Set(visibleColDefs.map(c => c.key));
+    const keysToDelete: string[] = [];
+    colRefsMap.current.forEach((_, key) => {
+      if (!visibleKeys.has(key)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => colRefsMap.current.delete(key));
+  }, [visibleColDefs]);
+
+  // Keep expandedRef in sync so closures can read current value without stale deps
+  useEffect(() => { expandedRef.current = expanded; }, [expanded]);
 
   const loadData = useCallback(() => {
     if (!projectId) return;
@@ -1744,30 +2267,58 @@ export default function Cronograma() {
       .then((data) => {
         const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
           .map((t, i) => ({ ...t, rowId: i + 1 }));
-        setTasks(sorted);
-        const ids = sorted.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        // Aplica rollup pais←filhas em memória (DB pode estar fora de sync com dados antigos/seed)
+        const { tasks: rolled } = propagateAndRollup(sorted);
+        setTasks(rolled);
+        const ids = rolled.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .catch(() => {
         const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
           .map((t, i) => ({ ...t, rowId: i + 1 }));
-        setTasks(mock);
-        const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
+        const { tasks: rolled } = propagateAndRollup(mock);
+        setTasks(rolled);
+        const ids = rolled.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
         setExpanded(new Set(ids));
       })
       .finally(() => setLoading(false));
   }, [projectId]);
 
+  // Refresh only task data, preserving all UI state (expanded, scroll, filters, zoom)
+  const loadTasksOnly = useCallback(() => {
+    if (!projectId) return;
+    const prevExpanded = expandedRef.current;
+    scheduleApi.ganttData(projectId)
+      .then((data) => {
+        const sorted = [...data].sort((a, b) => compareWbs(a.code, b.code))
+          .map((t, i) => ({ ...t, rowId: i + 1 }));
+        const { tasks: rolled } = propagateAndRollup(sorted);
+        setTasks(rolled);
+        const validHasChildren = new Set(rolled.filter(t => t.hasChildren).map(t => t.id));
+        setExpanded(new Set([...prevExpanded].filter(id => validHasChildren.has(id))));
+      })
+      .catch(() => {});
+  }, [projectId]);
+
   useEffect(() => {
-    if (projectId) loadData();
-    else {
+    if (projectId) {
+      loadData();
+      loadMetrics();
+    } else {
       const mock = buildMockTasks().sort((a, b) => compareWbs(a.code, b.code))
         .map((t, i) => ({ ...t, rowId: i + 1 }));
       setTasks(mock);
       const ids = mock.filter((t) => t.hasChildren && t.level <= 1).map((t) => t.id);
       setExpanded(new Set(ids));
     }
-  }, [loadData, projectId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData, projectId, reloadTrigger]);
+
+  // dataOnlyTrigger: undo/redo refreshes data without resetting expanded/scroll/filters
+  useEffect(() => {
+    if (dataOnlyTrigger > 0) loadTasksOnly();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataOnlyTrigger]);
 
   // Ancestor set for search filtering
   const ancestorIds = useMemo((): Set<string> => {
@@ -1828,17 +2379,17 @@ export default function Cronograma() {
     });
 
     // Step 3: Apply advanced filters
-    if (advFilters.onlyLate) result = result.filter(t => t.actualProgress < t.plannedProgress);
+    if (advFilters.onlyLate) result = result.filter(t => t.physicalProgress < t.plannedProgress);
     if (advFilters.onlyCritical) result = result.filter(t => t.isCriticalPath);
-    if (advFilters.onlyDone) result = result.filter(t => t.actualProgress === 100);
+    if (advFilters.onlyDone) result = result.filter(t => t.physicalProgress === 100);
     if (advFilters.responsibles.length > 0) {
       result = result.filter(t => advFilters.responsibles.includes(t.responsible ?? ''));
     }
     if (advFilters.progressMin !== '') {
-      result = result.filter(t => t.actualProgress >= parseFloat(advFilters.progressMin));
+      result = result.filter(t => t.physicalProgress >= parseFloat(advFilters.progressMin));
     }
     if (advFilters.progressMax !== '') {
-      result = result.filter(t => t.actualProgress <= parseFloat(advFilters.progressMax));
+      result = result.filter(t => t.physicalProgress <= parseFloat(advFilters.progressMax));
     }
     if (advFilters.dateStart) {
       result = result.filter(t => t.startDate >= advFilters.dateStart);
@@ -1896,11 +2447,54 @@ export default function Cronograma() {
 
   const todayLeft = useMemo(() => daysBetween(minDate, new Date()) * pxPerDay, [minDate, pxPerDay]);
 
+  // Mede dinamicamente a altura real da scrollbar horizontal do painel Gantt
+  // (offsetHeight - clientHeight) e expõe via scrollbarH para o painel esquerdo
+  // renderizar um footer compensador. Reage a:
+  //  - resize do container do Gantt (ResizeObserver)
+  //  - mudanças em totalWidth (zoom de escala) que alteram scrollWidth
+  //  - mudanças em visibleTasks (expand/collapse, filtros)
+  //  - resize/zoom da janela
+  useEffect(() => {
+    const el = rightRef.current;
+    if (!el) return;
+    const measure = () => {
+      const hasHScroll = el.scrollWidth > el.clientWidth;
+      const h = hasHScroll ? Math.max(0, el.offsetHeight - el.clientHeight) : 0;
+      setScrollbarH(prev => prev === h ? prev : h);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [totalWidth, visibleTasks.length, finalLeftWidth]);
+
   // Inline edit handlers
   function startInlineEdit(task: GanttTask, colKey: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
+    // Raiz: nome é sincronizado com o Cadastro do Empreendimento (read-only).
+    if (task.level === 0 && !task.parentId && colKey === 'name') {
+      addToast({
+        type: 'info',
+        title: 'Campo bloqueado',
+        description: 'O nome da raiz reflete o Cadastro do Empreendimento. Edite em Cadastro → Nome do Projeto.',
+      });
+      return;
+    }
     if (['successors', 'critical'].includes(colKey)) {
       openEdit(task, { stopPropagation: () => {} } as any);
+      return;
+    }
+    // Tarefas pai: datas, duração e peso são calculados a partir das filhas (bloqueio de edição manual)
+    if (task.hasChildren && ['startDate', 'endDate', 'duration', 'weight'].includes(colKey)) {
+      const isWeight = colKey === 'weight';
+      addToast({
+        type: 'info',
+        title: 'Campo automático',
+        description: isWeight
+          ? 'O peso da tarefa pai é a soma dos pesos das filhas.'
+          : 'Datas e duração da tarefa pai são calculadas a partir das filhas.',
+      });
       return;
     }
 
@@ -1911,7 +2505,7 @@ export default function Cronograma() {
       case 'duration': value = String(task.durationDays ?? ''); break;
       case 'startDate': value = task.startDate.slice(0, 10); break;
       case 'endDate': value = task.endDate.slice(0, 10); break;
-      case 'progress': value = String(task.actualProgress); break;
+      case 'progress': value = String(task.physicalProgress); break;
       case 'weight': value = String(task.weight ?? '0'); break;
       case 'responsible': value = task.responsible ?? ''; break;
       case 'predecessors': value = formatDepsAsText(task, tasks); break;
@@ -1926,9 +2520,13 @@ export default function Cronograma() {
     const task = tasks.find(t => t.id === inlineEdit.taskId);
     if (!task) { setInlineEdit(null); return; }
 
+    // Snapshot of the task BEFORE any change (for undo)
+    const oldForm = formFromTask(task);
+    const colKey = inlineEdit.colKey;
+
     const form = formFromTask(task);
     try {
-      switch (inlineEdit.colKey) {
+      switch (colKey) {
         case 'name':
           form.name = inlineEdit.value.trim();
           break;
@@ -1940,7 +2538,8 @@ export default function Cronograma() {
           if (days < 1) return;
           form.durationDays = days;
           const s = parseDate(task.startDate);
-          if (!isNaN(s.getTime())) form.endDate = addDays(s, days);
+          // endDate inclusive: duração N → end = start + (N-1) dias úteis (duração 1 = mesmo dia)
+          if (!isNaN(s.getTime())) form.endDate = addDays(s, days - 1);
           break;
         }
         case 'startDate': {
@@ -1948,7 +2547,7 @@ export default function Cronograma() {
           const s = parseDate(inlineEdit.value);
           const e = parseDate(form.endDate);
           if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-            form.durationDays = Math.max(1, daysBetween(s, e));
+            form.durationDays = Math.max(1, workDaysBetween(s, e));
           }
           break;
         }
@@ -1957,16 +2556,19 @@ export default function Cronograma() {
           const s = parseDate(form.startDate);
           const e = parseDate(inlineEdit.value);
           if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
-            form.durationDays = Math.max(1, daysBetween(s, e));
+            form.durationDays = Math.max(1, workDaysBetween(s, e));
           }
           break;
         }
         case 'progress': {
-          form.actualProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
+          form.physicalProgress = Math.min(100, Math.max(0, parseInt(inlineEdit.value) || 0));
           break;
         }
         case 'weight': {
-          form.weight = Math.max(0, parseFloat(inlineEdit.value) || 0);
+          const raw = inlineEdit.value.trim();
+          const n = parseFloat(raw);
+          // Campo vazio ou inválido → default 1
+          form.weight = raw === '' || isNaN(n) ? 1 : Math.max(0, n);
           break;
         }
         case 'responsible': {
@@ -1994,7 +2596,7 @@ export default function Cronograma() {
         endDate: form.endDate,
         durationDays: form.durationDays,
         plannedProgress: form.plannedProgress,
-        actualProgress: form.actualProgress,
+        physicalProgress: form.physicalProgress,
         weight: form.weight,
         isCriticalPath: form.isCriticalPath,
         responsible: form.responsible || undefined,
@@ -2004,19 +2606,144 @@ export default function Cronograma() {
         await scheduleApi.update(task.id, payload);
       }
 
-      setTasks(prev => prev.map(t => t.id === task.id ? {
+      let updatedTasks = tasks.map(t => t.id === task.id ? {
         ...t,
         name: form.name,
         code: form.code,
         startDate: form.startDate,
         endDate: form.endDate,
         durationDays: form.durationDays,
-        actualProgress: form.actualProgress,
+        physicalProgress: form.physicalProgress,
         weight: form.weight,
         responsible: form.responsible || undefined,
-      } : t));
+      } : t);
 
+      // Progress cascade: recalculate parent progress
+      type CascadeItem = { id: string; oldVal: number; newVal: number };
+      const progressCascade: CascadeItem[] = [];
+
+      if (colKey === 'progress') {
+        const originalTasks = tasks;
+        updatedTasks = recalculateParentProgress(updatedTasks);
+
+        const parentsChanged = updatedTasks.filter(t => {
+          const orig = originalTasks.find(o => o.id === t.id);
+          return orig && t.parentId && orig.physicalProgress !== t.physicalProgress;
+        });
+
+        if (parentsChanged.length > 0 && projectId) {
+          await Promise.all(parentsChanged.map(t => scheduleApi.update(t.id, {
+            physicalProgress: t.physicalProgress,
+          })));
+        }
+
+        parentsChanged.forEach(t => {
+          const orig = originalTasks.find(o => o.id === t.id)!;
+          progressCascade.push({ id: t.id, oldVal: orig.physicalProgress, newVal: t.physicalProgress });
+        });
+      }
+
+      // Parent rollup cascade: datas + duração (via propagateAndRollup) + peso (soma das filhas)
+      type DateCascadeItem = {
+        id: string;
+        oldStart?: string; newStart?: string;
+        oldEnd?: string;   newEnd?: string;
+        oldDuration?: number; newDuration?: number;
+        oldWeight?: number; newWeight?: number;
+      };
+      const dateCascade: DateCascadeItem[] = [];
+
+      // Sempre roda o rollup completo (cobre mudança de parentId, criação, exclusão, peso, etc.)
+      {
+        const result = propagateAndRollup(updatedTasks);
+        updatedTasks = result.tasks;
+      }
+
+      const rollupChanged = updatedTasks.filter(t => {
+        const orig = tasks.find(o => o.id === t.id);
+        if (!orig) return false;
+        return (
+          orig.startDate.slice(0,10) !== t.startDate.slice(0,10) ||
+          orig.endDate.slice(0,10) !== t.endDate.slice(0,10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
+        );
+      });
+      if (rollupChanged.length > 0 && projectId) {
+        await Promise.all(rollupChanged.map(t => {
+          const orig = tasks.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0,10) !== t.startDate.slice(0,10)) patch.startDate = t.startDate.slice(0,10);
+          if (orig.endDate.slice(0,10) !== t.endDate.slice(0,10)) patch.endDate = t.endDate.slice(0,10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
+      }
+      rollupChanged.forEach(t => {
+        const orig = tasks.find(o => o.id === t.id)!;
+        const item: DateCascadeItem = { id: t.id };
+        if (orig.startDate.slice(0,10) !== t.startDate.slice(0,10)) {
+          item.oldStart = orig.startDate.slice(0,10); item.newStart = t.startDate.slice(0,10);
+        }
+        if (orig.endDate.slice(0,10) !== t.endDate.slice(0,10)) {
+          item.oldEnd = orig.endDate.slice(0,10); item.newEnd = t.endDate.slice(0,10);
+        }
+        if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) {
+          item.oldDuration = orig.durationDays ?? 0; item.newDuration = t.durationDays;
+        }
+        if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) {
+          item.oldWeight = orig.weight ?? 1; item.newWeight = t.weight;
+        }
+        dateCascade.push(item);
+      });
+
+      setTasks(updatedTasks);
       addToast({ type: 'success', title: 'Salvo', description: `"${form.name}" atualizado.` });
+
+      // Record in history
+      const taskId = task.id;
+      const taskName = form.name;
+      const colLabel = COL_DEFS.find(c => c.key === colKey)?.label ?? colKey;
+      const undoPayload = {
+        name: oldForm.name, code: oldForm.code, level: oldForm.level,
+        parentId: oldForm.parentId || undefined, startDate: oldForm.startDate,
+        endDate: oldForm.endDate, durationDays: oldForm.durationDays,
+        plannedProgress: oldForm.plannedProgress, physicalProgress: oldForm.physicalProgress,
+        weight: oldForm.weight, isCriticalPath: oldForm.isCriticalPath,
+        responsible: oldForm.responsible || undefined,
+      };
+
+      push({
+        description: `${colLabel}: "${taskName}"`,
+        module: 'cronograma',
+        undo: async () => {
+          await scheduleApi.update(taskId, undoPayload);
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { physicalProgress: c.oldVal })));
+          await Promise.all(dateCascade.map(c => {
+            const u: Record<string, unknown> = {};
+            if (c.oldStart !== undefined) u.startDate = c.oldStart;
+            if (c.oldEnd !== undefined) u.endDate = c.oldEnd;
+            if (c.oldDuration !== undefined) u.durationDays = c.oldDuration;
+            if (c.oldWeight !== undefined) u.weight = c.oldWeight;
+            return scheduleApi.update(c.id, u);
+          }));
+          triggerDataOnly();
+        },
+        redo: async () => {
+          await scheduleApi.update(taskId, payload);
+          await Promise.all(progressCascade.map(c => scheduleApi.update(c.id, { physicalProgress: c.newVal })));
+          await Promise.all(dateCascade.map(c => {
+            const u: Record<string, unknown> = {};
+            if (c.newStart !== undefined) u.startDate = c.newStart;
+            if (c.newEnd !== undefined) u.endDate = c.newEnd;
+            if (c.newDuration !== undefined) u.durationDays = c.newDuration;
+            if (c.newWeight !== undefined) u.weight = c.newWeight;
+            return scheduleApi.update(c.id, u);
+          }));
+          triggerDataOnly();
+        },
+      });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       addToast({ type: 'error', title: 'Erro ao salvar', description: msg ?? 'Tente novamente.' });
@@ -2103,6 +2830,15 @@ export default function Cronograma() {
     });
   }
 
+  function onTableWheel(e: React.WheelEvent) {
+    if (e.ctrlKey) return; // Let Gantt handle Ctrl+wheel for zoom
+    if (!leftRef.current || !rightRef.current) return;
+    e.preventDefault();
+    const scrollDelta = e.deltaY;
+    leftRef.current.scrollTop += scrollDelta;
+    rightRef.current.scrollTop += scrollDelta;
+  }
+
   function startSplitterResize(e: React.MouseEvent) {
     e.preventDefault();
     splitterDragRef.current = { startX: e.clientX, startWidth: finalLeftWidth };
@@ -2122,7 +2858,11 @@ export default function Cronograma() {
   function onSplitterResizeEnd() {
     if (!splitterDragRef.current) return;
     setSplitterWidth(prev => {
-      localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      try {
+        localStorage.setItem('cronograma_splitter', String(prev ?? finalLeftWidth));
+      } catch (e) {
+        console.error('Failed to save splitter position:', e);
+      }
       return prev;
     });
     splitterDragRef.current = null;
@@ -2147,6 +2887,10 @@ export default function Cronograma() {
     const idx = tasks.findIndex(t => t.id === taskId);
     if (idx <= 0) return;
     const task = tasks[idx];
+    if (task.level === 0 && !task.parentId) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'A raiz do cronograma não pode ser movida.' });
+      return;
+    }
     const prev = tasks[idx - 1];
     const levelDelta = (prev.level + 1) - task.level;
     const descendants = getAllDescendants(taskId, tasks);
@@ -2162,9 +2906,29 @@ export default function Cronograma() {
       const orig = tasks.find(o => o.id === t.id);
       return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
     });
+    // Snapshot before/after for undo
+    const undoItems = changed.map(t => {
+      const orig = tasks.find(o => o.id === t.id)!;
+      return { id: t.id, code: orig.code, parentId: orig.parentId || undefined, level: orig.level };
+    });
+    const redoItems = changed.map(t => ({ id: t.id, code: t.code, parentId: t.parentId || undefined, level: t.level }));
+
     await Promise.all(changed.map(t =>
       scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
     ));
+
+    push({
+      description: `Indentar: "${task.name}"`,
+      module: 'cronograma',
+      undo: async () => {
+        await Promise.all(undoItems.map(u => scheduleApi.update(u.id, { code: u.code, parentId: u.parentId, level: u.level })));
+        triggerDataOnly();
+      },
+      redo: async () => {
+        await Promise.all(redoItems.map(r => scheduleApi.update(r.id, { code: r.code, parentId: r.parentId, level: r.level })));
+        triggerDataOnly();
+      },
+    });
   }
 
   async function outdentTask(taskId: string) {
@@ -2172,6 +2936,11 @@ export default function Cronograma() {
     if (!task?.parentId) return;
     const parent = tasks.find(t => t.id === task.parentId);
     if (!parent) return;
+    // Filho direto da raiz não pode ser outdented (criaria irmão da raiz).
+    if (parent.level === 0 && !parent.parentId) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'Nenhuma atividade pode ficar fora da raiz do cronograma.' });
+      return;
+    }
     const levelDelta = -1;
     const descendants = getAllDescendants(taskId, tasks);
     let updated = tasks.map(t => {
@@ -2186,9 +2955,28 @@ export default function Cronograma() {
       const orig = tasks.find(o => o.id === t.id);
       return orig && (orig.code !== t.code || orig.parentId !== t.parentId || orig.level !== t.level);
     });
+    const undoItems = changed.map(t => {
+      const orig = tasks.find(o => o.id === t.id)!;
+      return { id: t.id, code: orig.code, parentId: orig.parentId || undefined, level: orig.level };
+    });
+    const redoItems = changed.map(t => ({ id: t.id, code: t.code, parentId: t.parentId || undefined, level: t.level }));
+
     await Promise.all(changed.map(t =>
       scheduleApi.update(t.id, { code: t.code, parentId: t.parentId || undefined, level: t.level })
     ));
+
+    push({
+      description: `Recuar: "${task.name}"`,
+      module: 'cronograma',
+      undo: async () => {
+        await Promise.all(undoItems.map(u => scheduleApi.update(u.id, { code: u.code, parentId: u.parentId, level: u.level })));
+        triggerDataOnly();
+      },
+      redo: async () => {
+        await Promise.all(redoItems.map(r => scheduleApi.update(r.id, { code: r.code, parentId: r.parentId, level: r.level })));
+        triggerDataOnly();
+      },
+    });
   }
 
   function handleOutlineLevelChange(newLevel: number | 'all') {
@@ -2206,6 +2994,13 @@ export default function Cronograma() {
       addToast({ type: 'error', title: 'Erro nas predecessoras', description: errors.join('\n') });
       return;
     }
+    // Snapshot of old dependencies for undo
+    const oldDeps = (task.predecessorDeps ?? []).map(d => ({
+      predecessorId: d.predecessorId, lagDays: d.lagDays, type: d.type,
+    }));
+    const taskId = task.id;
+    const taskName = task.name;
+
     const existing = task.predecessorDeps ?? [];
     try {
       await Promise.all(existing.map(d => scheduleApi.removeDependency(d.id)));
@@ -2220,6 +3015,10 @@ export default function Cronograma() {
         const dep = await scheduleApi.addDependency(task.id, { predecessorId: predTask.id, lagDays: p.lag, type: p.type });
         created.push({ id: dep.id, predecessorId: dep.predecessorId, successorId: dep.successorId, lagDays: dep.lagDays, type: dep.type });
       }
+
+      // New set of predecessor specs (for redo)
+      const newDepSpecs = created.map(d => ({ predecessorId: d.predecessorId, lagDays: d.lagDays, type: d.type }));
+
       let updatedTasks = tasks.map(t => {
         if (t.id === task.id) return { ...t, predecessorDeps: created };
         const wasSuccessor = existing.some(d => d.predecessorId === t.id);
@@ -2244,8 +3043,126 @@ export default function Cronograma() {
         endDate: t.endDate.slice(0,10),
       })));
       addToast({ type: 'success', title: 'Predecessoras atualizadas', description: `${created.length} vínculo(s) criado(s).` });
+
+      // Record in history
+      push({
+        description: `Predecessoras: "${taskName}"`,
+        module: 'cronograma',
+        undo: async () => {
+          const current = await scheduleApi.getDependencies(taskId);
+          await Promise.all(current.map(d => scheduleApi.removeDependency(d.id)));
+          for (const dep of oldDeps) {
+            await scheduleApi.addDependency(taskId, dep);
+          }
+          triggerDataOnly();
+        },
+        redo: async () => {
+          const current = await scheduleApi.getDependencies(taskId);
+          await Promise.all(current.map(d => scheduleApi.removeDependency(d.id)));
+          for (const dep of newDepSpecs) {
+            await scheduleApi.addDependency(taskId, dep);
+          }
+          triggerDataOnly();
+        },
+      });
     } catch (err) {
       addToast({ type: 'error', title: 'Erro ao salvar', description: String(err) });
+    }
+  }
+
+  // Baseline functions
+  async function loadBaselineHistory() {
+    if (!projectId) return;
+    try {
+      const data = await baselineApi.list(projectId);
+      setBaselines(data);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar histórico', description: String(err) });
+    }
+  }
+
+  async function saveBaseline() {
+    if (!projectId) return;
+    setSavingBaseline(true);
+    try {
+      const result = await baselineApi.create(projectId, baselineDescription || undefined);
+      addToast({
+        type: 'success',
+        title: 'Linha de Base Gravada',
+        description: `Versão ${result.version} criada com sucesso.`,
+      });
+      setShowBaselineConfirm(false);
+      setBaselineDescription('');
+      await loadBaselineHistory();
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao gravar', description: String(err) });
+    } finally {
+      setSavingBaseline(false);
+    }
+  }
+
+  async function loadBaselineComparison(baseline: any) {
+    if (!projectId) return;
+    try {
+      const comparison = await baselineApi.compare(projectId, baseline.id);
+      setBaselineComparison(comparison);
+      setSelectedBaseline(baseline);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao comparar', description: String(err) });
+    }
+  }
+
+  // Physical progress functions
+  async function loadMetrics() {
+    if (!projectId) return;
+    try {
+      const data = await progressApi.metrics(projectId);
+      setMetrics(data);
+    } catch (err) {
+      console.error('Erro ao carregar métricas:', err);
+    }
+  }
+
+  async function loadReportHistory() {
+    if (!projectId) return;
+    try {
+      const data = await progressApi.listReports(projectId);
+      setReports(data);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar histórico', description: String(err) });
+    }
+  }
+
+  async function saveReport() {
+    if (!projectId) return;
+    setSavingReport(true);
+    try {
+      const result = await progressApi.createReport(projectId, reportDescription || undefined);
+      addToast({
+        type: 'success',
+        title: 'Relatório Gravado',
+        description: `Report #${result.reportNumber} criado com sucesso.`,
+      });
+      setShowSaveReportConfirm(false);
+      setReportDescription('');
+      // Reload all data to show updated enterprise progress
+      await loadData();
+      await loadMetrics();
+      await loadReportHistory();
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao gravar', description: String(err) });
+    } finally {
+      setSavingReport(false);
+    }
+  }
+
+  async function loadReportComparison(report: ProjectReport) {
+    if (!projectId) return;
+    try {
+      const comparison = await progressApi.getReport(projectId, report.id);
+      setSelectedReport(comparison);
+    } catch (err) {
+      addToast({ type: 'error', title: 'Erro ao carregar comparação', description: String(err) });
     }
   }
 
@@ -2253,7 +3170,7 @@ export default function Cronograma() {
     if (tasks.length === 0) return;
     const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
     const rows = tasks.map((t) =>
-      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.actualProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
+      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.physicalProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
     );
     const csv = [header, ...rows].join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -2284,10 +3201,6 @@ export default function Cronograma() {
 
   function onResizeEnd() {
     if (!dragRef.current) return;
-    setColWidths(prev => {
-      localStorage.setItem('cronograma_col_widths', JSON.stringify(prev));
-      return prev;
-    });
     dragRef.current = null;
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
@@ -2295,32 +3208,119 @@ export default function Cronograma() {
     document.removeEventListener('mouseup', onResizeEnd);
   }
 
-  // Column toggle handler
+  // Column toggle handler (ID column always required)
   function toggleCol(key: string) {
+    console.log('[Cronograma] toggleCol called for:', key);
+    if (key === 'rowId') return; // ID column cannot be toggled
     const col = COL_DEFS.find(c => c.key === key);
     if (col?.fixed) return;
     setVisibleCols((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      localStorage.setItem('cronograma_cols', JSON.stringify(Array.from(next)));
+      if (next.has(key)) {
+        next.delete(key);
+        console.log('[Cronograma] Hiding column:', key);
+      } else {
+        next.add(key);
+        console.log('[Cronograma] Showing column:', key);
+      }
+      next.add('rowId'); // Always ensure ID column is in the saved state
+      console.log('[Cronograma] New visible columns:', Array.from(next));
       return next;
     });
   }
 
   // Modal handlers
-  function openNew() { setEditingTask(null); setParentTask(null); setModalOpen(true); }
+  // Raiz da EAP: única, sempre level 0 sem pai. Nome = nome do projeto (read-only).
+  // Não pode ser excluída, movida, indentada/outdentada, e não admite irmãos.
+  const rootTask = useMemo(
+    () => tasks.find(t => t.level === 0 && !t.parentId) ?? null,
+    [tasks],
+  );
+  const isRootTask = (task: GanttTask) => task.level === 0 && !task.parentId;
+
+  function openNew() {
+    setEditingTask(null);
+    // Sem permitir irmãos da raiz: nova atividade vira filha direta da raiz.
+    setParentTask(rootTask);
+    setModalOpen(true);
+  }
   function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
   function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setModalOpen(true); }
-  function openDelete(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setDeleteTarget(task); }
+  function openDelete(task: GanttTask, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (isRootTask(task)) {
+      addToast({ type: 'warning', title: 'Operação não permitida', description: 'A raiz do cronograma representa o Empreendimento e não pode ser excluída.' });
+      return;
+    }
+    setDeleteTarget(task);
+  }
 
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
+
+    // Snapshot the task before deleting (for undo)
+    const snapshot = deleteTarget;
+    const hasChildren = deleteTarget.hasChildren;
+
     try {
       await scheduleApi.delete(deleteTarget.id);
       addToast({ type: 'success', title: 'Excluído', description: `"${deleteTarget.name}" removido.` });
       setDeleteTarget(null);
-      loadData();
+
+      // Rollup: ao excluir uma filha, datas/peso do pai podem mudar
+      const nextLocal = tasks.filter(t => t.id !== deleteTarget.id);
+      const { tasks: cascaded } = propagateAndRollup(nextLocal);
+      const parentsToSave = cascaded.filter(t => {
+        const orig = nextLocal.find(o => o.id === t.id);
+        if (!orig) return false;
+        return (
+          orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10) ||
+          orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10) ||
+          (orig.durationDays ?? 0) !== (t.durationDays ?? 0) ||
+          Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001
+        );
+      });
+      if (parentsToSave.length > 0 && projectId) {
+        await Promise.all(parentsToSave.map(t => {
+          const orig = nextLocal.find(o => o.id === t.id)!;
+          const patch: Record<string, unknown> = {};
+          if (orig.startDate.slice(0, 10) !== t.startDate.slice(0, 10)) patch.startDate = t.startDate.slice(0, 10);
+          if (orig.endDate.slice(0, 10) !== t.endDate.slice(0, 10)) patch.endDate = t.endDate.slice(0, 10);
+          if ((orig.durationDays ?? 0) !== (t.durationDays ?? 0)) patch.durationDays = t.durationDays;
+          if (Math.abs((orig.weight ?? 0) - (t.weight ?? 0)) > 0.0001) patch.weight = t.weight;
+          return scheduleApi.update(t.id, patch);
+        }));
+      }
+      loadTasksOnly();
+
+      // Record undo only for leaf tasks (parent deletion cascades children — complex to undo)
+      if (!hasChildren && projectId) {
+        push({
+          description: `Excluir: "${snapshot.name}"`,
+          module: 'cronograma',
+          undo: async () => {
+            await scheduleApi.create(projectId, {
+              name: snapshot.name,
+              code: snapshot.code,
+              level: snapshot.level,
+              parentId: snapshot.parentId || undefined,
+              startDate: snapshot.startDate.slice(0, 10),
+              endDate: snapshot.endDate.slice(0, 10),
+              durationDays: snapshot.durationDays,
+              plannedProgress: snapshot.plannedProgress,
+              physicalProgress: snapshot.physicalProgress,
+              weight: snapshot.weight,
+              isCriticalPath: snapshot.isCriticalPath,
+              responsible: snapshot.responsible,
+            });
+            triggerDataOnly();
+          },
+          redo: async () => {
+            triggerDataOnly();
+          },
+        });
+      }
     } catch {
       addToast({ type: 'error', title: 'Erro', description: 'Não foi possível excluir.' });
     } finally {
@@ -2329,7 +3329,11 @@ export default function Cronograma() {
   }
 
   function barLeft(task: GanttTask) { return daysBetween(minDate, parseDate(task.startDate)) * pxPerDay; }
-  function barWidth(task: GanttTask) { return Math.max(4, daysBetween(parseDate(task.startDate), parseDate(task.endDate)) * pxPerDay); }
+  function barWidth(task: GanttTask) {
+    // intervalo inclusivo: 1 dia (start=end) ocupa uma célula inteira (pxPerDay)
+    const spanDays = daysBetween(parseDate(task.startDate), parseDate(task.endDate)) + 1;
+    return Math.max(pxPerDay, spanDays * pxPerDay);
+  }
 
   // ── No project selected ──────────────────────────────────────────────────────
 
@@ -2348,17 +3352,17 @@ export default function Cronograma() {
 
   return (
     <>
-      <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0 }}>
+      <div className="ao-card" style={{ padding: '0.75rem 1rem', marginBottom: 0, display: 'flex', flexDirection: 'column', height: '100vh', maxHeight: '100vh', overflow: 'hidden' }}>
 
         {/* Toolbar */}
-        <div className="ao-card-hdr" style={{ marginBottom: 8 }}>
+        <div className="ao-card-hdr" style={{ marginBottom: 4, flexShrink: 0 }}>
           <span className="ao-card-title">EAP — Cronograma completo</span>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               placeholder="Buscar atividade..."
               value={searchRaw}
               onChange={(e) => setSearchRaw(e.target.value)}
-              style={{ padding: '5px 9px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 8, background: 'var(--bg1)', color: 'var(--t1)', width: 160 }}
+              style={{ padding: '5px 9px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', width: 160 }}
             />
             <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
             <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
@@ -2368,9 +3372,9 @@ export default function Cronograma() {
               style={{
                 padding: '5px 8px',
                 fontSize: 11,
-                border: '0.5px solid var(--bd2)',
+                border: '1px solid var(--bd)',
                 borderRadius: 6,
-                background: 'var(--bg1)',
+                background: 'var(--s0)',
                 color: 'var(--t1)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -2380,20 +3384,20 @@ export default function Cronograma() {
             </select>
             <button
               className="ao-btn ao-btn-sm"
-              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
-              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
-              title="Adicionar recuo (tornar filho da tarefa acima)"
-            >→ Recuo</button>
-            <button
-              className="ao-btn ao-btn-sm"
               disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
               onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
               title="Remover recuo (subir um nível)"
-            >← Recuo</button>
+            >←</button>
+            <button
+              className="ao-btn ao-btn-sm"
+              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
+              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
+              title="Adicionar recuo (tornar filho da tarefa acima)"
+            >→</button>
             <select
               value={outlineLevel}
               onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              style={{ padding: '5px 8px', fontSize: 11, border: '0.5px solid var(--bd2)', borderRadius: 6, background: 'var(--bg1)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s0)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
               title="Mostrar até este nível hierárquico"
             >
               <option value="all">Todos os níveis</option>
@@ -2402,8 +3406,8 @@ export default function Cronograma() {
             <div style={{ position: 'relative' }}>
               <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
               {showColPicker && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                  {COL_DEFS.map(col => (
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  {COL_DEFS.filter(col => col.key !== 'rowId').map(col => (
                     <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
                       <input
                         type="checkbox"
@@ -2423,17 +3427,67 @@ export default function Cronograma() {
               className="ao-btn ao-btn-sm"
               onClick={() => setShowAdvFilters(!showAdvFilters)}
               style={{
-                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#2563EB' : undefined,
+                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#1A56A0' : undefined,
                 color: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#fff' : undefined,
               }}
             >
               🔍 Filtros avançados
             </button>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" style={{ background: '#7c3aed', color: '#fff', border: 'none' }} onClick={() => setShowBaselineMenu(!showBaselineMenu)} title="Opções de baseline">
+                📊 Baseline
+              </button>
+              {showBaselineMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { loadBaselineHistory(); setShowBaselineHistory(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Visualizar histórico de linhas de base">
+                    📊 Histórico Baseline
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowBaselineConfirm(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Gravar uma nova linha de base do cronograma">
+                    💾 Gravar Baseline
+                  </button>
+                </div>
+              )}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <button className="ao-btn ao-btn-sm" style={{ background: '#ec4899', color: '#fff', border: 'none' }} onClick={() => setShowReportMenu(!showReportMenu)} title="Opções de report">
+                📈 Report
+              </button>
+              {showReportMenu && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowSaveReportConfirm(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Gravar relatório de avanço físico">
+                    💾 Gravar Report
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={() => { loadReportHistory(); setShowReportHistory(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Visualizar histórico de relatórios">
+                    📈 Histórico Reports
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
             <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
+            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
             <button
               className="ao-btn ao-btn-sm"
-              style={{ background: '#2563EB', color: '#fff', border: 'none' }}
+              onClick={undo}
+              disabled={past.length === 0 || historyProcessing}
+              title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
+              style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Undo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <button
+              className="ao-btn ao-btn-sm"
+              onClick={redo}
+              disabled={future.length === 0 || historyProcessing}
+              title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
+              style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
+            >
+              <Redo2 style={{ width: 12, height: 12 }} />
+            </button>
+            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
+            <button
+              className="ao-btn ao-btn-sm"
+              style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
               onClick={openNew}
             >
               + Nova atividade
@@ -2442,7 +3496,7 @@ export default function Cronograma() {
         </div>
 
         {/* Legend */}
-        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 4, flexWrap: 'wrap', flexShrink: 0 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 10, height: 5, background: 'rgba(55,138,221,.3)', borderRadius: 2, display: 'inline-block' }} />Planejado
           </span>
@@ -2450,7 +3504,7 @@ export default function Cronograma() {
             <span style={{ width: 10, height: 5, background: '#3B6D11', borderRadius: 2, display: 'inline-block' }} />No prazo
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: '#C47D0F', borderRadius: 2, display: 'inline-block' }} />Leve atraso
+            <span style={{ width: 10, height: 5, background: '#D97706', borderRadius: 2, display: 'inline-block' }} />Leve atraso
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 10, height: 5, background: '#E24B4A', borderRadius: 2, display: 'inline-block' }} />Crítico
@@ -2461,15 +3515,37 @@ export default function Cronograma() {
           <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
         </div>
 
+        {/* % Avanço Físico — consolidado: reflete apenas o último Report gravado.
+            Edições de atividades NÃO atualizam este indicador. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 4, padding: '10px 16px', background: 'var(--bg2)', borderRadius: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--t2)', letterSpacing: 0.3, textTransform: 'uppercase' }}>% Avanço Físico</span>
+            <span style={{ fontSize: 24, fontWeight: 600, color: '#10b981', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+              {(metrics?.physicalProgress ?? 0).toFixed(2)}%
+            </span>
+          </div>
+          {metrics && (metrics.lastReportNumber > 0 || metrics.activeBaselineVersion > 0) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 16, borderLeft: '1px solid var(--bd)', fontSize: 11, color: 'var(--t2)' }}>
+              {metrics.lastReportNumber > 0 ? (
+                <>
+                  <span>Report #{metrics.lastReportNumber}{metrics.lastReportDate ? ` · ${new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}` : ''}</span>
+                  {metrics.activeBaselineVersion > 0 && <span>Baseline v{metrics.activeBaselineVersion}</span>}
+                </>
+              ) : (
+                <span style={{ fontStyle: 'italic' }}>Nenhum Report gravado · grave para consolidar</span>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Gantt wrap */}
-        <div style={{ display: 'flex', border: '0.5px solid var(--bd)', borderRadius: 12, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
+        <div style={{ display: 'flex', border: '1px solid var(--bd)', borderRadius: 12, overflow: 'hidden', flex: 1, minHeight: 0 }}>
 
           {/* ── Left panel: Multi-column ── */}
-          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg1)' }}>
+          <div style={{ width: finalLeftWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--s0)', height: '100%' }}>
             {/* Header row */}
-            <div style={{ height: HDR_H, background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
+            <div style={{ height: HDR_H, background: 'var(--s1)', borderBottom: '0.5px solid var(--bd)', display: 'flex', flexShrink: 0, position: 'sticky', top: 0, zIndex: 1 }}>
               {visibleColDefs.map((col, colIdx) => {
-                const colRef = useRef<HTMLButtonElement>(null);
                 const hasFilter = colFilters[col.key]?.length > 0;
                 const isFiltered = sortConfig?.key === col.key || hasFilter;
 
@@ -2495,11 +3571,14 @@ export default function Cronograma() {
                 >
                   <span>{col.label}</span>
                   <button
-                    ref={colRef}
+                    ref={(el) => {
+                      if (el) colRefsMap.current.set(col.key, el);
+                      else colRefsMap.current.delete(col.key);
+                    }}
                     onClick={() => setFilterDropdownCol(filterDropdownCol === col.key ? null : col.key)}
                     title="Filtrar coluna"
                     style={{
-                      background: isFiltered ? '#2563EB' : 'transparent',
+                      background: isFiltered ? '#1A56A0' : 'transparent',
                       border: 'none',
                       cursor: 'pointer',
                       fontSize: 11,
@@ -2521,7 +3600,7 @@ export default function Cronograma() {
                       onSortChange={(dir) => setSortConfig(dir ? { key: col.key, dir } : null)}
                       onFilterChange={(vals) => setColFilters(prev => ({ ...prev, [col.key]: vals }))}
                       onClose={() => setFilterDropdownCol(null)}
-                      triggerRef={colRef}
+                      triggerRef={colRefsMap.current.get(col.key)}
                     />
                   )}
                   {colIdx < visibleColDefs.length - 1 && (
@@ -2545,13 +3624,13 @@ export default function Cronograma() {
             </div>
 
             {/* Rows */}
-            <div ref={leftRef} onScroll={onLeftScroll} style={{ overflowY: 'scroll', overflowX: 'hidden', flex: 1 }}>
+            <div ref={leftRef} onScroll={onLeftScroll} onWheel={onTableWheel} style={{ overflowY: 'hidden', overflowX: 'hidden', flex: 1 }}>
               {loading
                 ? Array.from({ length: 12 }).map((_, i) => (
                     <div key={i} style={{ height: ROW_H, borderBottom: '0.5px solid var(--bd)', display: 'flex' }}>
                       {visibleColDefs.map((col, colIdx) => (
                         <div key={col.key} style={{ width: effectiveWidth(col), flexShrink: 0, borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none', display: 'flex', alignItems: 'center', padding: '0 8px' }}>
-                          <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, width: '60%' }} />
+                          <div style={{ height: 8, background: 'var(--s2)', borderRadius: 4, width: '60%' }} />
                         </div>
                       ))}
                     </div>
@@ -2660,15 +3739,17 @@ export default function Cronograma() {
                           height: ROW_H,
                           display: 'flex',
                           borderBottom: '0.5px solid var(--bd)',
-                          background: isHov ? 'var(--bg2)' : (lvStyle.background as string ?? ''),
+                          background: isHov ? 'var(--s1)' : (lvStyle.background as string ?? ''),
                           userSelect: 'none',
-                          outline: isSelected ? '1px solid #2563EB' : 'none',
+                          outline: isSelected ? '1px solid #1A56A0' : 'none',
                           outlineOffset: '-1px',
                         }}
                       >
                         {visibleColDefs.map((col, colIdx) => {
                           const isNameCol = col.key === 'name';
-                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key);
+                          // Tarefas pai: datas/duração/peso são calculados das filhas (não editáveis)
+                          const isParentLockedCol = task.hasChildren && ['startDate', 'endDate', 'duration', 'weight'].includes(col.key);
+                          const isEditable = ['name', 'duration', 'startDate', 'endDate', 'progress', 'weight', 'responsible', 'predecessors'].includes(col.key) && !isParentLockedCol;
                           const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.colKey === col.key;
                           const isCellSelected = isSelected && colIdx === selectedColIdx;
 
@@ -2699,7 +3780,7 @@ export default function Cronograma() {
                             <div
                               key={col.key}
                               onDoubleClick={isEditable ? (e) => startInlineEdit(task, col.key, e) : undefined}
-                              title={isEditable ? 'Duplo clique para editar' : ''}
+                              title={isParentLockedCol ? (col.key === 'weight' ? 'Peso = soma dos pesos das tarefas filhas' : 'Calculado automaticamente a partir das tarefas filhas') : (isEditable ? 'Duplo clique para editar' : '')}
                               style={{
                                 width: effectiveWidth(col),
                                 flexShrink: 0,
@@ -2708,11 +3789,13 @@ export default function Cronograma() {
                                 alignItems: 'center',
                                 gap: isNameCol && !isEditing ? 4 : 0,
                                 borderRight: colIdx < visibleColDefs.length - 1 ? '0.5px solid var(--bd)' : 'none',
-                                cursor: isEditable ? 'text' : 'default',
+                                cursor: isParentLockedCol ? 'not-allowed' : (isEditable ? 'text' : 'default'),
                                 overflow: 'hidden',
                                 backgroundColor: isEditing ? '#fff' : undefined,
-                                border: isEditing ? '2px solid #2563EB' : (isCellSelected ? '1.5px solid #2563EB' : undefined),
+                                border: isEditing ? '2px solid #1A56A0' : (isCellSelected ? '1.5px solid #1A56A0' : undefined),
                                 borderRadius: isEditing || isCellSelected ? 4 : 0,
+                                fontStyle: isParentLockedCol ? 'italic' : undefined,
+                                color: isParentLockedCol ? 'var(--t3)' : undefined,
                                 ...(isNameCol && !isEditing ? lvStyle : { fontSize: 11 }),
                               }}
                             >
@@ -2751,19 +3834,21 @@ export default function Cronograma() {
                                     {task.hasChildren ? (
                                       <button
                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                        style={{ width: 16, height: 16, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                        style={{ width: 16, height: 16, marginLeft: task.level * 14, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--t2)', fontSize: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform .15s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
                                       >▶</button>
                                     ) : (
-                                      <span style={{ width: 16, flexShrink: 0 }} />
+                                      <span style={{ width: 16, marginLeft: task.level * 14, flexShrink: 0 }} />
                                     )}
-                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: task.level * 16 }} title={task.name}>
+                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={task.name}>
                                       {task.name}
                                     </span>
                                     {isHov && (
                                       <div style={{ display: 'flex', gap: 2, flexShrink: 0, marginLeft: 'auto' }}>
-                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
-                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
-                                        <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '0.5px solid var(--bd)', borderRadius: 4, background: 'var(--bg1)', cursor: 'pointer', color: '#C9312F', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                        <button title="Adicionar subitem" onClick={(e) => openNewChild(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>+</button>
+                                        <button title="Editar" onClick={(e) => openEdit(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: 'var(--t2)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>✎</button>
+                                        {!isRootTask(task) && (
+                                          <button title="Excluir" onClick={(e) => openDelete(task, e)} style={{ width: 18, height: 18, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', cursor: 'pointer', color: '#B91C1C', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>×</button>
+                                        )}
                                       </div>
                                     )}
                                   </>
@@ -2784,8 +3869,8 @@ export default function Cronograma() {
                                   </span>
                                 )}
                                 {col.key === 'progress' && (
-                                  <span className={badgeClass(task.actualProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto' }}>
-                                    {task.actualProgress}%
+                                  <span className={badgeClass(task.physicalProgress, task.plannedProgress)} style={{ fontSize: 9, justifyContent: 'center', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                                    {Number(task.physicalProgress ?? 0).toFixed(2)}%
                                   </span>
                                 )}
                                 {col.key === 'predecessors' && (
@@ -2826,6 +3911,11 @@ export default function Cronograma() {
                     );
                   })}
             </div>
+            {/* Compensa altura da scrollbar horizontal do Gantt, garantindo
+                alinhamento vertical entre a última linha da EAP e do Gantt. */}
+            {scrollbarH > 0 && (
+              <div aria-hidden style={{ height: scrollbarH, flexShrink: 0, background: 'var(--s0)' }} />
+            )}
           </div>
 
           {/* Splitter */}
@@ -2841,7 +3931,7 @@ export default function Cronograma() {
               userSelect: 'none',
               transition: 'background-color 0.15s',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg2)')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--s1)')}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '')}
           />
 
@@ -2851,7 +3941,7 @@ export default function Cronograma() {
             {/* Header with upper and lower rows */}
             <div
               ref={hdrRef}
-              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--bg2)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
+              style={{ height: HDR_H, flexShrink: 0, overflow: 'hidden', background: 'var(--s1)', borderBottom: '0.5px solid var(--bd)', position: 'relative', display: 'flex', flexDirection: 'column' }}
             >
               {/* Upper header */}
               <div style={{ flex: 1, position: 'relative', borderBottom: '0.5px solid var(--bd)' }}>
@@ -2878,7 +3968,7 @@ export default function Cronograma() {
             </div>
 
             {/* Scrollable bar body */}
-            <div ref={rightRef} onScroll={onRightScroll} style={{ flex: 1, overflow: 'auto', background: 'var(--bg1)' }}>
+            <div ref={rightRef} onScroll={onRightScroll} style={{ flex: 1, overflow: 'auto', background: 'var(--s0)' }}>
               <div style={{ position: 'relative', width: totalWidth, height: visibleTasks.length * ROW_H }}>
                 <div style={{ position: 'absolute', left: todayLeft, top: 0, bottom: 0, width: 1, background: 'rgba(226,75,74,.25)', zIndex: 1, pointerEvents: 'none' }} />
 
@@ -2887,10 +3977,10 @@ export default function Cronograma() {
                   const width = barWidth(task);
                   const barH = task.level <= 1 ? 12 : 8;
                   const barTop = Math.round((ROW_H - barH) / 2);
-                  const actualW = Math.max(2, Math.round((task.actualProgress / 100) * width));
-                  const color = barColor(task.actualProgress, task.plannedProgress);
+                  const actualW = Math.max(2, Math.round((task.physicalProgress / 100) * width));
+                  const color = barColor(task.physicalProgress, task.plannedProgress);
                   const top = rowIdx * ROW_H;
-                  const bg = hoveredRow === task.id ? 'var(--bg2)' : rowBg(task.level);
+                  const bg = hoveredRow === task.id ? 'var(--s1)' : rowBg(task.level);
 
                   return (
                     <div
@@ -2902,14 +3992,14 @@ export default function Cronograma() {
                       {/* Actual bar */}
                       <div style={{ position: 'absolute', left, width: actualW, height: barH, top: barTop, background: color, borderRadius: 3, opacity: task.level <= 1 ? 1 : 0.85 }} />
                       {task.level <= 2 && actualW > 20 && (
-                        <span style={{ position: 'absolute', left: left + actualW + 3, top: barTop - 1, fontSize: 9, color, whiteSpace: 'nowrap' }}>
-                          {task.actualProgress}%
+                        <span style={{ position: 'absolute', left: left + actualW + 3, top: barTop - 1, fontSize: 9, color, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                          {Number(task.physicalProgress ?? 0).toFixed(2)}%
                         </span>
                       )}
                       {/* Tooltip on bar hover */}
                       <div
                         style={{ position: 'absolute', left, width, height: ROW_H, top: 0, cursor: 'pointer', zIndex: 2 }}
-                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${task.plannedProgress}% | Realizado: ${task.actualProgress}%`}
+                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${Number(task.plannedProgress ?? 0).toFixed(2)}% | % Avanço Físico: ${Number(task.physicalProgress ?? 0).toFixed(2)}%`}
                       />
                     </div>
                   );
@@ -2999,6 +4089,296 @@ export default function Cronograma() {
           onChange={setAdvFilters}
           onClose={() => setShowAdvFilters(false)}
         />
+      )}
+
+      {/* Baseline Confirmation Modal */}
+      {showBaselineConfirm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--t1)' }}>Gravar Linha de Base</h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--t2)', fontSize: 14 }}>
+              Você está prestes a gravar uma snapshot completa do cronograma atual. Essa será utilizada como referência para monitoramento e comparação.
+            </p>
+            <div style={{ margin: '0 0 16px 0' }}>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>
+                Descrição (opcional):
+              </label>
+              <input
+                type="text"
+                value={baselineDescription}
+                onChange={(e) => setBaselineDescription(e.target.value)}
+                placeholder="ex: Baseline após aprovação de escopo"
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)', color: 'var(--t1)', fontSize: 12, boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowBaselineConfirm(false); setBaselineDescription(''); }}
+                disabled={savingBaseline}
+              >
+                Cancelar
+              </button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#7c3aed', color: '#fff', border: 'none' }}
+                onClick={saveBaseline}
+                disabled={savingBaseline}
+              >
+                {savingBaseline ? '⏳ Gravando...' : '💾 Gravar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Baseline History Modal */}
+      {showBaselineHistory && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 20px 0', color: 'var(--t1)' }}>Histórico de Linhas de Base</h2>
+            {baselines.length === 0 ? (
+              <p style={{ color: 'var(--t3)', fontSize: 13 }}>Nenhuma linha de base gravada ainda.</p>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--bd)' }}>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Versão</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Data/Hora</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Usuário</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Itens</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Descrição</th>
+                      <th style={{ padding: 8, textAlign: 'center', color: 'var(--t2)' }}>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {baselines.map((b) => (
+                      <tr key={b.id} style={{ borderBottom: '0.5px solid var(--bd)' }}>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 500 }}>Baseline {String(b.version).padStart(2, '0')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{new Date(b.createdAt).toLocaleString('pt-BR')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{b.user.fullName || b.user.email}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{b.itemCount}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.description || '—'}</td>
+                        <td style={{ padding: 8, textAlign: 'center' }}>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                            onClick={() => loadBaselineComparison(b)}
+                          >
+                            Comparar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {baselineComparison && (
+                  <div style={{ marginTop: 24, padding: 16, background: 'var(--bg2)', borderRadius: 8 }}>
+                    <h3 style={{ margin: '0 0 12px 0', color: 'var(--t1)', fontSize: 13 }}>
+                      Comparação: {selectedBaseline.version === 1 ? 'Inicial' : `Versão ${selectedBaseline.version}`} vs Atual
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #3b82f6' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Tarefas Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.itemsChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #ef4444' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Datas Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.datesChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #f59e0b' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Durações Alteradas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.durationChanged}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #10b981' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Progresso Alterado</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{baselineComparison.summary.progressChanged}</div>
+                      </div>
+                    </div>
+
+                    {baselineComparison.changes.length > 0 && (
+                      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <h4 style={{ margin: '0 0 8px 0', color: 'var(--t2)', fontSize: 12 }}>Detalhes das Alterações:</h4>
+                        {baselineComparison.changes.slice(0, 10).map((change: any, idx: number) => (
+                          <div key={idx} style={{ padding: 8, marginBottom: 8, background: 'var(--bg1)', borderRadius: 4, fontSize: 11, borderLeft: `3px solid ${change.changeType === 'NEW_ITEM' ? '#10b981' : change.changeType === 'DELETED_ITEM' ? '#ef4444' : '#f59e0b'}` }}>
+                            <div style={{ fontWeight: 600, color: 'var(--t1)' }}>{change.code} - {change.name}</div>
+                            <div style={{ color: 'var(--t3)', marginTop: 4 }}>
+                              {change.changeType === 'NEW_ITEM' && '✚ Nova tarefa'}
+                              {change.changeType === 'DELETED_ITEM' && '✕ Tarefa removida'}
+                              {change.changeType === 'MODIFIED' && `Alterado: ${change.changes.join(', ')}`}
+                            </div>
+                          </div>
+                        ))}
+                        {baselineComparison.changes.length > 10 && (
+                          <p style={{ color: 'var(--t3)', fontSize: 11, margin: '8px 0 0 0' }}>... e mais {baselineComparison.changes.length - 10} alterações</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowBaselineHistory(false); setBaselineComparison(null); setSelectedBaseline(null); }}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Report Modal */}
+      {showSaveReportConfirm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--t1)' }}>Gravar Relatório de Avanço Físico</h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--t2)', fontSize: 14 }}>
+              Você está prestes a gravar uma snapshot do avanço físico atual. Esse relatório será comparado com a linha de base para análise de desempenho.
+            </p>
+            <div style={{ margin: '0 0 16px 0' }}>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>
+                Descrição (opcional):
+              </label>
+              <input
+                type="text"
+                value={reportDescription}
+                onChange={(e) => setReportDescription(e.target.value)}
+                placeholder="ex: Avanço após conclusão da fundação"
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--bg2)', color: 'var(--t1)', fontSize: 12, boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowSaveReportConfirm(false); setReportDescription(''); }}
+                disabled={savingReport}
+              >
+                Cancelar
+              </button>
+              <button
+                className="ao-btn ao-btn-sm"
+                style={{ background: '#ec4899', color: '#fff', border: 'none' }}
+                onClick={saveReport}
+                disabled={savingReport}
+              >
+                {savingReport ? '⏳ Gravando...' : '📊 Gravar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report History Modal */}
+      {showReportHistory && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ margin: '0 0 20px 0', color: 'var(--t1)' }}>Histórico de Relatórios de Avanço Físico</h2>
+            {reports.length === 0 ? (
+              <p style={{ color: 'var(--t3)', fontSize: 13 }}>Nenhum relatório gravado ainda.</p>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--bd)' }}>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Report #</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Data/Hora</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Usuário</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Avanço %</th>
+                      <th style={{ padding: 8, textAlign: 'left', color: 'var(--t2)' }}>Descrição</th>
+                      <th style={{ padding: 8, textAlign: 'center', color: 'var(--t2)' }}>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.map((r) => (
+                      <tr key={r.id} style={{ borderBottom: '0.5px solid var(--bd)' }}>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 500 }}>Report #{String(r.reportNumber).padStart(3, '0')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{new Date(r.createdAt).toLocaleString('pt-BR')}</td>
+                        <td style={{ padding: 8, color: 'var(--t2)' }}>{r.user.fullName || r.user.email}</td>
+                        <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{r.physicalProgress.toFixed(2)}%</td>
+                        <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
+                        <td style={{ padding: 8, textAlign: 'center' }}>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                            onClick={() => loadReportComparison(r)}
+                          >
+                            Comparar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {selectedReport && (
+                  <div style={{ marginTop: 24, padding: 16, background: 'var(--bg2)', borderRadius: 8 }}>
+                    <h3 style={{ margin: '0 0 12px 0', color: 'var(--t1)', fontSize: 13 }}>
+                      Report #{selectedReport.reportNumber} vs Baseline v{selectedReport.baselineVersion}
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #3b82f6' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>No Prazo</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.onSchedule}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #ef4444' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Atrasadas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.delayed}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #10b981' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Adiantadas</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.advanced}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #f59e0b' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Avanço Acima</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.progressAbove}</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg1)', borderRadius: 6, borderLeft: '3px solid #a855f7' }}>
+                        <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 4 }}>Avanço Abaixo</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>{selectedReport.summary.progressBelow}</div>
+                      </div>
+                    </div>
+
+                    {selectedReport.changes.length > 0 && (
+                      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        <h4 style={{ margin: '0 0 8px 0', color: 'var(--t2)', fontSize: 12 }}>Detalhes das Tarefas:</h4>
+                        {selectedReport.changes.slice(0, 10).map((change, idx: number) => (
+                          <div key={idx} style={{ padding: 8, marginBottom: 8, background: 'var(--bg1)', borderRadius: 4, fontSize: 11, borderLeft: `3px solid ${change.status === 'onSchedule' ? '#3b82f6' : change.status === 'delayed' ? '#ef4444' : '#10b981'}` }}>
+                            <div style={{ fontWeight: 600, color: 'var(--t1)' }}>{change.code} - {change.name}</div>
+                            <div style={{ color: 'var(--t3)', marginTop: 4 }}>
+                              Status: <span style={{ fontWeight: 500, color: 'var(--t1)' }}>
+                                {change.status === 'onSchedule' && 'No prazo'}
+                                {change.status === 'delayed' && `Atrasado ${change.deviation.days} dia(s)`}
+                                {change.status === 'advanced' && `Adiantado ${Math.abs(change.deviation.days)} dia(s)`}
+                              </span>
+                              <br />
+                              Progresso: <span style={{ fontWeight: 500, color: 'var(--t1)' }}>
+                                Planejado {change.baseline.progress.toFixed(2)}% → % Avanço Físico {change.report.progress.toFixed(2)}%
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        {selectedReport.changes.length > 10 && (
+                          <p style={{ color: 'var(--t3)', fontSize: 11, margin: '8px 0 0 0' }}>... e mais {selectedReport.changes.length - 10} tarefas</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                className="ao-btn ao-btn-sm"
+                onClick={() => { setShowReportHistory(false); setSelectedReport(null); }}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

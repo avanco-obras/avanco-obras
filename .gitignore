@@ -52,6 +52,8 @@ temp/
 # Backend specific
 backend/.env
 backend/.env.local
+backend/dist/
+backend/tsconfig.tsbuildinfo
 
 # Frontend specific
 frontend/.env

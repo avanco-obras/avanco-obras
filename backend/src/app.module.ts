@@ -14,6 +14,7 @@ import { WeeklyPlanningModule } from './weekly-planning/weekly-planning.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { AiImportModule } from './ai-import/ai-import.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AiImportModule } from './ai-import/ai-import.module';
     DashboardModule,
     UploadsModule,
     AiImportModule,
+    RealtimeModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],
