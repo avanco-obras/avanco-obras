@@ -4,6 +4,19 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  // Idempotent: if any project already exists (i.e. database was seeded or has
+  // user data), skip seeding entirely so that container restarts don't wipe
+  // imports/measurements. Re-seed manually by truncating tables and running
+  // `npx prisma db seed`, or by setting FORCE_SEED=1 in the environment.
+  const existingProjectCount = await prisma.project.count();
+  if (existingProjectCount > 0 && process.env.FORCE_SEED !== '1') {
+    console.log(
+      `Seed skipped — ${existingProjectCount} project(s) already exist. ` +
+      'Set FORCE_SEED=1 to wipe and reseed.',
+    );
+    return;
+  }
+
   console.log('Seeding database...');
 
   // ---------------------------------------------------------------------------

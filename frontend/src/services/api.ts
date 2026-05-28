@@ -189,12 +189,29 @@ export const dashboardApi = {
 
 // ── Uploads ───────────────────────────────────────────────────────
 export const uploadsApi = {
-  list: (projectId: string) =>
-    api.get<Upload[]>(`/projects/${projectId}/uploads`).then((r) => r.data),
-  upload: (projectId: string, formData: FormData) =>
-    api.post<Upload>(`/projects/${projectId}/uploads`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data),
+  list: (projectId: string, params?: { category?: string; floorId?: string }) =>
+    api
+      .get<Upload[]>(`/projects/${projectId}/uploads`, { params })
+      .then((r) => r.data),
+  upload: (
+    projectId: string,
+    formData: FormData,
+    params?: { category?: string; floorId?: string },
+  ) =>
+    api
+      .post<Upload>(`/projects/${projectId}/uploads`, formData, {
+        params,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data),
+  getIfcModel: (projectId: string) =>
+    api
+      .get<(Upload & { url: string }) | null>(`/projects/${projectId}/uploads/ifc-model`)
+      .then((r) => r.data),
+  listFloorPlans: (floorId: string) =>
+    api
+      .get<Array<Upload & { url: string }>>(`/floors/${floorId}/plans`)
+      .then((r) => r.data),
   delete: (id: string) => api.delete(`/uploads/${id}`).then((r) => r.data),
 };
 

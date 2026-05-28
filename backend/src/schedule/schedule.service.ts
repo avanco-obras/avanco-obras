@@ -9,6 +9,7 @@ import * as xlsx from 'xlsx';
 import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 export interface GanttDep {
   id: string;
@@ -47,7 +48,10 @@ export interface CurvaSPoint {
 
 @Injectable()
 export class ScheduleService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async findAll(projectId: string) {
     const project = await this.prisma.project.findUnique({
@@ -110,7 +114,7 @@ export class ScheduleService {
       order = last ? last.order + 1 : 0;
     }
 
-    return this.prisma.scheduleItem.create({
+    const created = await this.prisma.scheduleItem.create({
       data: {
         projectId,
         parentId: dto.parentId ?? null,
@@ -132,18 +136,20 @@ export class ScheduleService {
         activityType: true,
       },
     });
+    this.realtime.emitScheduleChanged({ projectId, action: 'created', scheduleItemId: created.id });
+    return created;
   }
 
   async update(id: string, dto: UpdateScheduleItemDto) {
     const item = await this.prisma.scheduleItem.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, projectId: true, physicalProgress: true },
     });
     if (!item) {
       throw new NotFoundException(`Item de cronograma com ID "${id}" não encontrado`);
     }
 
-    return this.prisma.scheduleItem.update({
+    const updated = await this.prisma.scheduleItem.update({
       where: { id },
       data: {
         ...(dto.parentId !== undefined && { parentId: dto.parentId }),
@@ -165,12 +171,25 @@ export class ScheduleService {
         activityType: true,
       },
     });
+
+    if (
+      dto.physicalProgress !== undefined &&
+      Math.abs(Number(item.physicalProgress) - Number(updated.physicalProgress)) > 0.01
+    ) {
+      this.realtime.emitScheduleUpdated({
+        projectId: item.projectId,
+        scheduleItemId: id,
+        physicalProgress: Number(updated.physicalProgress),
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: string) {
     const item = await this.prisma.scheduleItem.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, projectId: true },
     });
     if (!item) {
       throw new NotFoundException(`Item de cronograma com ID "${id}" não encontrado`);
@@ -178,6 +197,7 @@ export class ScheduleService {
 
     // Prisma cascade handles children deletion (defined in schema onDelete: Cascade)
     await this.prisma.scheduleItem.delete({ where: { id } });
+    this.realtime.emitScheduleChanged({ projectId: item.projectId, action: 'deleted', scheduleItemId: id });
     return { message: 'Item excluído com sucesso' };
   }
 
@@ -919,11 +939,181 @@ export class ScheduleService {
       }
     }
 
+    // Derive Tower/Floor/Unit/ActivityType from the imported schedule so that
+    // the Medição screen has spatial hierarchy + activity taxonomy to navigate.
+    try {
+      await this.deriveStructureFromSchedule(projectId);
+    } catch (err) {
+      errors.push(`Falha ao derivar estrutura física: ${(err as Error).message}`);
+    }
+
+    this.realtime.emitScheduleChanged({ projectId, action: 'imported' });
+
     return {
       imported: createdCount,
       skipped: importedItems.length - createdCount,
       dependencies: depsCreated,
       errors,
     };
+  }
+
+  // ── Structure derivation ────────────────────────────────────────────────────
+
+  private static FLOOR_PATTERN =
+    /\b(subsolo|t[ée]rreo|pavimento|pav\.?|andar|cobertura|mezanino|garagem)\b/i;
+
+  /** Normaliza string para chave de comparação (lowercase + sem acentos + trim). */
+  private normalizeKey(s: string): string {
+    return s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private inferFloorLevel(name: string): number {
+    const lower = this.normalizeKey(name);
+    const sub = lower.match(/sub\s*(?:solo)?\s*(\d+)/);
+    if (sub) return -parseInt(sub[1], 10);
+    if (/\bsubsolo\b/.test(lower)) return -1;
+    if (/\b(terreo|garagem)\b/.test(lower)) return 0;
+    if (/\bcobertura\b/.test(lower)) return 99;
+    if (/\bmezanino\b/.test(lower)) return 1;
+    const pav = lower.match(/(\d+)\s*[ºo°]?\s*(?:pavimento|pav|andar)/);
+    if (pav) return parseInt(pav[1], 10);
+    return 0;
+  }
+
+  /**
+   * Após um import (ou comando manual), varre os ScheduleItem do projeto e
+   * cria automaticamente Tower (uma, derivada do item raiz), Floors (nomes que
+   * batem com `subsolo/térreo/pavimento/cobertura/...`), uma Unit "Geral" por
+   * Floor (para registrar medições) e ActivityTypes para os itens-folha.
+   * Idempotente: não duplica torres/andares/atividades já existentes.
+   */
+  async deriveStructureFromSchedule(projectId: string) {
+    const items = await this.prisma.scheduleItem.findMany({
+      where: { projectId },
+      select: { id: true, name: true, level: true, parentId: true, activityTypeId: true, order: true },
+      orderBy: [{ level: 'asc' }, { order: 'asc' }],
+    });
+    if (items.length === 0) return { towers: 0, floors: 0, units: 0, activityTypes: 0 };
+
+    let towersCreated = 0;
+    let floorsCreated = 0;
+    let unitsCreated = 0;
+    let activitiesCreated = 0;
+
+    // 1) Garantir pelo menos uma Tower
+    let tower = await this.prisma.tower.findFirst({
+      where: { projectId },
+      orderBy: { order: 'asc' },
+      select: { id: true, name: true },
+    });
+    if (!tower) {
+      const root = items.find((i) => i.level === 0);
+      const name = (root?.name ?? 'Edifício').slice(0, 80);
+      const created = await this.prisma.tower.create({
+        data: { projectId, name, order: 0 },
+      });
+      tower = { id: created.id, name: created.name };
+      towersCreated++;
+    }
+
+    // 2) Floors a partir de itens de nível 1 que batem o padrão
+    const floorItems = items.filter(
+      (i) => i.level === 1 && ScheduleService.FLOOR_PATTERN.test(i.name),
+    );
+    const existingFloors = await this.prisma.floor.findMany({
+      where: { towerId: tower.id },
+      select: { id: true, name: true, level: true, order: true },
+    });
+    const floorByKey = new Map<string, { id: string; level: number }>();
+    for (const f of existingFloors) floorByKey.set(this.normalizeKey(f.name), { id: f.id, level: f.level });
+
+    let nextOrder = existingFloors.reduce((max, f) => Math.max(max, f.order), -1) + 1;
+    // schedule item id → floor id (para Step 3 inferir floor de uma atividade)
+    const scheduleItemToFloor = new Map<string, string>();
+
+    for (const item of floorItems) {
+      const key = this.normalizeKey(item.name);
+      let entry = floorByKey.get(key);
+      if (!entry) {
+        const inferredLevel = this.inferFloorLevel(item.name);
+        const f = await this.prisma.floor.create({
+          data: {
+            towerId: tower.id,
+            name: item.name.slice(0, 80),
+            level: inferredLevel,
+            order: nextOrder++,
+          },
+        });
+        entry = { id: f.id, level: f.level };
+        floorByKey.set(key, entry);
+        floorsCreated++;
+      }
+      scheduleItemToFloor.set(item.id, entry.id);
+
+      // Garante 1 unidade "Geral" se o floor recém-criado/existente não tem unidades
+      const unitCount = await this.prisma.unit.count({ where: { floorId: entry.id } });
+      if (unitCount === 0) {
+        await this.prisma.unit.create({
+          data: { floorId: entry.id, name: 'Geral', area: null, order: 0 },
+        });
+        unitsCreated++;
+      }
+    }
+
+    // 3) ActivityTypes a partir de itens-folha (sem filhos) em nível ≥ 2
+    const childCountByParent = new Map<string, number>();
+    for (const i of items) {
+      if (i.parentId) childCountByParent.set(i.parentId, (childCountByParent.get(i.parentId) ?? 0) + 1);
+    }
+    const leafItems = items.filter(
+      (i) => i.level >= 2 && (childCountByParent.get(i.id) ?? 0) === 0,
+    );
+    const existingTypes = await this.prisma.activityType.findMany({
+      where: { projectId },
+      select: { id: true, name: true, order: true },
+    });
+    const typeByKey = new Map<string, string>();
+    for (const t of existingTypes) typeByKey.set(this.normalizeKey(t.name), t.id);
+    let nextActOrder = existingTypes.reduce((m, t) => Math.max(m, t.order), -1) + 1;
+
+    // Cria tipos únicos primeiro, depois faz backfill em lote
+    for (const leaf of leafItems) {
+      const key = this.normalizeKey(leaf.name);
+      if (typeByKey.has(key)) continue;
+      const created = await this.prisma.activityType.create({
+        data: {
+          projectId,
+          name: leaf.name.slice(0, 120),
+          measurementMethod: 'PERCENT',
+          unit: '%',
+          defaultQuantity: 100,
+          weight: 1,
+          order: nextActOrder++,
+        },
+      });
+      typeByKey.set(key, created.id);
+      activitiesCreated++;
+    }
+    // Backfill activityTypeId nos itens-folha que ainda não têm
+    for (const leaf of leafItems) {
+      if (leaf.activityTypeId) continue;
+      const key = this.normalizeKey(leaf.name);
+      const atId = typeByKey.get(key);
+      if (!atId) continue;
+      await this.prisma.scheduleItem.update({
+        where: { id: leaf.id },
+        data: { activityTypeId: atId },
+      });
+    }
+
+    if (towersCreated + floorsCreated + unitsCreated + activitiesCreated > 0) {
+      this.realtime.emitScheduleChanged({ projectId, action: 'imported' });
+    }
+    return { towers: towersCreated, floors: floorsCreated, units: unitsCreated, activityTypes: activitiesCreated };
   }
 }

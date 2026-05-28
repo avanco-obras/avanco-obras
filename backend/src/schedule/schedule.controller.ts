@@ -133,4 +133,17 @@ export class ScheduleController {
     }
     return this.scheduleService.importBatch(projectId, file.buffer, file.mimetype);
   }
+
+  @Post('projects/:id/schedule/derive-structure')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Derive Tower/Floor/Unit/ActivityType from current ScheduleItems (idempotent). ' +
+      'Call after manual schedule changes if Medição is missing locations or activities.',
+  })
+  @ApiParam({ name: 'id', description: 'Project ID' })
+  async deriveStructure(@Param('id', ParseUUIDPipe) projectId: string) {
+    const result = await this.scheduleService.deriveStructureFromSchedule(projectId);
+    return { message: 'Estrutura derivada do cronograma', ...result };
+  }
 }

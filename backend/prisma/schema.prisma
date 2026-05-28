@@ -126,8 +126,9 @@ model Floor {
   level   Int
   order   Int    @default(0)
 
-  tower Tower  @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  tower Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
   units Unit[]
+  plans Upload[]
 
   @@map("floors")
 }
@@ -326,6 +327,7 @@ model Restriction {
 model Upload {
   id         String   @id @default(uuid())
   projectId  String   @map("project_id")
+  floorId    String?  @map("floor_id")
   fileName   String   @map("file_name")
   fileType   String   @map("file_type")
   category   String
@@ -335,6 +337,9 @@ model Upload {
   createdAt  DateTime @default(now()) @map("created_at")
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  floor   Floor?  @relation(fields: [floorId], references: [id], onDelete: SetNull)
 
+  @@index([projectId, category])
+  @@index([floorId])
   @@map("uploads")
 }

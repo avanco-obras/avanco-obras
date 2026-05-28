@@ -151,6 +151,9 @@ export default function Cadastro() {
 
   // Modelo 3D state
   const [sketchfabUrl, setSketchfabUrl] = useState('');
+  const [ifcUpload, setIfcUpload] = useState<{ id: string; fileName: string } | null>(null);
+  const [ifcUploading, setIfcUploading] = useState(false);
+  const ifcFileInputRef = useRef<HTMLInputElement>(null);
 
   // Equipe state
   const [members, setMembers] = useState<TeamMemberEntry[]>([]);
@@ -207,6 +210,10 @@ export default function Cadastro() {
         .then((data) => setUploads(data.filter((u) => u.category === 'PLANT')))
         .catch(() => {})
         .finally(() => setLoadingUploads(false));
+      uploadsApi
+        .getIfcModel(currentProject.id)
+        .then((ifc) => setIfcUpload(ifc ? { id: ifc.id, fileName: ifc.fileName } : null))
+        .catch(() => setIfcUpload(null));
     }
   }, [currentProject]);
 
@@ -288,6 +295,40 @@ export default function Cadastro() {
       addToast({ type: 'success', title: 'Arquivo removido' });
     } catch {
       addToast({ type: 'error', title: 'Erro ao remover arquivo' });
+    }
+  }
+
+  async function handleIfcUpload(files: FileList | null) {
+    if (!files || files.length === 0 || !currentProject) return;
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.ifc')) {
+      addToast({ type: 'warning', title: 'Envie um arquivo .ifc' });
+      return;
+    }
+    setIfcUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const uploaded = await uploadsApi.upload(currentProject.id, fd, { category: 'IFC_MODEL' });
+      setIfcUpload({ id: uploaded.id, fileName: uploaded.fileName });
+      addToast({ type: 'success', title: 'Modelo IFC enviado', description: file.name });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Falha no upload do IFC', description: (err as Error).message });
+    } finally {
+      setIfcUploading(false);
+      if (ifcFileInputRef.current) ifcFileInputRef.current.value = '';
+    }
+  }
+
+  async function handleRemoveIfc() {
+    if (!ifcUpload) return;
+    if (!window.confirm('Remover o modelo IFC atual?')) return;
+    try {
+      await uploadsApi.delete(ifcUpload.id);
+      setIfcUpload(null);
+      addToast({ type: 'success', title: 'Modelo IFC removido' });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Falha ao remover', description: (err as Error).message });
     }
   }
 
@@ -765,7 +806,41 @@ export default function Cadastro() {
             <span className="ao-badge ao-bb">BIM · IFC</span>
           </div>
           <div className="ao-card-body">
-            {sketchfabUrl ? (
+            <input
+              ref={ifcFileInputRef}
+              type="file"
+              accept=".ifc"
+              onChange={(e) => handleIfcUpload(e.target.files)}
+              style={{ display: 'none' }}
+            />
+            {ifcUpload ? (
+              <div style={{ border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: 14, background: 'var(--grn-bg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Box size={28} style={{ color: 'var(--green)' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--grn-t)' }}>Modelo IFC carregado</p>
+                    <p style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {ifcUpload.fileName}
+                    </p>
+                  </div>
+                </div>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginTop: 8 }}>
+                  O modelo será exibido na tela de Medição assim que o pavimento for selecionado.
+                </p>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                  <button
+                    className="ao-btn ao-btn-sm"
+                    onClick={() => ifcFileInputRef.current?.click()}
+                    disabled={ifcUploading}
+                  >
+                    <Upload size={11} /> Substituir
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={handleRemoveIfc} disabled={ifcUploading}>
+                    <X size={11} /> Remover
+                  </button>
+                </div>
+              </div>
+            ) : sketchfabUrl ? (
               <div>
                 <iframe
                   src={sketchfabUrl}
@@ -790,19 +865,23 @@ export default function Cadastro() {
                 </div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 3 }}>Nenhum modelo vinculado</p>
                 <p style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 14 }}>
-                  Suporte a IFC, OBJ, FBX, GLB e embed Sketchfab / Autodesk BIM 360
+                  Envie um .IFC (BIM) para visualização real, ou use procedural automático na Medição.
                 </p>
                 <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button
-                    className="ao-btn ao-btn-sm"
-                    onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.ifc,.obj,.fbx,.glb,.gltf'; i.click(); }}
+                    className="ao-btn ao-btn-sm ao-btn-primary"
+                    onClick={() => ifcFileInputRef.current?.click()}
+                    disabled={ifcUploading}
                   >
-                    <Upload size={11} /> Arquivo local
+                    <Upload size={11} /> {ifcUploading ? 'Enviando...' : 'Subir IFC'}
                   </button>
                   <button className="ao-btn ao-btn-sm" onClick={handleSetSketchfab}>
                     <Link size={11} /> URL Sketchfab
                   </button>
                 </div>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginTop: 10 }}>
+                  Para arquivos Revit (.rvt), exporte como IFC 2x3/4 no Revit primeiro.
+                </p>
               </div>
             )}
           </div>
