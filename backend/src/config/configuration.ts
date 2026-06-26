@@ -20,6 +20,25 @@ export default () => ({
     secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
     bucket: process.env.MINIO_BUCKET || 'avanco-obras',
     useSSL: process.env.MINIO_USE_SSL === 'true',
+    // Região explícita evita que o cliente faça lookup de região na rede ao
+    // assinar URLs (lookup que falharia no cliente público apontado p/ localhost).
+    region: process.env.MINIO_REGION || 'us-east-1',
+    // Endpoint público usado APENAS para assinar URLs entregues ao navegador.
+    // Em dev, o backend fala com o MinIO pelo host interno do Docker ("minio"),
+    // mas o navegador só alcança "localhost". Default cai no endpoint interno
+    // para que produção (R2/endpoint já público) continue funcionando sem config extra.
+    publicEndpoint:
+      process.env.MINIO_PUBLIC_ENDPOINT ||
+      process.env.MINIO_ENDPOINT ||
+      'localhost',
+    publicPort: process.env.MINIO_PUBLIC_PORT
+      ? parseInt(process.env.MINIO_PUBLIC_PORT, 10)
+      : process.env.MINIO_PORT
+        ? parseInt(process.env.MINIO_PORT, 10)
+        : undefined,
+    publicUseSSL: process.env.MINIO_PUBLIC_USE_SSL
+      ? process.env.MINIO_PUBLIC_USE_SSL === 'true'
+      : process.env.MINIO_USE_SSL === 'true',
   },
   cors: {
     origins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:80').split(','),
