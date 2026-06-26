@@ -143,6 +143,8 @@ async function main() {
   // ---------------------------------------------------------------------------
   const towerNames = ['Torre A', 'Torre B'];
   const floorDefinitions = [
+    { name: 'Subsolo 2', level: -2, order: -2 },
+    { name: 'Subsolo 1', level: -1, order: -1 },
     { name: 'Térreo', level: 0, order: 0 },
     { name: '1º Andar', level: 1, order: 1 },
     { name: '2º Andar', level: 2, order: 2 },
@@ -173,7 +175,16 @@ async function main() {
 
       // Térreo has 2 units (lojas/salão), Cobertura has 2 units (coberturas), other floors have 4 apts
       let unitDefs: { name: string; area: number }[];
-      if (floorDef.level === 0) {
+      if (floorDef.level < 0) {
+        // Subsolos — garagem / vagas e áreas técnicas
+        const ss = Math.abs(floorDef.level);
+        unitDefs = [
+          { name: `Vagas SS${ss} - Bloco A`, area: 240.00 },
+          { name: `Vagas SS${ss} - Bloco B`, area: 240.00 },
+          { name: `Depósitos SS${ss}`, area: 60.00 },
+          { name: `Área Técnica SS${ss}`, area: 40.00 },
+        ];
+      } else if (floorDef.level === 0) {
         // Térreo
         unitDefs = [
           { name: `Loja 01`, area: 120.00 },

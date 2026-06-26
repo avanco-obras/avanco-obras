@@ -61,15 +61,20 @@ export default function ProceduralBuilding({
           .sort((a, b) => a.level - b.level);
         const isTowerSelected = selection.towerId === tower.id;
         const baseX = offsetX + tIdx * TOWER_SPACING;
+        // Topo da torre = nível mais alto. Usado só para posicionar o rótulo.
+        const maxLevel = towerFloors.reduce((m, f) => Math.max(m, f.level), 0);
         return (
           <group key={tower.id} position={[baseX, 0, 0]}>
-            <TowerLabel name={tower.name} y={towerFloors.length * FLOOR_HEIGHT + 1.5} />
-            {towerFloors.map((floor, fIdx) => {
+            <TowerLabel name={tower.name} y={(maxLevel + 1) * FLOOR_HEIGHT + 1.5} />
+            {towerFloors.map((floor) => {
               const isFloorSelected = selection.floorId === floor.id;
               const showUnits = isFloorSelected;
               const units = unitsByFloor[floor.id] ?? [];
               const explode = isTowerSelected ? explodeFactor : 0;
-              const y = fIdx * FLOOR_HEIGHT + fIdx * explode * 0.6 + FLOOR_HEIGHT / 2;
+              // Altura derivada do nível real do pavimento (Térreo=0 → base em y=0,
+              // subsolos negativos abaixo do plano, superiores acima). A explosão
+              // afasta os pavimentos simetricamente em torno do Térreo.
+              const y = floor.level * FLOOR_HEIGHT + floor.level * explode * 0.6 + FLOOR_HEIGHT / 2;
               return (
                 <group key={floor.id} position={[0, y, 0]}>
                   {showUnits && units.length > 0 ? (
