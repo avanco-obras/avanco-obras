@@ -23,6 +23,14 @@ interface Selection {
   unitId: string | null;
 }
 
+/** Canteiro de obras: agrupa atividades sem local (Mobilização, Entrega, etc.). */
+export interface SiteworkInfo {
+  progress: number;
+  count: number;
+  selected: boolean;
+  onSelect: () => void;
+}
+
 interface ProceduralBuildingProps {
   towers: Tower[];
   floors: Floor[];
@@ -35,6 +43,7 @@ interface ProceduralBuildingProps {
   onSelectTower: (id: string) => void;
   onSelectFloor: (id: string) => void;
   onSelectUnit: (id: string) => void;
+  sitework?: SiteworkInfo | null;
 }
 
 export default function ProceduralBuilding({
@@ -49,9 +58,11 @@ export default function ProceduralBuilding({
   onSelectTower,
   onSelectFloor,
   onSelectUnit,
+  sitework,
 }: ProceduralBuildingProps) {
   const totalWidth = useMemo(() => towers.length * TOWER_SPACING, [towers.length]);
   const offsetX = -totalWidth / 2 + TOWER_SPACING / 2;
+  const siteX = totalWidth / 2 + 6;
 
   return (
     <group>
@@ -105,7 +116,72 @@ export default function ProceduralBuilding({
           </group>
         );
       })}
-      <Ground width={Math.max(totalWidth + 12, 30)} />
+      {sitework && (
+        <SiteContainer
+          x={siteX}
+          progress={sitework.progress}
+          count={sitework.count}
+          selected={sitework.selected}
+          transparency={transparency}
+          onSelect={sitework.onSelect}
+        />
+      )}
+      <Ground width={Math.max(totalWidth + (sitework ? 24 : 12), 30)} />
+    </group>
+  );
+}
+
+/** Container/canteiro de obra ao lado do empreendimento (atividades sem local). */
+function SiteContainer({
+  x,
+  progress,
+  count,
+  selected,
+  transparency,
+  onSelect,
+}: {
+  x: number;
+  progress: number;
+  count: number;
+  selected: boolean;
+  transparency: boolean;
+  onSelect: () => void;
+}) {
+  const color = heatmapColor3D(progress);
+  const W = 6, H = 2.6, D = 3;
+  return (
+    <group position={[x, 0, 0]}>
+      {/* corpo do container */}
+      <mesh
+        castShadow
+        receiveShadow
+        position={[0, H / 2, 0]}
+        onClick={(e) => { e.stopPropagation(); onSelect(); }}
+        onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+        onPointerOut={() => { document.body.style.cursor = 'default'; }}
+      >
+        <boxGeometry args={[W, H, D]} />
+        <meshStandardMaterial
+          color={color}
+          transparent={transparency}
+          opacity={transparency ? 0.6 : 1}
+          roughness={0.7}
+          metalness={0.25}
+          emissive={selected ? new THREE.Color('#1B6FE8') : new THREE.Color('#000000')}
+          emissiveIntensity={selected ? 0.4 : 0}
+        />
+      </mesh>
+      {/* nervuras do container (faixas) */}
+      <mesh position={[0, H / 2, D / 2 + 0.01]}>
+        <planeGeometry args={[W * 0.96, H * 0.9]} />
+        <meshStandardMaterial color="#000000" transparent opacity={0.06} />
+      </mesh>
+      <group position={[0, H + 0.6, 0]}>
+        <TextLabel text={`Canteiro de Obras • ${Math.round(progress)}%`} fontSize={0.42} color="#0F172A" />
+      </group>
+      <group position={[0, H + 1.4, 0]}>
+        <TextLabel text={`${count} atividade(s) sem local`} fontSize={0.3} color="#64748B" />
+      </group>
     </group>
   );
 }

@@ -48,6 +48,24 @@ export function statusLabel(p: number): string {
   return 'Em andamento';
 }
 
+/**
+ * Cores de linha por status para a árvore de atividades:
+ * cinza (não iniciado) · amarelo (em andamento) · verde (concluído).
+ * Fundo levemente tingido + barra lateral de status, em harmonia com as
+ * variáveis de tema (var(--grn-*), var(--amb-*)).
+ */
+export interface RowStatusStyle {
+  bg: string;
+  accent: string;
+  text: string;
+}
+export function rowStatusStyle(p: number): RowStatusStyle {
+  const s = unitState(p);
+  if (s === 'co') return { bg: 'var(--grn-bg)', accent: '#16A34A', text: 'var(--grn-t)' };
+  if (s === 'ea') return { bg: 'var(--amb-bg)', accent: '#D97706', text: 'var(--amb-t)' };
+  return { bg: 'var(--s1)', accent: '#94A3B8', text: 'var(--t2)' };
+}
+
 export const LEGEND_ITEMS = [
   { color: '#94A3B8', label: 'Não iniciado' },
   { color: '#DC2626', label: 'Atrasado / Baixo' },

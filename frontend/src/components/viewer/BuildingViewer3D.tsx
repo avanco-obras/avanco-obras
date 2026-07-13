@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, ContactShadows, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Tower, Floor, Unit } from '@/types';
-import ProceduralBuilding from './ProceduralBuilding';
+import ProceduralBuilding, { type SiteworkInfo } from './ProceduralBuilding';
 import ViewerLegend from './ViewerLegend';
 
 const IfcModel = lazy(() => import('./IfcModel'));
@@ -27,6 +27,7 @@ export interface BuildingViewer3DProps {
   onSelectFloor: (id: string) => void;
   onSelectUnit: (id: string) => void;
   height?: number | string;
+  sitework?: SiteworkInfo | null;
 }
 
 export default function BuildingViewer3D(props: BuildingViewer3DProps) {
@@ -45,6 +46,7 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
     onSelectFloor,
     onSelectUnit,
     height = 460,
+    sitework,
   } = props;
 
   const [explode, setExplode] = useState(0);
@@ -124,6 +126,7 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
             onSelectTower={onSelectTower}
             onSelectFloor={onSelectFloor}
             onSelectUnit={onSelectUnit}
+            sitework={sitework}
           />
         )}
       </Canvas>
