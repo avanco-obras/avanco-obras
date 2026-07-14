@@ -1,19 +1,22 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Box, FileImage } from 'lucide-react';
+import { Box, FileImage, LayoutGrid } from 'lucide-react';
 import { useStore } from '@/store';
 import { towersApi, measurementsApi, scheduleApi, uploadsApi, progressApi } from '@/services/api';
-import type { Tower, Floor, Unit, GanttTask, ProjectReport, ProjectMetrics, ReportComparison } from '@/types';
-import { heatmapColor } from '@/lib/measurement-helpers';
+import type { Tower, Floor, Unit, GanttTask, ProjectReport, ProjectMetrics, ReportComparison, CurvaSPoint } from '@/types';
 import {
-  buildForest, recalcParents, subtreeProgress, FLOOR_PATTERN,
+  buildForest, indexNodes, recalcParents, subtreeProgress, FLOOR_PATTERN,
 } from '@/lib/wbs-tree';
 import BuildingViewer3D from '@/components/viewer/BuildingViewer3D';
 import FloorPlanViewer2D from '@/components/viewer/FloorPlanViewer2D';
 import ScheduleBlocksPanel from '@/components/medicao/ScheduleBlocksPanel';
+import HeatmapMatrix, { type HeatRow, type HeatCell } from '@/components/medicao/HeatmapMatrix';
 import { SaveReportModal, ReportHistoryModal } from '@/components/medicao/ReportDialogs';
 import { useRealtime, useScheduleUpdates, useScheduleChanges } from '@/hooks/useRealtime';
 
-type ViewerMode = '3d' | '2d';
+type ViewerMode = '3d' | '2d' | 'heatmap';
+
+// Altura DEFINIDA do viewer (evita canvas R3F crescendo sem limite / sobreposição).
+const VIEWER_H = 'clamp(460px, 66vh, 760px)';
 
 // Normalização (espelha ScheduleService.normalizeKey no backend) p/ casar Floor↔WBS.
 function normKey(s: string): string {
@@ -22,46 +25,156 @@ function normKey(s: string): string {
 
 // ── KpiBar ────────────────────────────────────────────────────────────────────
 
-function KpiBar({ overallProgress, leavesDone, leavesTotal, sitework }: {
-  overallProgress: number; leavesDone: number; leavesTotal: number;
-  sitework: { progress: number; count: number } | null;
+export interface LeafStatusCounts { done: number; inProgress: number; delayed: number; total: number; }
+
+// Cores dos 3 status usados na barra segmentada (espelham a legenda do viewer).
+const ST_DONE = '#16A34A';
+const ST_PROGRESS = '#D97706';
+const ST_DELAYED = '#DC2626';
+
+function KpiBar({ realized, planned, counts, curva }: {
+  realized: number; planned: number | null;
+  counts: LeafStatusCounts; curva: CurvaSPoint[];
 }) {
+  const deviation = planned == null ? null : Math.round((realized - planned) * 10) / 10;
+  const devPositive = deviation != null && deviation >= 0;
+
   return (
     <div style={{
       background: 'var(--s0)', padding: '12px 16px', borderBottom: '1px solid var(--bd)',
-      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 12,
+      borderRadius: 12, border: '1px solid var(--bd)', marginBottom: 12,
     }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={kpiLabel}>Avanço Geral da Obra</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px' }}>
-            {Math.round(overallProgress)}%
-          </div>
-          <div className="ao-pbar" style={{ flex: 1, minHeight: 6 }}>
-            <div className="ao-pfill" style={{ width: `${overallProgress}%`, background: heatmapColor(overallProgress), borderRadius: 3 }} />
+      {/* Header com badge de desvio do baseline */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+          Medição Física
+        </div>
+        {deviation != null && (
+          <span
+            title="Desvio do baseline: realizado − previsto (pontos percentuais)"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+              padding: '3px 10px', borderRadius: 999, fontFamily: 'var(--mono)',
+              background: devPositive ? 'var(--grn-bg)' : 'var(--amb-bg)',
+              color: devPositive ? 'var(--green)' : 'var(--amber)',
+              border: `1px solid ${devPositive ? 'var(--green)' : 'var(--amber)'}`,
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: devPositive ? 'var(--green)' : 'var(--amber)' }} />
+            {devPositive ? '+' : ''}{deviation.toFixed(1)} p.p. vs baseline
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+        {/* Card A — Avanço geral · previsto × realizado */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={kpiLabel}>Avanço geral · previsto × realizado</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 30, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px', lineHeight: 1 }}>
+                  {realized.toFixed(1).replace('.', ',')}%
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>
+                realizado
+                {planned != null && <> · previsto <span style={{ color: 'var(--t2)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{planned.toFixed(1).replace('.', ',')}%</span></>}
+              </div>
+            </div>
+            <CurvaSSparkline points={curva} realized={realized} planned={planned} />
           </div>
         </div>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={kpiLabel}>Atividades</div>
-        <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
-          {leavesDone} <span style={{ fontSize: 12, color: 'var(--t3)' }}>/ {leavesTotal}</span>
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>concluídas</div>
-      </div>
-      {sitework && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={kpiLabel}>Canteiro de Obras</div>
+
+        {/* Card B — Atividades */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={kpiLabel}>Atividades</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>{Math.round(sitework.progress)}%</div>
-            <div style={{ fontSize: 10, color: 'var(--t3)' }}>· {sitework.count} sem local</div>
+            <span style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)', lineHeight: 1 }}>
+              {counts.done}
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--t3)', fontFamily: 'var(--mono)' }}>/ {counts.total}</span>
+            <span style={{ fontSize: 10, color: 'var(--t3)' }}>concluídas</span>
+          </div>
+          <SegmentedStatusBar counts={counts} />
+          <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t3)', flexWrap: 'wrap' }}>
+            <StatusLegendCount color={ST_DONE} label="concluídas" n={counts.done} />
+            <StatusLegendCount color={ST_PROGRESS} label="em andamento" n={counts.inProgress} />
+            <StatusLegendCount color={ST_DELAYED} label="atrasadas" n={counts.delayed} />
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 const kpiLabel: React.CSSProperties = { fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 };
+
+function StatusLegendCount({ color, label, n }: { color: string; label: string; n: number }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+      <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--t2)' }}>{n}</span> {label}
+    </span>
+  );
+}
+
+function SegmentedStatusBar({ counts }: { counts: LeafStatusCounts }) {
+  const total = Math.max(counts.total, 1);
+  const seg = (n: number) => `${(n / total) * 100}%`;
+  return (
+    <div style={{ display: 'flex', width: '100%', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--s2)' }}>
+      <div style={{ width: seg(counts.done), background: ST_DONE }} />
+      <div style={{ width: seg(counts.inProgress), background: ST_PROGRESS }} />
+      <div style={{ width: seg(counts.delayed), background: ST_DELAYED }} />
+    </div>
+  );
+}
+
+/** Mini Curva S (SVG): linha tracejada = previsto, sólida = realizado, ponto na medição atual. */
+function CurvaSSparkline({ points, realized, planned }: { points: CurvaSPoint[]; realized: number; planned: number | null }) {
+  const W = 132, H = 44, pad = 3;
+  const data = points.length >= 2 ? points : null;
+
+  const path = (key: 'planned' | 'actual') => {
+    if (!data) return '';
+    const n = data.length;
+    return data.map((p, i) => {
+      const x = pad + (i / (n - 1)) * (W - 2 * pad);
+      const y = H - pad - (Math.min(100, Math.max(0, p[key])) / 100) * (H - 2 * pad);
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  };
+
+  // Ponto da medição atual = último ponto com realizado registrado.
+  let curX = W - pad, curY = H - pad;
+  if (data) {
+    let idx = data.length - 1;
+    for (let i = data.length - 1; i >= 0; i--) { if (data[i].actual > 0) { idx = i; break; } }
+    curX = pad + (idx / (data.length - 1)) * (W - 2 * pad);
+    curY = H - pad - (Math.min(100, Math.max(0, data[idx].actual)) / 100) * (H - 2 * pad);
+  }
+
+  if (!data) {
+    // Fallback sem série: barrinhas previsto/realizado (mantém a leitura prev×real).
+    const py = planned == null ? H / 2 : H - pad - (planned / 100) * (H - 2 * pad);
+    const ry = H - pad - (realized / 100) * (H - 2 * pad);
+    return (
+      <svg width={W} height={H} style={{ flexShrink: 0 }} aria-label="Curva S indisponível">
+        {planned != null && <line x1={pad} y1={py} x2={W - pad} y2={py} stroke="var(--t3)" strokeWidth={1.5} strokeDasharray="4 3" />}
+        <line x1={pad} y1={ry} x2={W - pad} y2={ry} stroke="var(--blue)" strokeWidth={2} />
+        <circle cx={W - pad} cy={ry} r={2.6} fill="var(--blue)" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={W} height={H} style={{ flexShrink: 0 }} aria-label="Curva S previsto × realizado">
+      <path d={path('planned')} fill="none" stroke="var(--t3)" strokeWidth={1.5} strokeDasharray="4 3" />
+      <path d={path('actual')} fill="none" stroke="var(--blue)" strokeWidth={2} strokeLinejoin="round" />
+      <circle cx={curX} cy={curY} r={3} fill="var(--blue)" stroke="var(--s0)" strokeWidth={1} />
+    </svg>
+  );
+}
 
 // ── Toolbar ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +199,10 @@ function MedicaoToolbar({ mode, onModeChange, towers, floors, selectedTowerId, s
           style={{ display: 'flex', alignItems: 'center', gap: 6, background: mode === '2d' ? 'var(--blue)' : 'transparent', color: mode === '2d' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 0, padding: '6px 12px' }}>
           <FileImage size={12} /> Planta 2D
         </button>
+        <button onClick={() => onModeChange('heatmap')} className="ao-btn ao-btn-sm"
+          style={{ display: 'flex', alignItems: 'center', gap: 6, background: mode === 'heatmap' ? 'var(--blue)' : 'transparent', color: mode === 'heatmap' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 0, padding: '6px 12px' }}>
+          <LayoutGrid size={12} /> Mapa de calor
+        </button>
       </div>
       <div style={{ width: 1, height: 20, background: 'var(--bd)' }} />
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
@@ -102,20 +219,6 @@ function MedicaoToolbar({ mode, onModeChange, towers, floors, selectedTowerId, s
           {floors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
       </label>
-    </div>
-  );
-}
-
-// ── Breadcrumb ───────────────────────────────────────────────────────────────
-
-function Breadcrumb({ tower, floor, canteiro }: { tower: Tower | null; floor: Floor | null; canteiro: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--t2)', marginBottom: 8, flexWrap: 'wrap' }}>
-      <span style={{ color: 'var(--t3)' }}>📍</span>
-      <span style={{ fontWeight: 500, color: tower ? 'var(--t1)' : 'var(--t3)' }}>{tower?.name ?? 'Obra'}</span>
-      {canteiro
-        ? <><span style={{ color: 'var(--t3)' }}>›</span><span style={{ fontWeight: 600, color: 'var(--amber)' }}>Canteiro de Obras</span></>
-        : floor && <><span style={{ color: 'var(--t3)' }}>›</span><span style={{ fontWeight: 600, color: 'var(--blue)' }}>{floor.name}</span></>}
     </div>
   );
 }
@@ -138,11 +241,15 @@ export default function Medicao() {
   const [selectedTowerId, setSelectedTowerId] = useState<string | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [hoveredFloorId, setHoveredFloorId] = useState<string | null>(null);
 
   const [viewerMode, setViewerMode] = useState<ViewerMode>('3d');
   const [ifcUrl, setIfcUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // KPIs / Curva S (topo)
+  const [curva, setCurva] = useState<CurvaSPoint[]>([]);
 
   // Report state
   const [reports, setReports] = useState<ProjectReport[]>([]);
@@ -196,12 +303,18 @@ export default function Medicao() {
     if (m) setMetrics(m);
   }, []);
 
+  const loadCurva = useCallback(async (pid: string) => {
+    const c = await scheduleApi.curvaS(pid).catch(() => [] as CurvaSPoint[]);
+    setCurva(c);
+  }, []);
+
   useEffect(() => {
     if (!projectId) return;
     loadStructure(projectId).then((t) => { if (t.length > 0) setSelectedTowerId((cur) => cur ?? t[0].id); });
     loadSchedule(projectId);
     loadMetrics(projectId);
-  }, [projectId, loadStructure, loadSchedule, loadMetrics]);
+    loadCurva(projectId);
+  }, [projectId, loadStructure, loadSchedule, loadMetrics, loadCurva]);
 
   // ── Realtime sync (cronograma ↔ medição) ─────────────────────────────────
   const refreshDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,6 +352,7 @@ export default function Medicao() {
 
   // ── Derived: schedule maps ─────────────────────────────────────────────────
   const forest = useMemo(() => buildForest(tasks), [tasks]);
+  const nodeById = useMemo(() => indexNodes(forest), [forest]);
 
   // Floor (Tower/Floor model) → WBS node (level-1 com mesmo nome normalizado)
   const floorTaskByFloorId = useMemo(() => {
@@ -271,9 +385,26 @@ export default function Medicao() {
 
   const overallProgress = useMemo(() => (forest[0] ? subtreeProgress(forest[0]) : 0), [forest]);
 
-  const { leavesDone, leavesTotal } = useMemo(() => {
+  // Contagem por status (live) das folhas: concluída / em andamento / atrasada.
+  const leafCounts = useMemo<LeafStatusCounts>(() => {
     const leaves = tasks.filter((t) => !tasks.some((c) => c.parentId === t.id));
-    return { leavesTotal: leaves.length, leavesDone: leaves.filter((l) => (l.physicalProgress || 0) >= 100).length };
+    let done = 0, delayed = 0, inProgress = 0;
+    for (const l of leaves) {
+      const phys = l.physicalProgress || 0;
+      const plan = l.plannedProgress || 0;
+      if (phys >= 100) done++;
+      else if (phys + 0.01 < plan) delayed++; // abaixo do previsto do baseline
+      else inProgress++;
+    }
+    return { done, inProgress, delayed, total: leaves.length };
+  }, [tasks]);
+
+  // Previsto geral (baseline) — ponderado pelas folhas, mesma lógica do realizado.
+  const plannedOverall = useMemo<number | null>(() => {
+    const leaves = tasks.filter((t) => !tasks.some((c) => c.parentId === t.id));
+    const tw = leaves.reduce((s, l) => s + (l.weight || 1), 0);
+    if (tw === 0) return null;
+    return Math.round((leaves.reduce((s, l) => s + (l.plannedProgress || 0) * (l.weight || 1), 0) / tw) * 100) / 100;
   }, [tasks]);
 
   // Canteiro: folhas sem ancestral de pavimento
@@ -298,13 +429,30 @@ export default function Medicao() {
   }, [floorUnitsCache, floorProgress]);
 
   const selectedFloor = useMemo(() => floors.find((f) => f.id === selectedFloorId) ?? null, [floors, selectedFloorId]);
-  const selectedTower = useMemo(() => towers.find((t) => t.id === selectedTowerId) ?? null, [towers, selectedTowerId]);
   // taskId (nó de pavimento) → floorId, para sincronizar navegação ↔ 3D.
   const floorIdByTaskId = useMemo(() => {
     const m = new Map<string, string>();
     for (const [floorId, node] of floorTaskByFloorId.entries()) m.set(node.id, floorId);
     return m;
   }, [floorTaskByFloorId]);
+
+  // Matriz do mapa de calor: linhas = pavimentos (desc), colunas = unidades.
+  const heatRows = useMemo<HeatRow[]>(() => {
+    if (!selectedTowerId) return [];
+    const towerFloors = allFloors.filter((f) => f.towerId === selectedTowerId).sort((a, b) => b.level - a.level);
+    return towerFloors.map((f) => {
+      const fNode = floorTaskByFloorId.get(f.id);
+      const wnode = fNode ? nodeById.get(fNode.id) : undefined;
+      const cells: HeatCell[] = [];
+      // Só há "unidades" quando o pavimento tem sub-containers (Áreas comuns, Ap 1..N).
+      if (wnode && wnode.children.length > 0 && !wnode.children.every((c) => c.isLeaf)) {
+        for (const child of wnode.children) {
+          cells.push({ nodeId: child.task.id, label: child.task.name, progress: subtreeProgress(child) });
+        }
+      }
+      return { floorId: f.id, floorName: f.name, floorProgress: floorProgress[f.id] ?? 0, cells };
+    });
+  }, [selectedTowerId, allFloors, floorTaskByFloorId, nodeById, floorProgress]);
 
   // ── Navegação (blocos) ──────────────────────────────────────────────────────
   // Selecionar pavimento (toolbar/3D) → drilla os blocos até aquele pavimento.
@@ -314,6 +462,14 @@ export default function Medicao() {
     if (!floorId) { setNavPath([]); return; }
     const node = floorTaskByFloorId.get(floorId);
     setNavPath(node ? [node.id] : []);
+  }, [floorTaskByFloorId]);
+
+  // Clique numa célula (unidade) do mapa de calor → abre as atividades da unidade.
+  const openUnitActivities = useCallback((floorId: string, nodeId: string) => {
+    setCanteiroMode(false);
+    setSelectedFloorId(floorId);
+    const floorNode = floorTaskByFloorId.get(floorId);
+    setNavPath(floorNode ? [floorNode.id, nodeId] : [nodeId]);
   }, [floorTaskByFloorId]);
 
   // Mudança de navPath nos blocos → reflete o pavimento no 3D/breadcrumb.
@@ -357,7 +513,7 @@ export default function Medicao() {
       addToast({ type: 'success', title: 'Report gravado', description: `Report #${result.reportNumber} criado. Cronograma e indicadores atualizados.` });
       setShowSaveReport(false);
       setReportDescription('');
-      await Promise.all([loadMetrics(projectId), loadSchedule(projectId)]);
+      await Promise.all([loadMetrics(projectId), loadSchedule(projectId), loadCurva(projectId)]);
     } catch {
       addToast({ type: 'error', title: 'Erro ao gravar Report' });
     } finally {
@@ -407,7 +563,7 @@ export default function Medicao() {
 
   return (
     <>
-      <KpiBar overallProgress={overallProgress} leavesDone={leavesDone} leavesTotal={leavesTotal} sitework={sitework} />
+      <KpiBar realized={overallProgress} planned={plannedOverall} counts={leafCounts} curva={curva} />
 
       <MedicaoToolbar
         mode={viewerMode} onModeChange={setViewerMode}
@@ -418,11 +574,11 @@ export default function Medicao() {
         hasIfc={!!ifcUrl}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(420px, 1fr)', gap: 12, alignItems: 'stretch', marginBottom: 24 }}>
-        {/* Left: viewer */}
-        <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(420px, 1fr)', gap: 12, alignItems: 'start', marginBottom: 24 }}>
+        {/* Left: viewer — altura DEFINIDA (não %) p/ o canvas R3F não crescer indefinidamente */}
+        <div style={{ minWidth: 0, height: VIEWER_H }}>
           {loading ? (
-            <div style={{ height: 480, background: 'var(--s2)', borderRadius: 12 }} />
+            <div style={{ height: '100%', minHeight: 460, background: 'var(--s2)', borderRadius: 12 }} />
           ) : viewerMode === '3d' ? (
             <BuildingViewer3D
               mode={ifcUrl ? 'ifc' : 'procedural'}
@@ -434,21 +590,29 @@ export default function Medicao() {
               floorProgress={floorProgress}
               towerProgress={towerProgresses}
               selection={{ towerId: selectedTowerId, floorId: selectedFloorId, unitId: selectedUnitId }}
+              hoveredFloorId={hoveredFloorId}
               onSelectTower={(id) => { setSelectedTowerId(id); setCanteiroMode(false); }}
               onSelectFloor={(id) => goToFloor(id)}
               onSelectUnit={(id) => setSelectedUnitId(id)}
-              height={480}
+              height="100%"
               sitework={sitework ? { ...sitework, selected: canteiroMode, onSelect: () => { setCanteiroMode(true); setNavPath([]); setSelectedFloorId(null); setSelectedUnitId(null); } } : null}
             />
+          ) : viewerMode === '2d' ? (
+            <FloorPlanViewer2D floorId={selectedFloorId} floorName={selectedFloor?.name} projectId={projectId!} height="100%" />
           ) : (
-            <FloorPlanViewer2D floorId={selectedFloorId} floorName={selectedFloor?.name} projectId={projectId!} height={480} />
+            <HeatmapMatrix
+              rows={heatRows}
+              selectedFloorId={selectedFloorId}
+              onSelectUnit={openUnitActivities}
+              onSelectFloor={(id) => goToFloor(id)}
+              onHoverFloor={setHoveredFloorId}
+              height="100%"
+            />
           )}
         </div>
 
-        {/* Right: breadcrumb + activities blocks (drill-down) */}
+        {/* Right: activities blocks (drill-down) — breadcrumb único vive no painel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
-          <Breadcrumb tower={selectedTower} floor={selectedFloor} canteiro={canteiroMode} />
-
           <ScheduleBlocksPanel
             tasks={tasks}
             navPath={navPath}
@@ -459,6 +623,7 @@ export default function Medicao() {
             onSaveReport={() => setShowSaveReport(true)}
             onOpenHistory={openHistory}
             lastReportLabel={lastReportLabel}
+            onHoverNode={(taskId) => setHoveredFloorId(taskId ? floorIdByTaskId.get(taskId) ?? null : null)}
           />
         </div>
       </div>

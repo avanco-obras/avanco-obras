@@ -4,9 +4,46 @@ import * as THREE from 'three';
 import type { Tower, Floor, Unit } from '@/types';
 import { heatmapColor3D } from '@/lib/measurement-helpers';
 
-const TOWER_SPACING = 18;
-const FLOOR_HEIGHT = 3;
+export const TOWER_SPACING = 18;
+export const FLOOR_HEIGHT = 3;
 const TOWER_FOOTPRINT = { x: 12, z: 10 };
+
+/**
+ * Empilhamento CONTÍGUO dos pavimentos (na ordem da EAP), sem vãos entre eles.
+ * Usa a sequência dos níveis — não o valor absoluto — para que um "level" com salto
+ * (ex.: cobertura=20 num prédio de 8 pavtos) não crie um espaço enorme. Subsolos
+ * (level < 0) ficam abaixo do plano (y negativo); Térreo/primeiro nível ≥ 0 na base.
+ */
+export function towerStack(towerFloors: Floor[]): {
+  yById: Map<string, number>;
+  minStack: number;
+  maxStack: number;
+} {
+  const sorted = [...towerFloors].sort((a, b) => a.level - b.level);
+  const groundCount = sorted.filter((f) => f.level < 0).length;
+  const yById = new Map<string, number>();
+  sorted.forEach((f, i) => {
+    const stackPos = i - groundCount;
+    yById.set(f.id, stackPos * FLOOR_HEIGHT + FLOOR_HEIGHT / 2);
+  });
+  return { yById, minStack: -groundCount, maxStack: sorted.length - 1 - groundCount };
+}
+
+/** Extensão vertical (em posições de pilha) considerando todas as torres. */
+export function stackExtentAll(floors: Floor[]): { minStack: number; maxStack: number } {
+  const byTower = new Map<string, Floor[]>();
+  for (const f of floors) {
+    const a = byTower.get(f.towerId);
+    if (a) a.push(f); else byTower.set(f.towerId, [f]);
+  }
+  let minStack = 0, maxStack = 0;
+  for (const arr of byTower.values()) {
+    const s = towerStack(arr);
+    minStack = Math.min(minStack, s.minStack);
+    maxStack = Math.max(maxStack, s.maxStack);
+  }
+  return { minStack, maxStack };
+}
 
 interface ProgressMaps {
   /** Average progress percent per unit (0-100). */
@@ -37,9 +74,9 @@ interface ProceduralBuildingProps {
   unitsByFloor: Record<string, Unit[]>;
   progress: ProgressMaps;
   selection: Selection;
+  /** Pavimento sob hover no painel direito — realçado (sync com a lista). */
+  hoveredFloorId?: string | null;
   filterPredicate?: (unit: Unit) => boolean;
-  explodeFactor: number; // 0..2
-  transparency: boolean;
   onSelectTower: (id: string) => void;
   onSelectFloor: (id: string) => void;
   onSelectUnit: (id: string) => void;
@@ -52,9 +89,8 @@ export default function ProceduralBuilding({
   unitsByFloor,
   progress,
   selection,
+  hoveredFloorId,
   filterPredicate,
-  explodeFactor,
-  transparency,
   onSelectTower,
   onSelectFloor,
   onSelectUnit,
@@ -70,22 +106,18 @@ export default function ProceduralBuilding({
         const towerFloors = floors
           .filter((f) => f.towerId === tower.id)
           .sort((a, b) => a.level - b.level);
-        const isTowerSelected = selection.towerId === tower.id;
         const baseX = offsetX + tIdx * TOWER_SPACING;
-        // Topo da torre = nível mais alto. Usado só para posicionar o rótulo.
-        const maxLevel = towerFloors.reduce((m, f) => Math.max(m, f.level), 0);
+        // Posições contíguas (sem vãos): a cobertura fica logo acima do último pavto.
+        const { yById, maxStack } = towerStack(towerFloors);
         return (
           <group key={tower.id} position={[baseX, 0, 0]}>
-            <TowerLabel name={tower.name} y={(maxLevel + 1) * FLOOR_HEIGHT + 1.5} />
+            <TowerLabel name={tower.name} y={(maxStack + 1) * FLOOR_HEIGHT + 1.5} />
             {towerFloors.map((floor) => {
               const isFloorSelected = selection.floorId === floor.id;
+              const isFloorHovered = hoveredFloorId === floor.id;
               const showUnits = isFloorSelected;
               const units = unitsByFloor[floor.id] ?? [];
-              const explode = isTowerSelected ? explodeFactor : 0;
-              // Altura derivada do nível real do pavimento (Térreo=0 → base em y=0,
-              // subsolos negativos abaixo do plano, superiores acima). A explosão
-              // afasta os pavimentos simetricamente em torno do Térreo.
-              const y = floor.level * FLOOR_HEIGHT + floor.level * explode * 0.6 + FLOOR_HEIGHT / 2;
+              const y = yById.get(floor.id) ?? FLOOR_HEIGHT / 2;
               return (
                 <group key={floor.id} position={[0, y, 0]}>
                   {showUnits && units.length > 0 ? (
@@ -94,14 +126,13 @@ export default function ProceduralBuilding({
                       unitProgress={progress.unitProgress}
                       selectedUnitId={selection.unitId}
                       filterPredicate={filterPredicate}
-                      transparency={transparency}
                       onSelect={onSelectUnit}
                     />
                   ) : (
                     <FloorBlock
                       progress={progress.floorProgress[floor.id] ?? 0}
                       selected={isFloorSelected}
-                      transparency={transparency}
+                      hovered={isFloorHovered}
                       onSelect={(e) => {
                         e.stopPropagation();
                         onSelectTower(tower.id);
@@ -122,7 +153,6 @@ export default function ProceduralBuilding({
           progress={sitework.progress}
           count={sitework.count}
           selected={sitework.selected}
-          transparency={transparency}
           onSelect={sitework.onSelect}
         />
       )}
@@ -137,14 +167,12 @@ function SiteContainer({
   progress,
   count,
   selected,
-  transparency,
   onSelect,
 }: {
   x: number;
   progress: number;
   count: number;
   selected: boolean;
-  transparency: boolean;
   onSelect: () => void;
 }) {
   const color = heatmapColor3D(progress);
@@ -163,8 +191,6 @@ function SiteContainer({
         <boxGeometry args={[W, H, D]} />
         <meshStandardMaterial
           color={color}
-          transparent={transparency}
-          opacity={transparency ? 0.6 : 1}
           roughness={0.7}
           metalness={0.25}
           emissive={selected ? new THREE.Color('#1B6FE8') : new THREE.Color('#000000')}
@@ -198,15 +224,16 @@ function Ground({ width }: { width: number }) {
 function FloorBlock({
   progress,
   selected,
-  transparency,
+  hovered,
   onSelect,
 }: {
   progress: number;
   selected: boolean;
-  transparency: boolean;
+  hovered: boolean;
   onSelect: (e: ThreeEvent<MouseEvent>) => void;
 }) {
   const color = heatmapColor3D(progress);
+  const emphasis = selected || hovered;
   return (
     <mesh
       castShadow
@@ -223,12 +250,10 @@ function FloorBlock({
       <boxGeometry args={[TOWER_FOOTPRINT.x, FLOOR_HEIGHT * 0.95, TOWER_FOOTPRINT.z]} />
       <meshStandardMaterial
         color={color}
-        transparent={transparency}
-        opacity={transparency ? 0.55 : 1}
         roughness={0.6}
         metalness={0.1}
-        emissive={selected ? new THREE.Color('#1B6FE8') : new THREE.Color('#000000')}
-        emissiveIntensity={selected ? 0.25 : 0}
+        emissive={emphasis ? new THREE.Color('#1B6FE8') : new THREE.Color('#000000')}
+        emissiveIntensity={selected ? 0.28 : hovered ? 0.16 : 0}
       />
     </mesh>
   );
@@ -239,14 +264,12 @@ function UnitsGrid({
   unitProgress,
   selectedUnitId,
   filterPredicate,
-  transparency,
   onSelect,
 }: {
   units: Unit[];
   unitProgress: Record<string, number>;
   selectedUnitId: string | null;
   filterPredicate?: (unit: Unit) => boolean;
-  transparency: boolean;
   onSelect: (id: string) => void;
 }) {
   const cols = Math.ceil(Math.sqrt(units.length));
@@ -273,7 +296,6 @@ function UnitsGrid({
             progress={p}
             matchesFilter={matches}
             selected={isSelected}
-            transparency={transparency}
             onSelect={(e) => {
               e.stopPropagation();
               onSelect(unit.id);
@@ -291,7 +313,6 @@ function UnitBox({
   progress,
   matchesFilter,
   selected,
-  transparency,
   onSelect,
 }: {
   position: [number, number, number];
@@ -299,12 +320,10 @@ function UnitBox({
   progress: number;
   matchesFilter: boolean;
   selected: boolean;
-  transparency: boolean;
   onSelect: (e: ThreeEvent<MouseEvent>) => void;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const color = matchesFilter ? heatmapColor3D(progress) : '#CBD5E1';
-  const op = transparency ? 0.5 : matchesFilter ? 1 : 0.35;
   return (
     <mesh
       ref={meshRef}
@@ -323,8 +342,8 @@ function UnitBox({
       <boxGeometry args={size} />
       <meshStandardMaterial
         color={color}
-        transparent={transparency || !matchesFilter}
-        opacity={op}
+        transparent={!matchesFilter}
+        opacity={matchesFilter ? 1 : 0.35}
         roughness={0.55}
         metalness={0.15}
         emissive={selected ? new THREE.Color('#1B6FE8') : new THREE.Color('#000000')}

@@ -166,6 +166,38 @@ export function recalcParents(tasks: GanttTask[]): { tasks: GanttTask[]; changed
   return { tasks: updated, changed };
 }
 
+// ── Estatística de status das folhas de uma sub-árvore ─────────────────────────
+export interface LeafStats {
+  done: number;
+  inProgress: number;
+  delayed: number;
+  notStarted: number;
+  total: number;
+}
+
+/**
+ * Conta as folhas por status: concluída (≥100%), atrasada (abaixo do previsto do
+ * baseline), em andamento (iniciada e no ritmo) e não iniciada (0%).
+ */
+export function leafStats(root: WbsNode): LeafStats {
+  const s: LeafStats = { done: 0, inProgress: 0, delayed: 0, notStarted: 0, total: 0 };
+  const visit = (n: WbsNode) => {
+    if (n.isLeaf) {
+      s.total++;
+      const phys = n.task.physicalProgress || 0;
+      const plan = n.task.plannedProgress || 0;
+      if (phys >= 100) s.done++;
+      else if (phys + 0.01 < plan) s.delayed++;
+      else if (phys > 0) s.inProgress++;
+      else s.notStarted++;
+    } else {
+      n.children.forEach(visit);
+    }
+  };
+  visit(root);
+  return s;
+}
+
 /** Progresso agregado (ponderado por peso) de uma sub-árvore a partir das folhas. */
 export function subtreeProgress(root: WbsNode): number {
   const leaves: GanttTask[] = [];

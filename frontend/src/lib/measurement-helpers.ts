@@ -73,3 +73,28 @@ export const LEGEND_ITEMS = [
   { color: '#FBBF24', label: 'Avançado' },
   { color: '#16A34A', label: 'Concluído' },
 ];
+
+/** Cores dos status usados em barras segmentadas e bordas de card. */
+export const STATUS_COLORS = {
+  done: '#16A34A',
+  inProgress: '#D97706',
+  delayed: '#DC2626',
+  notStarted: '#94A3B8',
+} as const;
+
+// ── Disciplina (agrupamento das atividades) ────────────────────────────────────
+// O cronograma não possui campo de categoria; a disciplina é inferida do nome da
+// atividade por palavras-chave, com fallback "Geral". Ordem de exibição fixa.
+export const DISCIPLINE_ORDER = ['Estrutura / Civil', 'Instalações', 'Acabamento', 'Geral'] as const;
+export type Discipline = (typeof DISCIPLINE_ORDER)[number];
+
+const DISCIPLINE_KEYWORDS: { d: Discipline; re: RegExp }[] = [
+  { d: 'Instalações', re: /\b(el[ée]tric|hidr[áa]ulic|hidrossanit|sanit[áa]r|tubula|eletrodut|prumada|esgoto|[áa]gua|g[áa]s|inc[êe]ndio|spda|climatiz|ar[- ]?condicionado|l[óo]gica|cabeament|instala)/i },
+  { d: 'Acabamento', re: /\b(acabament|pintura|revestiment|piso|porcelanat|cer[âa]mic|gesso|forro|lou[çc]a|metais|esquadria|vidro|marcenaria|bancada|soleira|rodap[ée]|textura|massa corrida)/i },
+  { d: 'Estrutura / Civil', re: /\b(funda|estrutur|concret|alvenaria|laje|pilar|viga|forma|arma[çc][ãa]o|escava|contrapiso|reboco|chapisco|embo[çc]o|cobertura|telhad|impermeabiliz|reservat[óo]rio|movimenta[çc][ãa]o de terra)/i },
+];
+
+export function inferDiscipline(name: string): Discipline {
+  for (const { d, re } of DISCIPLINE_KEYWORDS) if (re.test(name)) return d;
+  return 'Geral';
+}

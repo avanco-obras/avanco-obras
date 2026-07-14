@@ -7,7 +7,6 @@ interface IfcModelProps {
   url: string;
   unitProgress: Record<string, number>;
   selectedUnitId: string | null;
-  transparency: boolean;
   onSelectUnit: (id: string) => void;
 }
 
@@ -24,7 +23,6 @@ interface IfcLoadState {
  */
 export default function IfcModel({
   url,
-  transparency,
 }: IfcModelProps) {
   const [state, setState] = useState<IfcLoadState>({ status: 'idle' });
 
@@ -100,8 +98,8 @@ export default function IfcModel({
             const alpha = placedGeom.color.w;
             const material = new THREE.MeshStandardMaterial({
               color,
-              transparent: transparency || alpha < 1,
-              opacity: transparency ? Math.min(0.55, alpha) : alpha,
+              transparent: alpha < 1,
+              opacity: alpha,
               roughness: 0.7,
               metalness: 0.1,
             });
@@ -157,7 +155,7 @@ export default function IfcModel({
         });
       }
     };
-  }, [url, transparency]);
+  }, [url]);
 
   if (state.status === 'loading' || state.status === 'idle') {
     return (
