@@ -1,0 +1,193 @@
+import type { GanttTask } from '@/types';
+import { buildForest, FLOOR_PATTERN, type WbsNode } from '@/lib/wbs-tree';
+import { groupColor, type GroupColor } from './group-colors';
+import { effectiveDates, type DraftMap } from './types';
+
+/**
+ * Modelo da visão flowline (Linha de Balanço, layout compacto):
+ * - Nós acima dos pavimentos (obra, blocos/torres) viram linhas de grupo.
+ * - Cada pavimento vira UMA linha de fluxo; todas as atividades-folha
+ *   descendentes viram barras nessa linha, lado a lado no tempo.
+ * - Sobreposições temporais empilham em sub-faixas (interval partitioning) —
+ *   atividades nunca se fundem.
+ * - Folhas sem ancestral de pavimento vão para a faixa "Canteiro".
+ */
+
+export const CANTEIRO_ROW_ID = '__canteiro__';
+
+export interface FlowBar {
+  taskId: string;
+  name: string;
+  start: number; // ms epoch (draft-aware)
+  end: number;   // ms epoch (draft-aware)
+  durationDays: number;
+  progress: number; // physicalProgress 0-100
+  color: GroupColor;
+  subLane: number;  // 0-based dentro da linha
+  pending: boolean; // tem alteração no draft
+}
+
+export interface FlowRow {
+  kind: 'group' | 'flow';
+  id: string;      // taskId do nó (ou CANTEIRO_ROW_ID)
+  name: string;
+  depth: number;   // nível de indentação visual
+  bars: FlowBar[]; // vazio para kind='group'
+  laneCount: number; // nº de sub-faixas (>=1) — define a altura da linha
+  collapsible: boolean;
+}
+
+export interface FlowlineModel {
+  rows: FlowRow[];      // apenas linhas visíveis (respeita collapsed)
+  minDate: number;      // ms — início da janela de dados
+  maxDate: number;      // ms — fim da janela de dados
+  groups: GroupColor[]; // grupos presentes (para a legenda), ordenados por uso
+}
+
+/** Interval partitioning: atribui sub-faixa a cada barra (greedy por início). */
+export function assignSubLanes(bars: Omit<FlowBar, 'subLane'>[]): FlowBar[] {
+  const sorted = [...bars].sort((a, b) => a.start - b.start || a.end - b.end);
+  const laneEnds: number[] = [];
+  return sorted.map((bar) => {
+    let lane = laneEnds.findIndex((end) => end <= bar.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(bar.end);
+    } else {
+      laneEnds[lane] = bar.end;
+    }
+    return { ...bar, subLane: lane };
+  });
+}
+
+function collectLeaves(node: WbsNode, out: GanttTask[]): void {
+  if (node.isLeaf) out.push(node.task);
+  else node.children.forEach((c) => collectLeaves(c, out));
+}
+
+function makeBar(task: GanttTask, draft: DraftMap): Omit<FlowBar, 'subLane'> {
+  const { start, end, durationDays } = effectiveDates(task, draft);
+  return {
+    taskId: task.id,
+    name: task.name,
+    start,
+    end,
+    durationDays,
+    progress: task.physicalProgress ?? 0,
+    color: groupColor(task.activityTypeName ?? task.name),
+    pending: draft.has(task.id),
+  };
+}
+
+/**
+ * Monta o modelo flowline a partir do cronograma + draft.
+ * `collapsed` contém IDs de linhas de grupo recolhidas (filhos ocultos).
+ */
+export function buildFlowlineModel(
+  tasks: GanttTask[],
+  draft: DraftMap,
+  collapsed: Set<string>,
+): FlowlineModel {
+  const forest = buildForest(tasks);
+  const rows: FlowRow[] = [];
+  const canteiroLeaves: GanttTask[] = [];
+  const groupUse = new Map<string, { color: GroupColor; count: number }>();
+
+  const registerGroups = (bars: FlowBar[]) => {
+    for (const b of bars) {
+      const cur = groupUse.get(b.color.key);
+      if (cur) cur.count++;
+      else groupUse.set(b.color.key, { color: b.color, count: 1 });
+    }
+  };
+
+  const walk = (node: WbsNode, depth: number, hidden: boolean): void => {
+    const isFloor = FLOOR_PATTERN.test(node.task.name);
+
+    if (isFloor) {
+      // Linha de fluxo: TODAS as folhas descendentes viram barras aqui.
+      const leaves: GanttTask[] = [];
+      collectLeaves(node, leaves);
+      const bars = assignSubLanes(leaves.map((t) => makeBar(t, draft)));
+      registerGroups(bars);
+      if (!hidden) {
+        rows.push({
+          kind: 'flow',
+          id: node.task.id,
+          name: node.task.name,
+          depth,
+          bars,
+          laneCount: bars.reduce((m, b) => Math.max(m, b.subLane + 1), 1),
+          collapsible: false,
+        });
+      }
+      return;
+    }
+
+    if (node.isLeaf) {
+      // Folha fora de pavimento → Canteiro.
+      canteiroLeaves.push(node.task);
+      return;
+    }
+
+    // Nó de agrupamento (obra/bloco/torre).
+    const isCollapsed = collapsed.has(node.task.id);
+    if (!hidden) {
+      rows.push({
+        kind: 'group',
+        id: node.task.id,
+        name: node.task.name,
+        depth,
+        bars: [],
+        laneCount: 1,
+        collapsible: true,
+      });
+    }
+    node.children.forEach((c) => walk(c, depth + 1, hidden || isCollapsed));
+  };
+
+  forest.forEach((root) => walk(root, 0, false));
+
+  if (canteiroLeaves.length > 0) {
+    const bars = assignSubLanes(canteiroLeaves.map((t) => makeBar(t, draft)));
+    registerGroups(bars);
+    const hidden = collapsed.has(CANTEIRO_ROW_ID);
+    rows.push({
+      kind: 'group',
+      id: CANTEIRO_ROW_ID,
+      name: 'Canteiro',
+      depth: 0,
+      bars: [],
+      laneCount: 1,
+      collapsible: true,
+    });
+    if (!hidden) {
+      rows.push({
+        kind: 'flow',
+        id: `${CANTEIRO_ROW_ID}:row`,
+        name: 'Atividades gerais',
+        depth: 1,
+        bars,
+        laneCount: bars.reduce((m, b) => Math.max(m, b.subLane + 1), 1),
+        collapsible: false,
+      });
+    }
+  }
+
+  // Janela de tempo com base em TODAS as barras (mesmo linhas ocultas não
+  // alteram o range — usa as tasks diretamente para estabilidade do eixo X).
+  let minDate = Infinity;
+  let maxDate = -Infinity;
+  for (const t of tasks) {
+    const { start, end } = effectiveDates(t, draft);
+    if (start < minDate) minDate = start;
+    if (end > maxDate) maxDate = end;
+  }
+  if (!isFinite(minDate)) { minDate = Date.now(); maxDate = Date.now(); }
+
+  const groups = [...groupUse.values()]
+    .sort((a, b) => b.count - a.count)
+    .map((g) => g.color);
+
+  return { rows, minDate, maxDate, groups };
+}

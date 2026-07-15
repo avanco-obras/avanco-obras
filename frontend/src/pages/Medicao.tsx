@@ -4,7 +4,7 @@ import { useStore } from '@/store';
 import { towersApi, measurementsApi, scheduleApi, uploadsApi, progressApi } from '@/services/api';
 import type { Tower, Floor, Unit, GanttTask, ProjectReport, ProjectMetrics, ReportComparison, CurvaSPoint } from '@/types';
 import {
-  buildForest, indexNodes, recalcParents, subtreeProgress, FLOOR_PATTERN,
+  buildForest, indexNodes, recalcParents, subtreeProgress, FLOOR_PATTERN, normKey,
 } from '@/lib/wbs-tree';
 import BuildingViewer3D from '@/components/viewer/BuildingViewer3D';
 import FloorPlanViewer2D from '@/components/viewer/FloorPlanViewer2D';
@@ -18,10 +18,6 @@ type ViewerMode = '3d' | '2d' | 'heatmap';
 // Altura DEFINIDA do viewer (evita canvas R3F crescendo sem limite / sobreposição).
 const VIEWER_H = 'clamp(460px, 66vh, 760px)';
 
-// Normalização (espelha ScheduleService.normalizeKey no backend) p/ casar Floor↔WBS.
-function normKey(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
-}
 
 // ── KpiBar ────────────────────────────────────────────────────────────────────
 

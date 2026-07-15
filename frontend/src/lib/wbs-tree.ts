@@ -10,6 +10,11 @@ import type { GanttTask } from '@/types';
 export const FLOOR_PATTERN =
   /\b(subsolo|t[ée]rreo|pavimento|pav\.?|andar|cobertura|mezanino|garagem)\b/i;
 
+// Normalização (espelha ScheduleService.normalizeKey no backend) p/ casar nomes.
+export function normKey(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export interface WbsNode {
   task: GanttTask;
   depth: number;
