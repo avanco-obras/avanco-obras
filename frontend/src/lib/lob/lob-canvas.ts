@@ -119,7 +119,7 @@ export class LobCanvas {
   private ctx: CanvasRenderingContext2D;
   private bg: HTMLCanvasElement; // cache do fundo (colunas de tempo)
   private bgDirty = true;
-  private dirty = true;
+  private dirty = false; // "frame já agendado" — começa falso p/ o 1º invalidate agendar o render
   private raf = 0;
   private ro: ResizeObserver;
   private destroyed = false;
