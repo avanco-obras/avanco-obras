@@ -29,7 +29,7 @@ export interface ScheduleUpdatedPayload {
 export interface ScheduleChangedPayload {
   projectId: string;
   /** Kind of structural change so the client knows what to refresh. */
-  action: 'created' | 'updated' | 'deleted' | 'imported';
+  action: 'created' | 'updated' | 'deleted' | 'imported' | 'batch-update';
   scheduleItemId?: string;
 }
 

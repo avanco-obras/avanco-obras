@@ -35,6 +35,8 @@ export interface GanttRow {
   order: number;
   weight: number;
   responsible?: string;
+  activityTypeId?: string;
+  activityTypeName?: string;
   predecessorDeps: GanttDep[];
   successorDeps: GanttDep[];
 }
@@ -186,6 +188,193 @@ export class ScheduleService {
     return updated;
   }
 
+  /**
+   * Aplica um conjunto de alterações de datas/durações numa transação única
+   * (tudo ou nada), recalcula as datas dos ancestrais por rollup e registra
+   * uma ScheduleRevision com o antes/depois. Usado pela Linha de Balanço.
+   */
+  async batchUpdate(
+    projectId: string,
+    userId: string,
+    dto: {
+      description?: string;
+      changes: { id: string; startDate: string; endDate: string; durationDays: number }[];
+    },
+  ) {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Projeto com ID "${projectId}" não encontrado`);
+    }
+
+    const items = await this.prisma.scheduleItem.findMany({
+      where: { projectId },
+      select: {
+        id: true,
+        parentId: true,
+        code: true,
+        name: true,
+        startDate: true,
+        endDate: true,
+        durationDays: true,
+        _count: { select: { children: true } },
+      },
+    });
+    const byId = new Map(items.map((i) => [i.id, i]));
+
+    // ── Validações ────────────────────────────────────────────────────────────
+    const revisionChanges: {
+      itemId: string;
+      code: string;
+      name: string;
+      before: { startDate: string; endDate: string; durationDays: number };
+      after: { startDate: string; endDate: string; durationDays: number };
+    }[] = [];
+
+    for (const change of dto.changes) {
+      const item = byId.get(change.id);
+      if (!item) {
+        throw new NotFoundException(
+          `Item de cronograma com ID "${change.id}" não encontrado neste projeto`,
+        );
+      }
+      if (item._count.children > 0) {
+        throw new BadRequestException(
+          `Item "${item.name}" (${item.code}) não é uma atividade-folha — datas de itens-pai são recalculadas automaticamente`,
+        );
+      }
+      const start = new Date(change.startDate);
+      const end = new Date(change.endDate);
+      if (start.getTime() > end.getTime()) {
+        throw new BadRequestException(
+          `Item "${item.name}" (${item.code}): data de início posterior à de término`,
+        );
+      }
+      revisionChanges.push({
+        itemId: item.id,
+        code: item.code,
+        name: item.name,
+        before: {
+          startDate: item.startDate.toISOString(),
+          endDate: item.endDate.toISOString(),
+          durationDays: item.durationDays,
+        },
+        after: {
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          durationDays: change.durationDays,
+        },
+      });
+    }
+
+    // ── Rollup em memória: datas dos ancestrais = min/max dos filhos ─────────
+    const dates = new Map(
+      items.map((i) => [i.id, { start: i.startDate.getTime(), end: i.endDate.getTime() }]),
+    );
+    for (const change of dto.changes) {
+      dates.set(change.id, {
+        start: new Date(change.startDate).getTime(),
+        end: new Date(change.endDate).getTime(),
+      });
+    }
+    const childrenOf = new Map<string, string[]>();
+    for (const i of items) {
+      if (!i.parentId) continue;
+      const arr = childrenOf.get(i.parentId);
+      if (arr) arr.push(i.id);
+      else childrenOf.set(i.parentId, [i.id]);
+    }
+    const parentUpdates: { id: string; start: number; end: number }[] = [];
+    // Sobe a partir dos pais dos itens alterados até a raiz (sem repetir).
+    const queue = [...new Set(
+      dto.changes
+        .map((c) => byId.get(c.id)?.parentId)
+        .filter((p): p is string => !!p),
+    )];
+    const processed = new Set<string>();
+    while (queue.length > 0) {
+      const pid = queue.shift()!;
+      if (processed.has(pid)) continue;
+      const kids = childrenOf.get(pid) ?? [];
+      if (kids.length === 0) continue;
+      const start = Math.min(...kids.map((k) => dates.get(k)!.start));
+      const end = Math.max(...kids.map((k) => dates.get(k)!.end));
+      const cur = dates.get(pid)!;
+      // Só processa o pai de novo quando os filhos deste nível já estabilizaram
+      const kidsPending = kids.some((k) => queue.includes(k));
+      if (kidsPending) {
+        queue.push(pid);
+        continue;
+      }
+      processed.add(pid);
+      if (start !== cur.start || end !== cur.end) {
+        dates.set(pid, { start, end });
+        parentUpdates.push({ id: pid, start, end });
+      }
+      const parent = byId.get(pid)?.parentId;
+      if (parent && !processed.has(parent)) queue.push(parent);
+    }
+
+    // ── Transação: folhas + pais + revisão ───────────────────────────────────
+    const revision = await this.prisma.$transaction(async (tx) => {
+      for (const change of dto.changes) {
+        await tx.scheduleItem.update({
+          where: { id: change.id },
+          data: {
+            startDate: new Date(change.startDate),
+            endDate: new Date(change.endDate),
+            durationDays: change.durationDays,
+          },
+        });
+      }
+      for (const pu of parentUpdates) {
+        await tx.scheduleItem.update({
+          where: { id: pu.id },
+          data: {
+            startDate: new Date(pu.start),
+            endDate: new Date(pu.end),
+            durationDays: Math.max(1, Math.ceil((pu.end - pu.start) / 86_400_000)),
+          },
+        });
+      }
+      return tx.scheduleRevision.create({
+        data: {
+          projectId,
+          userId,
+          description: dto.description ?? null,
+          changes: revisionChanges as unknown as Prisma.InputJsonValue,
+        },
+      });
+    });
+
+    this.realtime.emitScheduleChanged({ projectId, action: 'batch-update' });
+
+    return {
+      revisionId: revision.id,
+      updated: dto.changes.length,
+      parentsRecalculated: parentUpdates.length,
+    };
+  }
+
+  async listRevisions(projectId: string) {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Projeto com ID "${projectId}" não encontrado`);
+    }
+    return this.prisma.scheduleRevision.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, fullName: true, username: true } },
+      },
+    });
+  }
+
   async remove(id: string) {
     const item = await this.prisma.scheduleItem.findUnique({
       where: { id },
@@ -253,6 +442,10 @@ export class ScheduleService {
         order: true,
         weight: true,
         responsible: true,
+        activityTypeId: true,
+        activityType: {
+          select: { id: true, name: true },
+        },
         _count: {
           select: { children: true },
         },
@@ -282,6 +475,8 @@ export class ScheduleService {
       order: item.order,
       weight: Number(item.weight),
       responsible: item.responsible ?? undefined,
+      activityTypeId: item.activityTypeId ?? undefined,
+      activityTypeName: item.activityType?.name ?? undefined,
       predecessorDeps: item.predecessors,
       successorDeps: item.successors,
     }));

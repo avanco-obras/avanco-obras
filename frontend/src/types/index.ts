@@ -140,6 +140,8 @@ export interface GanttTask {
   weight?: number;
   responsible?: string;
   rowId?: number;
+  activityTypeId?: string;
+  activityTypeName?: string;
   predecessorDeps?: TaskDep[];
   successorDeps?: TaskDep[];
 }

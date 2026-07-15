@@ -59,6 +59,7 @@ model User {
   weeklyTasks    WeeklyTask[]
   baselines      ProjectBaseline[]
   reports        ProjectReport[] @relation("ReportUser")
+  revisions      ScheduleRevision[] @relation("RevisionUser")
 
   @@map("users")
 }
@@ -89,6 +90,7 @@ model Project {
   activityTypes    ActivityType[]
   baselines        ProjectBaseline[]
   reports          ProjectReport[]
+  revisions        ScheduleRevision[]
 
   @@map("projects")
 }
@@ -249,6 +251,21 @@ model ProjectReport {
   @@unique([projectId, reportNumber])
   @@index([projectId, createdAt])
   @@map("project_reports")
+}
+
+model ScheduleRevision {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  userId      String   @map("user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  description String?
+  changes     Json // [{ itemId, code, name, before:{startDate,endDate,durationDays}, after:{...} }]
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation("RevisionUser", fields: [userId], references: [id])
+
+  @@index([projectId, createdAt])
+  @@map("schedule_revisions")
 }
 
 model Measurement {
