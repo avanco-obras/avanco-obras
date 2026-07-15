@@ -4,6 +4,7 @@ import {
   Building2, LayoutDashboard, Calendar, Ruler, ClipboardList,
   Settings, LogOut, ChevronDown, Loader2, Bell, Download,
   Sun, Moon, Search, User, ChevronRight, PanelLeftClose, PanelLeftOpen,
+  TrendingUp,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import { useAuth } from '@/hooks/useAuth'
@@ -15,6 +16,7 @@ import { useHistoryStore } from '@/store/historyStore'
 const NAV_MAIN = [
   { to: '/dashboard',            label: 'Dashboard',       icon: LayoutDashboard },
   { to: '/cronograma',           label: 'Cronograma',      icon: Calendar        },
+  { to: '/linha-de-balanco',     label: 'Linha de Balanço', icon: TrendingUp     },
   { to: '/medicao',              label: 'Medição',         icon: Ruler           },
   { to: '/programacao-semanal',  label: 'Prog. Semanal',   icon: ClipboardList   },
 ]
@@ -27,6 +29,7 @@ const NAV_CONFIG = [
 const PAGE_META: Record<string, { title: string; crumb: string }> = {
   '/dashboard':           { title: 'Dashboard',          crumb: 'Visão geral do projeto'        },
   '/cronograma':          { title: 'Cronograma',          crumb: 'Gantt · Linha de base'         },
+  '/linha-de-balanco':    { title: 'Linha de Balanço',    crumb: 'Planejamento · Reprogramação'  },
   '/medicao':             { title: 'Medição Física',      crumb: 'Avanço por unidade'            },
   '/programacao-semanal': { title: 'Prog. Semanal',       crumb: 'PPC · Planejamento LPS'        },
   '/cadastro':            { title: 'Cadastro',            crumb: 'Dados do projeto e equipe'     },
@@ -63,6 +66,7 @@ function Tooltip({ label, visible }: { label: string; visible: boolean }) {
 const CMD_ITEMS = [
   { group: 'Navegação', label: 'Dashboard',       icon: LayoutDashboard, to: '/dashboard'           },
   { group: 'Navegação', label: 'Cronograma',       icon: Calendar,        to: '/cronograma'          },
+  { group: 'Navegação', label: 'Linha de Balanço', icon: TrendingUp,      to: '/linha-de-balanco'    },
   { group: 'Navegação', label: 'Medição Física',   icon: Ruler,           to: '/medicao'             },
   { group: 'Navegação', label: 'Prog. Semanal',    icon: ClipboardList,   to: '/programacao-semanal' },
   { group: 'Ações',     label: 'Cadastro',         icon: Building2,       to: '/cadastro'            },

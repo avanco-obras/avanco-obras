@@ -351,6 +351,25 @@ export interface BaselineComparison {
   }>;
 }
 
+// Linha de Balanço — histórico de reprogramações
+export interface ScheduleRevisionChange {
+  itemId: string;
+  code: string;
+  name: string;
+  before: { startDate: string; endDate: string; durationDays: number };
+  after: { startDate: string; endDate: string; durationDays: number };
+}
+
+export interface ScheduleRevision {
+  id: string;
+  projectId: string;
+  userId: string;
+  createdAt: string;
+  description?: string | null;
+  changes: ScheduleRevisionChange[];
+  user?: { id: string; fullName: string; username: string };
+}
+
 // Physical Progress types
 export interface ProjectReport {
   id: string;

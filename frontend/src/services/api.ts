@@ -5,6 +5,7 @@ import type {
   WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
   PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
   ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison,
+  ScheduleRevision,
 } from '../types';
 import { useStore } from '../store';
 
@@ -135,6 +136,17 @@ export const scheduleApi = {
       { headers: { 'Content-Type': 'multipart/form-data' } },
     ).then((r) => r.data);
   },
+  /** Linha de Balanço: aplica alterações de datas/durações atomicamente. */
+  batchUpdate: (projectId: string, data: {
+    description?: string;
+    changes: { id: string; startDate: string; endDate: string; durationDays: number }[];
+  }) =>
+    api.patch<{ revisionId: string; updated: number; parentsRecalculated: number }>(
+      `/projects/${projectId}/schedule/batch`, data,
+    ).then((r) => r.data),
+  /** Linha de Balanço: histórico de reprogramações. */
+  listRevisions: (projectId: string) =>
+    api.get<ScheduleRevision[]>(`/projects/${projectId}/schedule/revisions`).then((r) => r.data),
 };
 
 // ── Measurements ──────────────────────────────────────────────────
