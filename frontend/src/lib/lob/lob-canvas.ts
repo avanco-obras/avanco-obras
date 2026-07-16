@@ -27,6 +27,9 @@ const BASELINE_H = 4;
 const EDGE_PX = 6;
 const MIN_PX_PER_DAY = 0.4;
 const MAX_PX_PER_DAY = 90;
+const SB_SIZE = 10;        // espessura das scrollbars (overlay)
+const SB_MIN_THUMB = 28;   // tamanho mínimo do thumb
+const X_PAD_DAYS = 3;      // respiro (dias) em cada lado do range de dados
 
 const COLORS = {
   headerBg: '#ffffff',
@@ -45,6 +48,10 @@ const COLORS = {
   barShadow: 'rgba(0,0,0,0.12)',
   ghost: 'rgba(37,99,235,0.35)',
   text: '#1f2937',
+  sbTrack: 'rgba(148,163,184,0.16)',
+  sbThumb: 'rgba(100,116,139,0.5)',
+  sbThumbActive: 'rgba(71,85,105,0.75)',
+  overflowHint: 'rgba(15,23,42,0.07)',
 };
 
 const WEEKDAY_LETTER = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']; // getDay(): 0=Dom
@@ -153,6 +160,7 @@ export class LobCanvas {
     curEnd: number;
   } | null = null;
   private panning: { startClientX: number; startClientY: number; origOrigin: number; origScrollY: number; moved: boolean } | null = null;
+  private sbDrag: { axis: 'x' | 'y'; startClient: number; startScrollY: number; startOriginMs: number } | null = null;
 
   private cb: Callbacks;
 
@@ -202,6 +210,7 @@ export class LobCanvas {
     });
     if (first && !opts.keepViewport) this.fit();
     this.clampScroll();
+    this.clampX();
     this.invalidate();
   }
 
@@ -230,6 +239,7 @@ export class LobCanvas {
     const tAtAnchor = this.originMs + (ax / this.pxPerDay) * DAY_MS;
     this.pxPerDay = px;
     this.originMs = tAtAnchor - (ax / this.pxPerDay) * DAY_MS;
+    this.clampX();
     this.bgDirty = true;
     this.invalidate();
   }
@@ -310,6 +320,62 @@ export class LobCanvas {
   private clampScroll(): void {
     const maxScroll = Math.max(0, this.layout.totalHeight - this.getViewportBodyHeight());
     this.scrollY = Math.min(maxScroll, Math.max(0, this.scrollY));
+  }
+
+  // ── Range horizontal + scrollbars ────────────────────────────────────────────
+
+  private contentStartMs(): number { return this.model.minDate - X_PAD_DAYS * DAY_MS; }
+  private contentEndMs(): number { return this.model.maxDate + X_PAD_DAYS * DAY_MS; }
+  private viewSpanMs(): number { return (this.width / this.pxPerDay) * DAY_MS; }
+
+  /** Limita o pan horizontal à janela de dados (evita "se perder" fora do cronograma). */
+  private clampX(): void {
+    const viewMs = this.viewSpanMs();
+    const start = this.contentStartMs();
+    const end = this.contentEndMs();
+    if (end - start <= viewMs) this.originMs = start;
+    else this.originMs = Math.min(end - viewMs, Math.max(start, this.originMs));
+  }
+
+  private hasVOverflow(): boolean {
+    return this.layout.totalHeight > this.getViewportBodyHeight();
+  }
+
+  private hasHOverflow(): boolean {
+    return this.contentEndMs() - this.contentStartMs() > this.viewSpanMs();
+  }
+
+  private vScrollbarGeom(): { trackX: number; trackY: number; trackH: number; thumbY: number; thumbH: number } | null {
+    if (!this.hasVOverflow()) return null;
+    const trackX = this.width - SB_SIZE;
+    const trackY = HEADER_H;
+    const trackH = this.height - HEADER_H - (this.hasHOverflow() ? SB_SIZE : 0);
+    const bodyH = this.getViewportBodyHeight();
+    const thumbH = Math.max(SB_MIN_THUMB, trackH * (bodyH / this.layout.totalHeight));
+    const maxScroll = this.layout.totalHeight - bodyH;
+    const thumbY = trackY + (maxScroll > 0 ? (this.scrollY / maxScroll) * (trackH - thumbH) : 0);
+    return { trackX, trackY, trackH, thumbY, thumbH };
+  }
+
+  private hScrollbarGeom(): { trackX: number; trackY: number; trackW: number; thumbX: number; thumbW: number } | null {
+    if (!this.hasHOverflow()) return null;
+    const trackY = this.height - SB_SIZE;
+    const trackX = 0;
+    const trackW = this.width - (this.hasVOverflow() ? SB_SIZE : 0);
+    const spanMs = this.contentEndMs() - this.contentStartMs();
+    const viewMs = this.viewSpanMs();
+    const thumbW = Math.max(SB_MIN_THUMB, trackW * (viewMs / spanMs));
+    const maxOffMs = spanMs - viewMs;
+    const frac = maxOffMs > 0 ? (this.originMs - this.contentStartMs()) / maxOffMs : 0;
+    const thumbX = trackX + Math.min(1, Math.max(0, frac)) * (trackW - thumbW);
+    return { trackX, trackY, trackW, thumbX, thumbW };
+  }
+
+  private setOriginMs(ms: number): void {
+    this.originMs = ms;
+    this.clampX();
+    this.bgDirty = true;
+    this.invalidate();
   }
 
   // ── Fundo (colunas de tempo) ─────────────────────────────────────────────────
@@ -745,6 +811,64 @@ export class LobCanvas {
       ctx.fillText('hoje', todayX + 4, 16);
       ctx.restore();
     }
+
+    // indicadores de conteúdo fora da área visível + scrollbars
+    this.drawOverflowHints(ctx);
+    this.drawScrollbars(ctx);
+  }
+
+  /** Fades sutis nas bordas quando há conteúdo além da área visível. */
+  private drawOverflowHints(ctx: CanvasRenderingContext2D): void {
+    const bodyTop = HEADER_H;
+    const F = 14;
+    const fade = (x0: number, x1: number) => {
+      const g = ctx.createLinearGradient(x0, 0, x1, 0);
+      g.addColorStop(0, COLORS.overflowHint);
+      g.addColorStop(1, 'rgba(15,23,42,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(Math.min(x0, x1), bodyTop, F, this.height - bodyTop);
+    };
+    if (this.tOf(0) > this.contentStartMs() + DAY_MS / 24) fade(0, F);
+    if (this.tOf(this.width) < this.contentEndMs() - DAY_MS / 24) fade(this.width, this.width - F);
+    const maxScroll = this.layout.totalHeight - this.getViewportBodyHeight();
+    if (this.scrollY > 1) {
+      const g = ctx.createLinearGradient(0, bodyTop, 0, bodyTop + 10);
+      g.addColorStop(0, COLORS.overflowHint);
+      g.addColorStop(1, 'rgba(15,23,42,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, bodyTop, this.width, 10);
+    }
+    if (this.scrollY < maxScroll - 1) {
+      const g = ctx.createLinearGradient(0, this.height, 0, this.height - 10);
+      g.addColorStop(0, COLORS.overflowHint);
+      g.addColorStop(1, 'rgba(15,23,42,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, this.height - 10, this.width, 10);
+    }
+  }
+
+  /** Scrollbars overlay (visíveis apenas quando há conteúdo excedente). */
+  private drawScrollbars(ctx: CanvasRenderingContext2D): void {
+    const v = this.vScrollbarGeom();
+    const h = this.hScrollbarGeom();
+    ctx.save();
+    if (v) {
+      ctx.fillStyle = COLORS.sbTrack;
+      ctx.fillRect(v.trackX, v.trackY, SB_SIZE, v.trackH);
+      ctx.fillStyle = this.sbDrag?.axis === 'y' ? COLORS.sbThumbActive : COLORS.sbThumb;
+      ctx.beginPath();
+      ctx.roundRect(v.trackX + 2, v.thumbY + 2, SB_SIZE - 4, Math.max(8, v.thumbH - 4), 3);
+      ctx.fill();
+    }
+    if (h) {
+      ctx.fillStyle = COLORS.sbTrack;
+      ctx.fillRect(h.trackX, h.trackY, h.trackW, SB_SIZE);
+      ctx.fillStyle = this.sbDrag?.axis === 'x' ? COLORS.sbThumbActive : COLORS.sbThumb;
+      ctx.beginPath();
+      ctx.roundRect(h.thumbX + 2, h.trackY + 2, Math.max(8, h.thumbW - 4), SB_SIZE - 4, 3);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // ── Hit-testing ──────────────────────────────────────────────────────────────
@@ -754,6 +878,9 @@ export class LobCanvas {
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     if (y < HEADER_H) return null;
+    // zonas das scrollbars não são barras
+    if (this.hasVOverflow() && x >= this.width - SB_SIZE) return null;
+    if (this.hasHOverflow() && y >= this.height - SB_SIZE) return null;
 
     const bodyY = y - HEADER_H + this.scrollY;
     const { startIdx, endIdx } = this.visibleRange();
@@ -796,8 +923,36 @@ export class LobCanvas {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
-    const hit = this.hitTest(e.clientX, e.clientY);
     this.canvas.setPointerCapture(e.pointerId);
+
+    // scrollbars primeiro (thumb arrastável; clique na trilha = salto)
+    const rect = this.canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const v = this.vScrollbarGeom();
+    if (v && px >= v.trackX && py >= v.trackY && py <= v.trackY + v.trackH) {
+      if (py < v.thumbY || py > v.thumbY + v.thumbH) {
+        const maxScroll = Math.max(0, this.layout.totalHeight - this.getViewportBodyHeight());
+        const frac = (py - v.trackY - v.thumbH / 2) / Math.max(1, v.trackH - v.thumbH);
+        this.setScrollY(frac * maxScroll);
+      }
+      this.sbDrag = { axis: 'y', startClient: e.clientY, startScrollY: this.scrollY, startOriginMs: this.originMs };
+      this.invalidate();
+      return;
+    }
+    const h = this.hScrollbarGeom();
+    if (h && py >= h.trackY && px >= h.trackX && px <= h.trackX + h.trackW) {
+      if (px < h.thumbX || px > h.thumbX + h.thumbW) {
+        const maxOffMs = this.contentEndMs() - this.contentStartMs() - this.viewSpanMs();
+        const frac = (px - h.trackX - h.thumbW / 2) / Math.max(1, h.trackW - h.thumbW);
+        this.setOriginMs(this.contentStartMs() + frac * maxOffMs);
+      }
+      this.sbDrag = { axis: 'x', startClient: e.clientX, startScrollY: this.scrollY, startOriginMs: this.originMs };
+      this.invalidate();
+      return;
+    }
+
+    const hit = this.hitTest(e.clientX, e.clientY);
     if (hit) {
       const kind = hit.edge === 'start' ? 'resize-start' : hit.edge === 'end' ? 'resize-end' : 'move';
       this.drag = {
@@ -823,6 +978,25 @@ export class LobCanvas {
   };
 
   private onPointerMove = (e: PointerEvent): void => {
+    if (this.sbDrag) {
+      if (this.sbDrag.axis === 'y') {
+        const v = this.vScrollbarGeom();
+        if (v) {
+          const maxScroll = Math.max(0, this.layout.totalHeight - this.getViewportBodyHeight());
+          const scale = maxScroll / Math.max(1, v.trackH - v.thumbH);
+          this.setScrollY(this.sbDrag.startScrollY + (e.clientY - this.sbDrag.startClient) * scale);
+        }
+      } else {
+        const h = this.hScrollbarGeom();
+        if (h) {
+          const maxOffMs = this.contentEndMs() - this.contentStartMs() - this.viewSpanMs();
+          const msPerPx = maxOffMs / Math.max(1, h.trackW - h.thumbW);
+          this.setOriginMs(this.sbDrag.startOriginMs + (e.clientX - this.sbDrag.startClient) * msPerPx);
+        }
+      }
+      return;
+    }
+
     if (this.drag) {
       const dxPx = e.clientX - this.drag.startClientX;
       const dxMs = (dxPx / this.pxPerDay) * DAY_MS;
@@ -850,6 +1024,7 @@ export class LobCanvas {
       if (!this.panning.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
       this.panning.moved = true;
       this.originMs = this.panning.origOrigin - (dx / this.pxPerDay) * DAY_MS;
+      this.clampX();
       this.scrollY = this.panning.origScrollY - dy;
       this.clampScroll();
       this.bgDirty = true;
@@ -867,6 +1042,11 @@ export class LobCanvas {
   };
 
   private onPointerUp = (e: PointerEvent): void => {
+    if (this.sbDrag) {
+      this.sbDrag = null;
+      this.invalidate();
+      return;
+    }
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
@@ -901,12 +1081,18 @@ export class LobCanvas {
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       this.setPxPerDay(this.pxPerDay * factor, e.clientX);
     } else if (e.shiftKey) {
-      this.originMs += ((e.deltaY || e.deltaX) / this.pxPerDay) * DAY_MS * 0.8;
-      this.bgDirty = true;
-      this.invalidate();
+      this.setOriginMs(this.originMs + ((e.deltaY || e.deltaX) / this.pxPerDay) * DAY_MS * 0.8);
     } else {
-      this.scrollY += e.deltaY;
-      this.clampScroll();
+      // trackpads emitem deltaX para navegação horizontal nativa
+      if (e.deltaX) {
+        this.originMs += (e.deltaX / this.pxPerDay) * DAY_MS;
+        this.clampX();
+        this.bgDirty = true;
+      }
+      if (e.deltaY) {
+        this.scrollY += e.deltaY;
+        this.clampScroll();
+      }
       this.invalidate();
       this.cb.onViewportChange?.(this.scrollY);
     }

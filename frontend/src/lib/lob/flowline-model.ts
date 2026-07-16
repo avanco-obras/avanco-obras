@@ -1,5 +1,5 @@
 import type { GanttTask } from '@/types';
-import { buildForest, FLOOR_PATTERN, type WbsNode } from '@/lib/wbs-tree';
+import { buildForest, FLOOR_PATTERN, inferFloorLevel, type WbsNode } from '@/lib/wbs-tree';
 import { groupColor, type GroupColor } from './group-colors';
 import { effectiveDates, type DraftMap } from './types';
 
@@ -63,6 +63,27 @@ export function assignSubLanes(bars: Omit<FlowBar, 'subLane'>[]): FlowBar[] {
 function collectLeaves(node: WbsNode, out: GanttTask[]): void {
   if (node.isLeaf) out.push(node.task);
   else node.children.forEach((c) => collectLeaves(c, out));
+}
+
+/**
+ * Reordena os filhos-pavimento por elevação física DECRESCENTE (cobertura no
+ * topo, subsolos embaixo), espelhando o empilhamento da visualização 3D da
+ * Medição. Nós que não são pavimento mantêm suas posições originais — apenas
+ * os pavimentos são permutados entre si (por torre/bloco, já que a ordenação
+ * acontece entre irmãos).
+ */
+export function orderFloorsPhysically(children: WbsNode[]): WbsNode[] {
+  const floorIdx: number[] = [];
+  children.forEach((c, i) => {
+    if (FLOOR_PATTERN.test(c.task.name)) floorIdx.push(i);
+  });
+  if (floorIdx.length < 2) return children;
+  const sorted = floorIdx
+    .map((i) => ({ node: children[i], i, level: inferFloorLevel(children[i].task.name) }))
+    .sort((a, b) => b.level - a.level || a.i - b.i); // desc; empate = ordem original
+  const out = [...children];
+  floorIdx.forEach((pos, k) => { out[pos] = sorted[k].node; });
+  return out;
 }
 
 function makeBar(task: GanttTask, draft: DraftMap): Omit<FlowBar, 'subLane'> {
@@ -143,10 +164,10 @@ export function buildFlowlineModel(
         collapsible: true,
       });
     }
-    node.children.forEach((c) => walk(c, depth + 1, hidden || isCollapsed));
+    orderFloorsPhysically(node.children).forEach((c) => walk(c, depth + 1, hidden || isCollapsed));
   };
 
-  forest.forEach((root) => walk(root, 0, false));
+  orderFloorsPhysically(forest).forEach((root) => walk(root, 0, false));
 
   if (canteiroLeaves.length > 0) {
     const bars = assignSubLanes(canteiroLeaves.map((t) => makeBar(t, draft)));

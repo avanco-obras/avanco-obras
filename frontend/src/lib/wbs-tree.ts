@@ -15,6 +15,25 @@ export function normKey(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Nível físico do pavimento inferido do nome (espelha
+ * ScheduleService.inferFloorLevel no backend — mesma lógica usada para derivar
+ * Floor.level, que posiciona os pavimentos na visualização 3D da Medição).
+ * Subsolo N → -N · Térreo/Garagem → 0 · Mezanino → 1 · Nº Pav → N · Cobertura → 99.
+ */
+export function inferFloorLevel(name: string): number {
+  const lower = normKey(name);
+  const sub = lower.match(/sub\s*(?:solo)?\s*(\d+)/);
+  if (sub) return -parseInt(sub[1], 10);
+  if (/\bsubsolo\b/.test(lower)) return -1;
+  if (/\b(terreo|garagem)\b/.test(lower)) return 0;
+  if (/\bcobertura\b/.test(lower)) return 99;
+  if (/\bmezanino\b/.test(lower)) return 1;
+  const pav = lower.match(/(\d+)\s*[ºo°]?\s*(?:pavimento|pav|andar)/);
+  if (pav) return parseInt(pav[1], 10);
+  return 0;
+}
+
 export interface WbsNode {
   task: GanttTask;
   depth: number;

@@ -79,6 +79,7 @@ export default function LinhaBalanco() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<LobCanvas | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const displayBtnRef = useRef<HTMLButtonElement>(null);
 
   // refs para callbacks do engine (evita closures obsoletas)
   const tasksRef = useRef(tasks); tasksRef.current = tasks;
@@ -341,12 +342,12 @@ export default function LinhaBalanco() {
         </select>
 
         <div style={{ position: 'relative' }}>
-          <button className="ao-btn ao-btn-sm" onClick={() => setShowDisplayMenu((v) => !v)}
+          <button ref={displayBtnRef} className="ao-btn ao-btn-sm" onClick={() => setShowDisplayMenu((v) => !v)}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <Settings2 size={12} /> Exibição
           </button>
           {showDisplayMenu && (
-            <DisplayMenu display={display} onChange={setDisplay} onClose={() => setShowDisplayMenu(false)} />
+            <DisplayMenu anchorRef={displayBtnRef} display={display} onChange={setDisplay} onClose={() => setShowDisplayMenu(false)} />
           )}
         </div>
 
@@ -487,7 +488,7 @@ export default function LinhaBalanco() {
           </span>
         ))}
         <span style={{ marginLeft: 'auto', color: 'var(--t3)' }}>
-          borda azul = pendente · barra fina = baseline · linha vermelha = hoje · arraste para mover · bordas para redimensionar · Ctrl+scroll = zoom
+          borda azul = pendente · barra fina = baseline · linha vermelha = hoje · arraste para mover · bordas para redimensionar · Ctrl+scroll = zoom · Shift+scroll = horizontal
         </span>
       </div>
 
@@ -562,7 +563,8 @@ function ToggleBtn({ active, icon, label, onClick }: { active: boolean; icon: Re
   );
 }
 
-function DisplayMenu({ display, onChange, onClose }: {
+function DisplayMenu({ anchorRef, display, onChange, onClose }: {
+  anchorRef: React.RefObject<HTMLButtonElement>;
   display: DisplayOptions; onChange: (d: DisplayOptions) => void; onClose: () => void;
 }) {
   const opts: { key: keyof DisplayOptions; label: string }[] = [
@@ -571,11 +573,17 @@ function DisplayMenu({ display, onChange, onClose }: {
     { key: 'showDayNum', label: 'Número do dia (1, 2, 3…)' },
     { key: 'highlightWeekend', label: 'Destacar sáb/dom' },
   ];
+  // position: fixed ancorado ao botão — escapa do overflow:hidden do .ao-card
+  // (causa raiz do menu "não abrir": ele abria, mas era recortado pelo card).
+  const MENU_W = 230;
+  const rect = anchorRef.current?.getBoundingClientRect();
+  const left = rect ? Math.min(rect.left, window.innerWidth - MENU_W - 8) : 8;
+  const top = rect ? rect.bottom + 6 : 60;
   return (
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={onClose} />
       <div style={{
-        position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 41, width: 230,
+        position: 'fixed', top, left, zIndex: 41, width: MENU_W,
         background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 10, padding: 12,
         boxShadow: '0 10px 30px rgba(0,0,0,.18)',
       }}>
