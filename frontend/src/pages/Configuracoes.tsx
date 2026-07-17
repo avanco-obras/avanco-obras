@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { usersApi, projectsApi, activityTypesApi } from '../services/api';
 import type { ActivityType, ProgressCriteria, MeasurementMethod } from '../types';
+import { ContractorsCard, RestrictionTypesCard } from '../components/weekly/ConfigCards';
+import { WEEK_DAYS } from '../components/weekly/weekly-logic';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -236,6 +238,9 @@ export default function Configuracoes() {
   );
   const [timezone, setTimezone] = useState(currentProject?.timezone ?? 'America/Sao_Paulo');
   const [currency, setCurrency] = useState(currentProject?.currency ?? 'BRL');
+  const [weekStartDay, setWeekStartDay] = useState(
+    currentProject?.weekStartDay?.toString() ?? '1'
+  );
   const [savingProjeto, setSavingProjeto] = useState(false);
 
   // ── Delete empreendimento state ────────────────────────────────────────
@@ -250,6 +255,7 @@ export default function Configuracoes() {
       const updated = await projectsApi.update(currentProject.id, {
         workdaysPerWeek: parseInt(workdaysPerWeek, 10),
         hoursPerDay: parseInt(hoursPerDay, 10),
+        weekStartDay: parseInt(weekStartDay, 10),
         timezone,
         currency,
       });
@@ -504,6 +510,16 @@ export default function Configuracoes() {
                         {CURRENCIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </select>
                     </div>
+                    <div style={{ ...fgStyle, gridColumn: '1 / -1' }}>
+                      <label style={labelStyle}>Dia de início da semana (Prog. Semanal)</label>
+                      <select style={inStyle} value={weekStartDay} onChange={(e) => setWeekStartDay(e.target.value)}>
+                        {WEEK_DAYS.map((day, i) => <option key={day} value={i}>{day}</option>)}
+                      </select>
+                      <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>
+                        Semana de 7 dias: {WEEK_DAYS[parseInt(weekStartDay, 10)]} → {WEEK_DAYS[(parseInt(weekStartDay, 10) + 6) % 7]}.
+                        Reunião semanal: {WEEK_DAYS[parseInt(weekStartDay, 10)]} seguinte.
+                      </span>
+                    </div>
                   </div>
                   <button type="submit" className="ao-btn ao-btn-primary ao-btn-sm" disabled={savingProjeto}>
                     {savingProjeto ? 'Salvando…' : 'Salvar parâmetros'}
@@ -512,6 +528,10 @@ export default function Configuracoes() {
               )}
             </div>
           </div>
+
+          {/* Cards: Programação Semanal */}
+          <ContractorsCard />
+          <RestrictionTypesCard />
 
           {/* Card: Zona de perigo */}
           <div className="ao-card" style={{ borderTop: '3px solid var(--red)' }}>

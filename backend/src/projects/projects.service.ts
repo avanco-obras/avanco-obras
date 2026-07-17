@@ -243,6 +243,7 @@ export class ProjectsService {
         ...(dto.totalArea !== undefined && { totalArea: dto.totalArea }),
         ...(dto.workdaysPerWeek !== undefined && { workdaysPerWeek: dto.workdaysPerWeek }),
         ...(dto.hoursPerDay !== undefined && { hoursPerDay: dto.hoursPerDay }),
+        ...(dto.weekStartDay !== undefined && { weekStartDay: dto.weekStartDay }),
         ...(dto.timezone !== undefined && { timezone: dto.timezone }),
         ...(dto.progressCriteria !== undefined && { progressCriteria: dto.progressCriteria }),
       },

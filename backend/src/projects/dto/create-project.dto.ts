@@ -73,6 +73,13 @@ export class CreateProjectDto {
   @Max(24)
   hoursPerDay?: number;
 
+  @ApiPropertyOptional({ description: 'Dia de início da semana da programação (0=Domingo … 6=Sábado)', default: 1, minimum: 0, maximum: 6 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  weekStartDay?: number;
+
   @ApiPropertyOptional({ description: 'IANA timezone', default: 'America/Sao_Paulo', example: 'America/Sao_Paulo' })
   @IsOptional()
   @IsString()

@@ -10,10 +10,10 @@ const mockPrismaService = {
   scheduleItem: {
     findMany: jest.fn(),
   },
-  weeklyPlan: {
+  weeklyProgram: {
     findFirst: jest.fn(),
   },
-  restriction: {
+  weeklyRestriction: {
     count: jest.fn(),
     findMany: jest.fn(),
   },
@@ -66,8 +66,8 @@ describe('DashboardService', () => {
         },
       ]);
 
-      mockPrismaService.restriction.count.mockResolvedValue(0);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -107,8 +107,8 @@ describe('DashboardService', () => {
         },
       ]);
 
-      mockPrismaService.restriction.count.mockResolvedValue(3);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(3);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -119,7 +119,7 @@ describe('DashboardService', () => {
       expect(result.totalActivities).toBe(2);
     });
 
-    it('should return ppcCurrent from most recent WeeklyPlan', async () => {
+    it('should return ppcCurrent from most recent closed WeeklyProgram indicators', async () => {
       const projectId = 'project-1';
 
       mockPrismaService.project.findUnique.mockResolvedValue({
@@ -129,20 +129,23 @@ describe('DashboardService', () => {
       });
 
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([]);
-      mockPrismaService.restriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
 
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue({
-        ppcActual: 85,
-        ppcForecast: 90,
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue({
+        indicators: { ppc: 85 },
       });
 
       const result = await service.getKPIs(projectId);
 
       expect(result.ppcCurrent).toBe(85);
-      expect(result.ppcForecast).toBe(90);
+      expect(mockPrismaService.weeklyProgram.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'FECHADA' }),
+        }),
+      );
     });
 
-    it('should return ppcCurrent=null when no WeeklyPlan exists', async () => {
+    it('should return ppcCurrent=null when no closed WeeklyProgram exists', async () => {
       const projectId = 'project-1';
 
       mockPrismaService.project.findUnique.mockResolvedValue({
@@ -152,8 +155,8 @@ describe('DashboardService', () => {
       });
 
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([]);
-      mockPrismaService.restriction.count.mockResolvedValue(0);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -259,36 +262,38 @@ describe('DashboardService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should return only PENDING and IN_ANALYSIS restrictions', async () => {
+    it('should return only PENDENTE restrictions', async () => {
       const projectId = 'project-1';
 
       const mockRestrictions = [
         {
           id: 'r1',
-          status: 'PENDING',
+          status: 'PENDENTE',
           description: 'Missing materials',
           dueDate: new Date('2025-02-01'),
-          weeklyPlan: { id: 'wp1', projectId },
+          program: { id: 'wp1', projectId },
+          type: { id: 't1', name: 'Material' },
         },
         {
           id: 'r2',
-          status: 'IN_ANALYSIS',
+          status: 'PENDENTE',
           description: 'Pending approval',
           dueDate: new Date('2025-02-15'),
-          weeklyPlan: { id: 'wp1', projectId },
+          program: { id: 'wp1', projectId },
+          type: { id: 't2', name: 'Projeto' },
         },
       ];
 
       mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
-      mockPrismaService.restriction.findMany.mockResolvedValue(mockRestrictions);
+      mockPrismaService.weeklyRestriction.findMany.mockResolvedValue(mockRestrictions);
 
       const result = await service.getPendingRestrictions(projectId);
 
       expect(result).toEqual(mockRestrictions);
-      expect(mockPrismaService.restriction.findMany).toHaveBeenCalledWith(
+      expect(mockPrismaService.weeklyRestriction.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: ['PENDING', 'IN_ANALYSIS'] },
+            status: 'PENDENTE',
           }),
         }),
       );

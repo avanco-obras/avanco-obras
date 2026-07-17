@@ -42,6 +42,7 @@ export interface Project {
   totalArea?: number;
   workdaysPerWeek: number;
   hoursPerDay: number;
+  weekStartDay: number; // 0=Domingo … 6=Sábado
   timezone: string;
   progressCriteria: ProgressCriteria;
   createdAt: string;
@@ -215,46 +216,127 @@ export interface BuildingData {
   }[];
 }
 
-// Weekly Planning types
-export type TaskStatus = 'COMPLETED' | 'NOT_COMPLETED' | 'PARTIALLY';
-export type RestrictionStatus = 'PENDING' | 'IN_ANALYSIS' | 'RELEASED' | 'EXPIRED';
+// Programação Semanal (v2)
+export type WeeklyProgramStatus = 'RASCUNHO' | 'PUBLICADA' | 'FECHADA';
+export type WeeklyActivityStatus =
+  | 'PROGRAMADA'
+  | 'NAO_INICIADA'
+  | 'EM_ANDAMENTO'
+  | 'CONCLUIDA'
+  | 'CANCELADA'
+  | 'REPROGRAMADA';
+export type WeeklyActivityOrigin = 'CRONOGRAMA' | 'MANUAL' | 'REPROGRAMADA';
+export type WeeklyRestrictionStatus = 'PENDENTE' | 'RESOLVIDA';
+export type WeeklySnapshotKind = 'PUBLICACAO' | 'REPORT' | 'FECHAMENTO';
 
-export interface WeeklyPlan {
+export interface Contractor {
+  id: string;
+  projectId: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RestrictionType {
+  id: string;
+  projectId: string;
+  name: string;
+  order: number;
+  isActive: boolean;
+}
+
+export interface WeeklyIndicators {
+  ppc: number;
+  totalActivities: number;
+  validActivities: number;
+  completed: number;
+  cancelled: number;
+  carriedOver: number;
+  reprogrammedPct: number;
+  restrictionsCount: number;
+  restrictionsPending: number;
+  topCauses: Array<{ type: string; count: number }>;
+  byContractor: Array<{
+    contractorId: string | null;
+    name: string;
+    total: number;
+    completed: number;
+    ppc: number;
+    reprogrammedPct: number;
+  }>;
+  byResponsible: Array<{ responsible: string; planned: number; delivered: number; ppc: number }>;
+}
+
+export interface WeeklyProgram {
   id: string;
   projectId: string;
   weekNumber: number;
   year: number;
   startDate: string;
   endDate: string;
-  ppcTarget: number;
-  ppcActual?: number;
-  ppcForecast?: number;
-  notes?: string;
+  meetingDate: string;
+  status: WeeklyProgramStatus;
+  publishedAt?: string | null;
+  closedAt?: string | null;
+  indicators?: WeeklyIndicators | null;
   createdAt: string;
-  tasks?: WeeklyTask[];
-  restrictions?: Restriction[];
+  updatedAt: string;
+  activities?: WeeklyActivity[];
+  restrictions?: WeeklyRestriction[];
+  _count?: { activities: number; restrictions: number };
 }
 
-export interface WeeklyTask {
+export interface WeeklyActivity {
   id: string;
-  weeklyPlanId: string;
-  assignedToId?: string;
-  description: string;
-  location: string;
-  status: TaskStatus;
-  nonCompletionCause?: string;
+  programId: string;
+  scheduleItemId?: string | null;
+  origin: WeeklyActivityOrigin;
+  local: string;
+  torre: string;
+  pavimento: string;
+  activityName: string;
+  contractorId?: string | null;
+  responsible?: string | null;
+  status: WeeklyActivityStatus;
+  percentExecuted: number;
+  carryoverFromId?: string | null;
+  order: number;
   createdAt: string;
-  assignedTo?: User;
+  updatedAt: string;
+  contractor?: Pick<Contractor, 'id' | 'name' | 'isActive'> | null;
+  restrictionLinks?: Array<{ restrictionId: string }>;
 }
 
-export interface Restriction {
+export interface WeeklyRestriction {
   id: string;
-  weeklyPlanId: string;
+  programId: string;
+  typeId?: string | null;
   description: string;
   responsible: string;
-  dueDate: string;
-  status: RestrictionStatus;
-  resolvedAt?: string;
+  dueDate?: string | null;
+  resolvedAt?: string | null;
+  status: WeeklyRestrictionStatus;
+  impactsProgram: boolean;
+  createdAt: string;
+  updatedAt: string;
+  type?: Pick<RestrictionType, 'id' | 'name'> | null;
+  activityLinks?: Array<{ activityId: string }>;
+}
+
+export interface WeeklySnapshotMeta {
+  id: string;
+  kind: WeeklySnapshotKind;
+  createdAt: string;
+  createdBy: { id: string; fullName: string };
+}
+
+export interface WeeklySnapshot extends WeeklySnapshotMeta {
+  programId: string;
+  payload: {
+    program: WeeklyProgram;
+    indicators: WeeklyIndicators;
+  };
 }
 
 // Dashboard types

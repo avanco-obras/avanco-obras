@@ -27,17 +27,36 @@ enum MeasurementMethod {
   COUNT
 }
 
-enum TaskStatus {
-  COMPLETED
-  NOT_COMPLETED
-  PARTIALLY
+enum WeeklyProgramStatus {
+  RASCUNHO
+  PUBLICADA
+  FECHADA
 }
 
-enum RestrictionStatus {
-  PENDING
-  IN_ANALYSIS
-  RELEASED
-  EXPIRED
+enum WeeklyActivityStatus {
+  PROGRAMADA
+  NAO_INICIADA
+  EM_ANDAMENTO
+  CONCLUIDA
+  CANCELADA
+  REPROGRAMADA
+}
+
+enum WeeklyActivityOrigin {
+  CRONOGRAMA
+  MANUAL
+  REPROGRAMADA
+}
+
+enum WeeklyRestrictionStatus {
+  PENDENTE
+  RESOLVIDA
+}
+
+enum WeeklySnapshotKind {
+  PUBLICACAO
+  REPORT
+  FECHAMENTO
 }
 
 model User {
@@ -56,7 +75,7 @@ model User {
 
   projectMembers ProjectMember[]
   measurements   Measurement[]
-  weeklyTasks    WeeklyTask[]
+  weeklySnapshots WeeklySnapshot[]
   baselines      ProjectBaseline[]
   reports        ProjectReport[] @relation("ReportUser")
   revisions      ScheduleRevision[] @relation("RevisionUser")
@@ -77,6 +96,7 @@ model Project {
   totalArea        Decimal?      @map("total_area") @db.Decimal(12, 2)
   workdaysPerWeek  Int           @default(5) @map("workdays_per_week")
   hoursPerDay      Int           @default(8) @map("hours_per_day")
+  weekStartDay     Int           @default(1) @map("week_start_day") // 0=Domingo … 6=Sábado
   timezone         String        @default("America/Sao_Paulo")
   progressCriteria String        @default("COST") @map("progress_criteria")
   createdAt        DateTime      @default(now()) @map("created_at")
@@ -85,7 +105,9 @@ model Project {
   members          ProjectMember[]
   towers           Tower[]
   scheduleItems    ScheduleItem[]
-  weeklyPlans      WeeklyPlan[]
+  weeklyPrograms   WeeklyProgram[]
+  contractors      Contractor[]
+  restrictionTypes RestrictionType[]
   uploads          Upload[]
   activityTypes    ActivityType[]
   baselines        ProjectBaseline[]
@@ -193,6 +215,7 @@ model ScheduleItem {
 
   predecessors ScheduleDependency[] @relation("SuccessorDep")
   successors   ScheduleDependency[] @relation("PredecessorDep")
+  weeklyActivities WeeklyActivity[]
 
   @@index([projectId, code])
   @@index([projectId, parentId])
@@ -290,55 +313,135 @@ model Measurement {
   @@map("measurements")
 }
 
-model WeeklyPlan {
-  id          String   @id @default(uuid())
-  projectId   String   @map("project_id")
-  weekNumber  Int      @map("week_number")
-  year        Int
-  startDate   DateTime @map("start_date")
-  endDate     DateTime @map("end_date")
-  ppcTarget   Decimal  @default(80) @map("ppc_target") @db.Decimal(5, 2)
-  ppcActual   Decimal? @map("ppc_actual") @db.Decimal(5, 2)
-  ppcForecast Decimal? @map("ppc_forecast") @db.Decimal(5, 2)
-  notes       String?
-  createdAt   DateTime @default(now()) @map("created_at")
+model Contractor {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  tasks        WeeklyTask[]
-  restrictions Restriction[]
+  project    Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  activities WeeklyActivity[]
+
+  @@unique([projectId, name])
+  @@map("contractors")
+}
+
+model RestrictionType {
+  id        String  @id @default(uuid())
+  projectId String  @map("project_id")
+  name      String
+  order     Int     @default(0)
+  isActive  Boolean @default(true) @map("is_active")
+
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  restrictions WeeklyRestriction[]
+
+  @@unique([projectId, name])
+  @@map("restriction_types")
+}
+
+model WeeklyProgram {
+  id          String              @id @default(uuid())
+  projectId   String              @map("project_id")
+  weekNumber  Int                 @map("week_number")
+  year        Int
+  startDate   DateTime            @map("start_date")
+  endDate     DateTime            @map("end_date")
+  meetingDate DateTime            @map("meeting_date")
+  status      WeeklyProgramStatus @default(RASCUNHO)
+  publishedAt DateTime?           @map("published_at")
+  closedAt    DateTime?           @map("closed_at")
+  indicators  Json?
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  activities   WeeklyActivity[]
+  restrictions WeeklyRestriction[]
+  snapshots    WeeklySnapshot[]
 
   @@unique([projectId, year, weekNumber])
-  @@map("weekly_plans")
+  @@index([projectId, startDate])
+  @@map("weekly_programs")
 }
 
-model WeeklyTask {
-  id                 String     @id @default(uuid())
-  weeklyPlanId       String     @map("weekly_plan_id")
-  assignedToId       String?    @map("assigned_to_id")
-  description        String
-  location           String
-  status             TaskStatus @default(NOT_COMPLETED)
-  nonCompletionCause String?    @map("non_completion_cause")
-  createdAt          DateTime   @default(now()) @map("created_at")
+model WeeklyActivity {
+  id              String               @id @default(uuid())
+  programId       String               @map("program_id")
+  scheduleItemId  String?              @map("schedule_item_id")
+  origin          WeeklyActivityOrigin @default(MANUAL)
+  local           String               @default("")
+  torre           String               @default("")
+  pavimento       String               @default("")
+  activityName    String               @map("activity_name")
+  contractorId    String?              @map("contractor_id")
+  responsible     String?
+  status          WeeklyActivityStatus @default(PROGRAMADA)
+  percentExecuted Int                  @default(0) @map("percent_executed")
+  carryoverFromId String?              @map("carryover_from_id")
+  order           Int                  @default(0)
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
 
-  weeklyPlan WeeklyPlan @relation(fields: [weeklyPlanId], references: [id], onDelete: Cascade)
-  assignedTo User?      @relation(fields: [assignedToId], references: [id])
+  program          WeeklyProgram               @relation(fields: [programId], references: [id], onDelete: Cascade)
+  scheduleItem     ScheduleItem?               @relation(fields: [scheduleItemId], references: [id], onDelete: SetNull)
+  contractor       Contractor?                 @relation(fields: [contractorId], references: [id], onDelete: SetNull)
+  carryoverFrom    WeeklyActivity?             @relation("Carryover", fields: [carryoverFromId], references: [id], onDelete: SetNull)
+  carryoverTo      WeeklyActivity[]            @relation("Carryover")
+  restrictionLinks WeeklyRestrictionActivity[]
 
-  @@map("weekly_tasks")
+  @@index([programId])
+  @@index([scheduleItemId])
+  @@map("weekly_activities")
 }
 
-model Restriction {
-  id           String            @id @default(uuid())
-  weeklyPlanId String            @map("weekly_plan_id")
-  description  String
-  responsible  String
-  dueDate      DateTime          @map("due_date")
-  status       RestrictionStatus @default(PENDING)
-  resolvedAt   DateTime?         @map("resolved_at")
+model WeeklyRestriction {
+  id             String                  @id @default(uuid())
+  programId      String                  @map("program_id")
+  typeId         String?                 @map("type_id")
+  description    String
+  responsible    String
+  dueDate        DateTime?               @map("due_date")
+  resolvedAt     DateTime?               @map("resolved_at")
+  status         WeeklyRestrictionStatus @default(PENDENTE)
+  impactsProgram Boolean                 @default(true) @map("impacts_program")
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
 
-  weeklyPlan WeeklyPlan @relation(fields: [weeklyPlanId], references: [id], onDelete: Cascade)
+  program       WeeklyProgram               @relation(fields: [programId], references: [id], onDelete: Cascade)
+  type          RestrictionType?            @relation(fields: [typeId], references: [id], onDelete: SetNull)
+  activityLinks WeeklyRestrictionActivity[]
 
-  @@map("restrictions")
+  @@index([programId])
+  @@map("weekly_restrictions")
+}
+
+model WeeklyRestrictionActivity {
+  restrictionId String @map("restriction_id")
+  activityId    String @map("activity_id")
+
+  restriction WeeklyRestriction @relation(fields: [restrictionId], references: [id], onDelete: Cascade)
+  activity    WeeklyActivity    @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@id([restrictionId, activityId])
+  @@map("weekly_restriction_activities")
+}
+
+model WeeklySnapshot {
+  id          String             @id @default(uuid())
+  programId   String             @map("program_id")
+  kind        WeeklySnapshotKind
+  payload     Json
+  createdById String             @map("created_by_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  program   WeeklyProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdBy User          @relation(fields: [createdById], references: [id])
+
+  @@index([programId, createdAt])
+  @@map("weekly_snapshots")
 }
 
 model Upload {

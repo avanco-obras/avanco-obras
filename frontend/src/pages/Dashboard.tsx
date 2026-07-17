@@ -19,7 +19,7 @@ import {
 import type {
   DashboardKPIs,
   DelayedActivity,
-  Restriction,
+  WeeklyRestriction,
   CurvaSPoint,
   PPCHistoryPoint,
   ScheduleItem,
@@ -197,16 +197,12 @@ function Badge({
   );
 }
 
-function restrictionBadge(status: Restriction['status']) {
+function restrictionBadge(status: WeeklyRestriction['status']) {
   switch (status) {
-    case 'RELEASED':
-      return <Badge bg={C.grnBg} color={C.grnT}>Liberada</Badge>;
-    case 'IN_ANALYSIS':
-      return <Badge bg={C.ambBg} color={C.ambT}>Em Análise</Badge>;
-    case 'PENDING':
+    case 'RESOLVIDA':
+      return <Badge bg={C.grnBg} color={C.grnT}>Resolvida</Badge>;
+    case 'PENDENTE':
       return <Badge bg={C.redBg} color={C.redT}>Pendente</Badge>;
-    case 'EXPIRED':
-      return <Badge bg={C.bg3} color={C.t2}>Expirada</Badge>;
     default:
       return <Badge bg={C.bg3} color={C.t2}>{status}</Badge>;
   }
@@ -230,7 +226,7 @@ export default function Dashboard() {
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [delays, setDelays] = useState<DelayedActivity[]>([]);
-  const [restrictions, setRestrictions] = useState<Restriction[]>([]);
+  const [restrictions, setRestrictions] = useState<WeeklyRestriction[]>([]);
   const [curvaS, setCurvaS] = useState<CurvaSPoint[]>([]);
   const [ppcHistory, setPpcHistory] = useState<PPCHistoryPoint[]>([]);
   const [etapas, setEtapas] = useState<{ name: string; actual: number; planned: number }[]>([]);
@@ -591,7 +587,7 @@ export default function Dashboard() {
                       <span style={{ fontSize: 11, color: C.t1, lineHeight: 1.3, flex: 1, minWidth: 0 }}>{r.description}</span>
                       {restrictionBadge(r.status)}
                     </div>
-                    <span style={{ fontSize: 10, color: C.t3, fontFamily: 'var(--mono)' }}>{r.responsible} · {formatDate(r.dueDate)}</span>
+                    <span style={{ fontSize: 10, color: C.t3, fontFamily: 'var(--mono)' }}>{r.responsible}{r.dueDate ? ` · ${formatDate(r.dueDate)}` : ''}</span>
                   </div>
                 ))}
               </div>

@@ -91,25 +91,23 @@ export class DashboardService {
         i.endDate < now,
     ).length;
 
-    const pendingRestrictions = await this.prisma.restriction.count({
+    const pendingRestrictions = await this.prisma.weeklyRestriction.count({
       where: {
-        weeklyPlan: { projectId },
-        status: { in: ['PENDING', 'IN_ANALYSIS'] },
+        program: { projectId },
+        status: 'PENDENTE',
       },
     });
 
-    const mostRecentPlan = await this.prisma.weeklyPlan.findFirst({
-      where: { projectId },
-      orderBy: [{ year: 'desc' }, { weekNumber: 'desc' }],
-      select: { ppcActual: true, ppcForecast: true },
+    // PPC atual = indicadores da última semana FECHADA (gravados no fechamento)
+    const mostRecentClosed = await this.prisma.weeklyProgram.findFirst({
+      where: { projectId, status: 'FECHADA' },
+      orderBy: { startDate: 'desc' },
+      select: { indicators: true },
     });
 
-    const ppcCurrent = mostRecentPlan?.ppcActual != null
-      ? Number(mostRecentPlan.ppcActual)
-      : null;
-    const ppcForecast = mostRecentPlan?.ppcForecast != null
-      ? Number(mostRecentPlan.ppcForecast)
-      : null;
+    const indicators = mostRecentClosed?.indicators as { ppc?: number } | null;
+    const ppcCurrent = indicators?.ppc ?? null;
+    const ppcForecast = null;
 
     return {
       overallProgress: Math.round(overallProgress * 100) / 100,
@@ -171,13 +169,14 @@ export class DashboardService {
   async getPendingRestrictions(projectId: string) {
     await this.ensureProject(projectId);
 
-    return this.prisma.restriction.findMany({
+    return this.prisma.weeklyRestriction.findMany({
       where: {
-        weeklyPlan: { projectId },
-        status: { in: ['PENDING', 'IN_ANALYSIS'] },
+        program: { projectId },
+        status: 'PENDENTE',
       },
       include: {
-        weeklyPlan: true,
+        program: true,
+        type: { select: { id: true, name: true } },
       },
       orderBy: { dueDate: 'asc' },
     });
