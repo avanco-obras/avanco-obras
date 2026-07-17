@@ -17,6 +17,8 @@ Transformar o cronograma executivo em um plano operacional semanal: importar ati
 | Local/Torre/Pavimento | Pré-preenchidos automaticamente pelo caminho da EAP (ancestrais do item do cronograma), sempre editáveis manualmente na tabela. |
 | Fórmula PPC | Binário padrão Last Planner: `PPC = Concluídas ÷ (Total − Canceladas)`. Parcial não pontua. |
 | Abordagem | Reescrita completa do que for necessário na aba Prog. Semanal. |
+| Mockup visual | Aprovado (artifact "Mockup — Programação Semanal", v4). Inclui: filtro estilo Excel por coluna (funil no título, busca digitável, checkboxes multi-seleção com "(Todos)"), remoção de linha para atividades e restrições, status editável por dropdown na célula. |
+| Status | **Sem BLOQUEADA.** Lista final: Programada, Não iniciada, Em andamento, Concluída, Cancelada, Reprogramada — com acoplamento automático Status ↔ % (ver §2.3). |
 
 ## 1. Modelo de dados (Prisma)
 
@@ -47,7 +49,7 @@ Modelos **removidos**: `WeeklyPlan`, `WeeklyTask`, `Restriction` (e enums `TaskS
 - `origin`: `CRONOGRAMA | MANUAL | REPROGRAMADA`.
 - `local`, `torre`, `pavimento` (strings editáveis; pré-preenchidas pela EAP), `activityName`.
 - `contractorId?` (FK Empreiteira), `responsible?` (string, vinda do cronograma, editável).
-- `status`: `PROGRAMADA | NAO_INICIADA | EM_ANDAMENTO | CONCLUIDA | BLOQUEADA | CANCELADA | REPROGRAMADA`.
+- `status`: `PROGRAMADA | NAO_INICIADA | EM_ANDAMENTO | CONCLUIDA | CANCELADA | REPROGRAMADA`.
 - `percentExecuted Int @default(0)` (0–100).
 - `carryoverFromId?` — auto-relação para a atividade da semana anterior que originou a reprogramação.
 - `order`, timestamps.
@@ -78,14 +80,21 @@ RASCUNHO ──(Publicar Programação)──► PUBLICADA ──(Publicar Fecha
    - **Preserva** atividades manuais e todas as edições feitas (a importação só adiciona, nunca sobrescreve linha existente).
    - Local/Torre/Pavimento derivados dos ancestrais da EAP: pai → Pavimento, avô → Torre, bisavô (ou raiz do ramo) → Local; campos ficam editáveis.
 2. **Publicar Programação**: `RASCUNHO → PUBLICADA` + snapshot `PUBLICACAO`. O conjunto publicado (incluindo extras adicionadas depois) é a base do PPC.
-3. **Durante a semana / reunião**: editar qualquer célula, atualizar `%` (botões 0/25/50/75/100 + campo numérico), status, restrições, incluir atividades extras (origem MANUAL — contam no PPC e no histórico, não alteram o cronograma), ajustar o realizado (ex.: programado apto 501, executado 503).
-   - Sugestão automática de status ao mudar `%`: `100 → CONCLUIDA`; `1–99 → EM_ANDAMENTO`; `0 → mantém`. Sempre ajustável manualmente (a sugestão nunca sobrepõe CANCELADA/BLOQUEADA definidos à mão).
+3. **Durante a semana / reunião**: editar qualquer célula, atualizar `%` (botões 0/25/50/75/100 + campo numérico), status, restrições, incluir atividades extras (origem MANUAL — contam no PPC e no histórico, não alteram o cronograma), remover atividades e restrições (com confirmação; o que foi publicado permanece nos snapshots), ajustar o realizado (ex.: programado apto 501, executado 503).
+   - **Regras Status ↔ % (§2.3)**:
+     - `PROGRAMADA` — status de nova atividade; % livre.
+     - `NAO_INICIADA` — força `% = 0`.
+     - `EM_ANDAMENTO` — exige `1 ≤ % ≤ 99`; ao selecionar com % 0/100, UI sugere 50 (ajustável); backend valida o intervalo.
+     - `CONCLUIDA` — força `% = 100`.
+     - `CANCELADA` — força `% = 0`, sinaliza "fora do PPC" e sai de todos os KPIs (denominador incluso).
+     - `REPROGRAMADA` — aplicado automaticamente pelo sistema quando a atividade é puxada da semana anterior no Atualizar Programação/fechamento.
+   - Sugestão automática no sentido `%` → status: `100 → CONCLUIDA`; `1–99 → EM_ANDAMENTO`; `0 → NAO_INICIADA` (apenas se estava EM_ANDAMENTO/CONCLUIDA; PROGRAMADA/REPROGRAMADA mantêm). Sempre ajustável manualmente.
 4. **Report**: "Gravar Report" cria snapshot `REPORT` (foto do momento). "Histórico Report" lista snapshots para consulta read-only.
 5. **Publicar Fechamento** (só em PUBLICADA; transação Prisma):
    - Calcula e grava `indicators` no programa.
    - Cria snapshot `FECHAMENTO`.
    - `status → FECHADA` (semana vira read-only na UI).
-   - **Cria automaticamente a próxima semana** em RASCUNHO: importa atividades do cronograma da nova semana + copia as não concluídas (`NAO_INICIADA`, `EM_ANDAMENTO`, `BLOQUEADA`) como origem `REPROGRAMADA`, status `PROGRAMADA`, `carryoverFromId` apontando para a original. As originais na semana fechada **permanecem com o status real de campo** (o status `REPROGRAMADA` é usado quando o usuário marca explicitamente).
+   - **Cria automaticamente a próxima semana** em RASCUNHO: importa atividades do cronograma da nova semana + copia as não concluídas (`PROGRAMADA`, `NAO_INICIADA`, `EM_ANDAMENTO`, `REPROGRAMADA`) como origem `REPROGRAMADA` e **status `REPROGRAMADA`** (aplicado automaticamente), `% = 0`, `carryoverFromId` apontando para a original. `CONCLUIDA` e `CANCELADA` não são levadas. As originais na semana fechada permanecem com o status real de campo.
 6. **Indicadores** (calculados no fechamento, gravados em `indicators` e lidos pelo Dashboard):
    - **Obra**: PPC geral = `CONCLUIDA ÷ (total − CANCELADA)`; % reprogramadas = `não concluídas ÷ (total − CANCELADA)`; quantidade de restrições; principais causas (contagem por tipo de restrição vinculada a atividades não concluídas).
    - **Empreiteira**: PPC e % reprogramadas por `contractorId`.
@@ -123,7 +132,9 @@ Módulo `weekly-planning` reescrito (mesma pasta, código novo):
 
 - **Cabeçalho**: `Semana N` · período (dd/mm–dd/mm) · badge de status (Rascunho/Publicada/Fechada) · última atualização · navegação ← → entre semanas · data da reunião.
 - **Toolbar**: `Atualizar Programação` (primário) · `Nova Atividade` · `Report ▾` (Gravar Report / Histórico Report) · `Exportar ▾` (Excel / PDF) · botão de transição de estado (`Publicar Programação` em rascunho; `Publicar Fechamento` em publicada, com confirmação).
-- **Tabela editável estilo Excel** — colunas: Local, Torre, Pavimento, Atividade, Empresa (dropdown de empreiteiras + "criar nova"), Responsável, Status (dropdown com badges coloridos), % Executado (botões 0/25/50/75/100 + input numérico 0–100), Restrições (contador; clique abre modal). Todas as células editáveis via edição inline; persistência por PATCH no blur/seleção; semana FECHADA renderiza tudo read-only.
+- **Tabela editável estilo Excel** — colunas: origem (ícone C/M/↻), Local, Torre, Pavimento, Atividade, Empresa (dropdown de empreiteiras + "criar nova"), Responsável, Status (dropdown estilizado como badge, editável, cores por status), % Executado (botões 0/25/50/75/100 + input numérico 0–100; célula mostra "0% — fora do PPC" quando CANCELADA), Restrições (contador; clique abre modal), ações (🗑 remover com confirmação). Todas as células editáveis via edição inline; persistência por PATCH no blur/seleção; semana FECHADA renderiza tudo read-only.
+- **Filtro por coluna estilo Excel** (Local, Torre, Pavimento, Atividade, Empresa, Responsável, Status): botão funil ao lado do título abre popover com campo de busca digitável + checkboxes de todos os valores distintos da coluna, opção "(Todos)" e multi-seleção; filtros de colunas combinam entre si; funil destacado quando ativo; "Limpar filtro" por coluna. Filtragem client-side.
+- **Remoção**: 🗑 por linha na tabela de atividades e no painel de restrições, com diálogo de confirmação; bloqueada em semana FECHADA.
 - **Painel de Restrições** abaixo da tabela: CRUD com tipo (dos parametrizados), descrição, responsável pela remoção, data prevista, data resolvida, status, impacta programação (S/N) e checkboxes das atividades vinculadas.
 - **Card de PPC live** no cabeçalho (fórmula binária), atualizado a cada edição.
 - **Histórico**: modal listando snapshots (tipo, data, autor) com visualização read-only da semana como ficou.
