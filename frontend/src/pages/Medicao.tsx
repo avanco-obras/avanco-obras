@@ -14,6 +14,7 @@ import { SaveReportModal, ReportHistoryModal } from '@/components/medicao/Report
 import {
   Toolbar, ToolbarLabeledSelect, ToolbarSeparator, ToolbarToggleGroup,
 } from '@/components/Toolbar';
+import { RestoreReportModal } from '@/components/RestoreReportModal';
 import { useRealtime, useScheduleUpdates, useScheduleChanges } from '@/hooks/useRealtime';
 
 type ViewerMode = '3d' | '2d' | 'heatmap';
@@ -253,6 +254,8 @@ export default function Medicao() {
   const [savingReport, setSavingReport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectReport | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   useRealtime(projectId);
 
@@ -526,6 +529,34 @@ export default function Medicao() {
     if (cmp) setSelectedReport(cmp);
   }
 
+  /** Sobrescreve o estado atual com o do report escolhido. */
+  async function confirmRestore() {
+    if (!projectId || !restoreTarget) return;
+    setRestoring(true);
+    try {
+      const result = await progressApi.restoreReport(projectId, restoreTarget.id);
+      addToast({
+        type: 'success',
+        title: `Report #${restoreTarget.reportNumber} restaurado`,
+        description: result.partial
+          ? `Apenas o cronograma foi restaurado. Estado anterior salvo no Report #${result.safetyReportNumber}.`
+          : `Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+      });
+      setRestoreTarget(null);
+      setShowHistory(false);
+      setSelectedReport(null);
+      await Promise.all([loadSchedule(projectId), loadMetrics(projectId), loadCurva(projectId)]);
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao restaurar',
+        description: 'Nada foi alterado — a medição continua como estava.',
+      });
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   const lastReportLabel = metrics
     ? (metrics.lastReportNumber > 0
         ? `Último Report #${metrics.lastReportNumber}${metrics.lastReportDate ? ` · ${new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}` : ''} · consolidado ${metrics.physicalProgress.toFixed(1)}%`
@@ -636,6 +667,15 @@ export default function Medicao() {
         selected={selectedReport}
         onCompare={compareReport}
         onClose={() => { setShowHistory(false); setSelectedReport(null); }}
+        onRestore={setRestoreTarget}
+        restoring={restoring}
+      />
+      <RestoreReportModal
+        open={!!restoreTarget}
+        report={restoreTarget}
+        restoring={restoring}
+        onCancel={() => setRestoreTarget(null)}
+        onConfirm={confirmRestore}
       />
     </>
   );

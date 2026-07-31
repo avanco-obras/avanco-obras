@@ -443,6 +443,9 @@ export class PhysicalProgressService {
       itemCount: Array.isArray(r.scheduleSnapshot)
         ? (r.scheduleSnapshot as unknown[]).length
         : 0,
+      snapshotVersion: r.snapshotVersion,
+      // v1 não gravou dependências nem medições: restaura só o cronograma.
+      restoresFully: r.snapshotVersion >= SNAPSHOT_VERSION_FULL,
     }));
   }
 

@@ -9,8 +9,9 @@ import {
 } from '@/components/Toolbar';
 import { useStore } from '@/store';
 import { useHistoryStore } from '@/store/historyStore';
-import { scheduleApi, baselineApi } from '@/services/api';
-import type { GanttTask, ScheduleRevision } from '@/types';
+import { scheduleApi, baselineApi, progressApi } from '@/services/api';
+import type { GanttTask, ProjectReport } from '@/types';
+import { RestoreReportModal, RestoreReportButton } from '@/components/RestoreReportModal';
 import { useRealtime, useScheduleChanges } from '@/hooks/useRealtime';
 import { buildFlowlineModel, listActivities, type ActivityOption } from '@/lib/lob/flowline-model';
 import { applyMove } from '@/lib/lob/cascade-scheduler';
@@ -78,7 +79,12 @@ export default function LinhaBalanco() {
   const [saveDescription, setSaveDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [revisions, setRevisions] = useState<ScheduleRevision[]>([]);
+  // Histórico unificado: a LdB mostra os mesmos Reports do Cronograma e da
+  // Medição. A ScheduleRevision continua sendo gravada no backend para
+  // preservar o diff de cada reprogramação.
+  const [reports, setReports] = useState<ProjectReport[]>([]);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectReport | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<LobCanvas | null>(null);
@@ -298,8 +304,36 @@ export default function LinhaBalanco() {
   async function openHistory() {
     if (!projectId) return;
     setShowHistory(true);
-    const data = await scheduleApi.listRevisions(projectId).catch(() => []);
-    setRevisions(data);
+    const data = await progressApi.listReports(projectId).catch(() => []);
+    setReports(data);
+  }
+
+  /** Sobrescreve o estado atual com o do report escolhido. */
+  async function confirmRestore() {
+    if (!projectId || !restoreTarget) return;
+    setRestoring(true);
+    try {
+      const result = await progressApi.restoreReport(projectId, restoreTarget.id);
+      addToast({
+        type: 'success',
+        title: `Report #${restoreTarget.reportNumber} restaurado`,
+        description: result.partial
+          ? `Apenas o cronograma foi restaurado. Estado anterior salvo no Report #${result.safetyReportNumber}.`
+          : `Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+      });
+      setRestoreTarget(null);
+      setShowHistory(false);
+      setDraft(new Map());
+      await loadData(projectId);
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao restaurar',
+        description: 'Nada foi alterado — o cronograma continua como estava.',
+      });
+    } finally {
+      setRestoring(false);
+    }
   }
 
   // ── Helpers de UI ───────────────────────────────────────────────────────────
@@ -570,16 +604,45 @@ export default function LinhaBalanco() {
       )}
 
       {showHistory && (
-        <Modal title="Histórico de Reprogramações" onClose={() => setShowHistory(false)} wide>
-          {revisions.length === 0 ? (
-            <p style={{ fontSize: 12, color: 'var(--t3)' }}>Nenhuma reprogramação gravada ainda.</p>
+        <Modal title="Histórico de Reports" onClose={() => setShowHistory(false)} wide>
+          {reports.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--t3)' }}>Nenhum Report gravado ainda.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '55vh', overflowY: 'auto' }}>
-              {revisions.map((rev) => <RevisionCard key={rev.id} rev={rev} />)}
+              {reports.map((r) => (
+                <div key={r.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  border: '1px solid var(--bd)', borderRadius: 8, padding: '10px 12px',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>
+                      Report #{String(r.reportNumber).padStart(3, '0')}
+                      <span style={{ fontWeight: 500, color: 'var(--t3)' }}>
+                        {' · '}{new Date(r.createdAt).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.user?.fullName || r.user?.email} · {r.description || 'sem descrição'}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', fontVariantNumeric: 'tabular-nums' }}>
+                    {r.physicalProgress.toFixed(2)}%
+                  </span>
+                  <RestoreReportButton onClick={() => setRestoreTarget(r)} disabled={restoring} />
+                </div>
+              ))}
             </div>
           )}
         </Modal>
       )}
+
+      <RestoreReportModal
+        open={!!restoreTarget}
+        report={restoreTarget}
+        restoring={restoring}
+        onCancel={() => setRestoreTarget(null)}
+        onConfirm={confirmRestore}
+      />
     </div>
   );
 }
@@ -894,37 +957,6 @@ function MassEditDialog({ dialog, taskById, onOnlyThis, onAll, onCancel }: {
   );
 }
 
-function RevisionCard({ rev }: { rev: ScheduleRevision }) {
-  const [open, setOpen] = useState(false);
-  const changes = Array.isArray(rev.changes) ? rev.changes : [];
-  return (
-    <div style={{ border: '1px solid var(--bd)', borderRadius: 10, padding: '9px 12px', background: 'var(--s1)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => setOpen((v) => !v)}>
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--t1)' }}>
-            {new Date(rev.createdAt).toLocaleString('pt-BR')} · {rev.user?.fullName ?? '—'}
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>
-            {changes.length} atividade(s) reprogramada(s){rev.description ? ` · ${rev.description}` : ''}
-          </div>
-        </div>
-      </div>
-      {open && (
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
-          {changes.map((c) => (
-            <div key={c.itemId} style={{ fontSize: 10.5, color: 'var(--t2)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 700, color: 'var(--t1)' }}>{c.name}</span>
-              <span>{fmtBR(c.before.startDate)} → {fmtBR(c.before.endDate)} ({c.before.durationDays}d)</span>
-              <span style={{ color: 'var(--t3)' }}>⇒</span>
-              <span style={{ fontWeight: 600 }}>{fmtBR(c.after.startDate)} → {fmtBR(c.after.endDate)} ({c.after.durationDays}d)</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Modal({ title, children, onClose, wide }: {
   title: string; children: React.ReactNode; onClose: () => void; wide?: boolean;

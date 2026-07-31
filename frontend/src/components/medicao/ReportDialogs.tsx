@@ -1,4 +1,5 @@
 import type { ProjectReport, ReportComparison } from '@/types';
+import { RestoreReportButton } from '@/components/RestoreReportModal';
 
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
@@ -50,9 +51,12 @@ export interface ReportHistoryModalProps {
   selected: ReportComparison | null;
   onCompare: (r: ProjectReport) => void;
   onClose: () => void;
+  /** Abre a confirmação de restauração. Ausente esconde o botão. */
+  onRestore?: (r: ProjectReport) => void;
+  restoring?: boolean;
 }
 
-export function ReportHistoryModal({ open, reports, selected, onCompare, onClose }: ReportHistoryModalProps) {
+export function ReportHistoryModal({ open, reports, selected, onCompare, onClose, onRestore, restoring }: ReportHistoryModalProps) {
   if (!open) return null;
   return (
     <div style={overlay}>
@@ -82,9 +86,12 @@ export function ReportHistoryModal({ open, reports, selected, onCompare, onClose
                     <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{r.physicalProgress.toFixed(2)}%</td>
                     <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
                     <td style={{ padding: 8, textAlign: 'center' }}>
-                      <button style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }} onClick={() => onCompare(r)}>
-                        Comparar
-                      </button>
+                      <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                        <button style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }} onClick={() => onCompare(r)}>
+                          Comparar
+                        </button>
+                        {onRestore && <RestoreReportButton onClick={() => onRestore(r)} disabled={restoring} />}
+                      </div>
                     </td>
                   </tr>
                 ))}

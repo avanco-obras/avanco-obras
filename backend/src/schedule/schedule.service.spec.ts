@@ -48,6 +48,7 @@ const mockRealtimeGateway = {
 
 const mockPhysicalProgressService = {
   recalculateParentTasks: jest.fn().mockResolvedValue(undefined),
+  createReport: jest.fn().mockResolvedValue({ id: 'rep', reportNumber: 42 }),
 };
 
 describe('ScheduleService', () => {
@@ -650,7 +651,17 @@ describe('ScheduleService', () => {
         }],
       });
 
-      expect(result).toEqual({ revisionId: 'rev-1', updated: 1, parentsRecalculated: 2 });
+      expect(result).toEqual({
+        revisionId: 'rev-1', reportNumber: 42, updated: 1, parentsRecalculated: 2,
+      });
+
+      // Report unificado: a reprogramação entra no mesmo histórico do
+      // Cronograma e da Medição, sem deixar de gravar a revisão com o diff.
+      expect(mockPhysicalProgressService.createReport).toHaveBeenCalledWith(
+        projectId,
+        userId,
+        'Reprogramação — Reprogramação teste',
+      );
 
       // 1 folha + 2 pais (f1 e root)
       expect(tx.scheduleItem.update).toHaveBeenCalledTimes(3);

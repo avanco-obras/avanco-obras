@@ -428,10 +428,23 @@ export class ScheduleService {
       });
     });
 
+    // A reprogramação também grava um Report, para que Cronograma, Medição e
+    // Linha de Balanço compartilhem um histórico único e restaurável. A
+    // ScheduleRevision continua sendo gravada acima: ela guarda o *diff* da
+    // reprogramação, que o Report (um retrato do estado) não representa.
+    const report = await this.physicalProgress.createReport(
+      projectId,
+      userId,
+      dto.description?.trim()
+        ? `Reprogramação — ${dto.description.trim()}`
+        : 'Reprogramação pela Linha de Balanço',
+    );
+
     this.realtime.emitScheduleChanged({ projectId, action: 'batch-update' });
 
     return {
       revisionId: revision.id,
+      reportNumber: report.reportNumber,
       updated: dto.changes.length,
       parentsRecalculated: parentUpdates.length,
     };

@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Undo2, Redo2, ChevronsUpDown, ChevronsDownUp, Layers, CalendarRange,
   SlidersHorizontal, Plus, ArrowLeft, ArrowRight, Columns, Download, Upload,
-  Flag, FileText, Save, History,
+  Flag, FileText, Save, History, RotateCcw,
 } from 'lucide-react';
 import { Toolbar, ToolbarButton, ToolbarMenu, ToolbarSearch, ToolbarSelect } from '@/components/Toolbar';
+import { RestoreReportModal, RestoreReportButton } from '@/components/RestoreReportModal';
 import {
   DEP_TYPE_PT_TO_DB, formatDepsAsText, formatSuccessorsText,
 } from '@/lib/schedule-deps';
@@ -2130,6 +2131,8 @@ export default function Cronograma() {
   const [savingReport, setSavingReport] = useState(false);
   const [showReportHistory, setShowReportHistory] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectReport | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   // Inline edit state
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -3146,6 +3149,36 @@ export default function Cronograma() {
     }
   }
 
+  /** Sobrescreve o estado atual com o do report escolhido. */
+  async function confirmRestore() {
+    if (!projectId || !restoreTarget) return;
+    setRestoring(true);
+    try {
+      const result = await progressApi.restoreReport(projectId, restoreTarget.id);
+      addToast({
+        type: 'success',
+        title: `Report #${restoreTarget.reportNumber} restaurado`,
+        description: result.partial
+          ? `Apenas o cronograma foi restaurado. Estado anterior salvo no Report #${result.safetyReportNumber}.`
+          : `Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+      });
+      setRestoreTarget(null);
+      setShowReportHistory(false);
+      setSelectedReport(null);
+      await loadReportHistory();
+      loadData();
+      loadMetrics();
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao restaurar',
+        description: 'Nada foi alterado — o cronograma continua como estava.',
+      });
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   async function saveReport() {
     if (!projectId) return;
     setSavingReport(true);
@@ -3518,6 +3551,12 @@ export default function Cronograma() {
               items={[
                 { label: 'Gravar Report', icon: <Save size={12} />, onClick: () => setShowSaveReportConfirm(true) },
                 { label: 'Histórico de Reports', icon: <History size={12} />, onClick: () => { loadReportHistory(); setShowReportHistory(true); } },
+                {
+                  label: 'Restaurar versão…',
+                  icon: <RotateCcw size={12} />,
+                  separatorBefore: true,
+                  onClick: () => { loadReportHistory(); setShowReportHistory(true); },
+                },
               ]}
             />
           </Toolbar>
@@ -4282,6 +4321,14 @@ export default function Cronograma() {
       )}
 
       {/* Report History Modal */}
+      <RestoreReportModal
+        open={!!restoreTarget}
+        report={restoreTarget}
+        restoring={restoring}
+        onCancel={() => setRestoreTarget(null)}
+        onConfirm={confirmRestore}
+      />
+
       {showReportHistory && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
@@ -4310,12 +4357,15 @@ export default function Cronograma() {
                         <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{r.physicalProgress.toFixed(2)}%</td>
                         <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
                         <td style={{ padding: 8, textAlign: 'center' }}>
-                          <button
-                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
-                            onClick={() => loadReportComparison(r)}
-                          >
-                            Comparar
-                          </button>
+                          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                              style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                              onClick={() => loadReportComparison(r)}
+                            >
+                              Comparar
+                            </button>
+                            <RestoreReportButton onClick={() => setRestoreTarget(r)} disabled={restoring} />
+                          </div>
                         </td>
                       </tr>
                     ))}

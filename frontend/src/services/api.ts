@@ -6,7 +6,7 @@ import type {
   WeeklySnapshot, WeeklySnapshotMeta, Contractor, RestrictionType,
   DashboardKPIs, DelayedActivity,
   PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
-  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison,
+  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison, RestoreReportResult,
   ScheduleRevision,
 } from '../types';
 import { useStore } from '../store';
@@ -294,6 +294,9 @@ export const progressApi = {
     api.get<ProjectReport[]>(`/projects/${projectId}/physical-progress/reports`).then((r) => r.data),
   getReport: (projectId: string, reportId: string) =>
     api.get<ReportComparison>(`/projects/${projectId}/physical-progress/reports/${reportId}`).then((r) => r.data),
+  /** Sobrescreve os dados atuais com o estado do report. Irreversível sem o report de segurança. */
+  restoreReport: (projectId: string, reportId: string) =>
+    api.post<RestoreReportResult>(`/projects/${projectId}/physical-progress/reports/${reportId}/restore`).then((r) => r.data),
 };
 
 // ── AI Import ─────────────────────────────────────────────────────

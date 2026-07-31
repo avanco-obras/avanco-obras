@@ -468,6 +468,17 @@ export interface ProjectReport {
   baselineVersion: number;
   description?: string;
   itemCount?: number;
+  /** 1 = só cronograma; 2 = cronograma + dependências + medições. */
+  snapshotVersion?: number;
+  /** Falso em reports antigos: a restauração devolve apenas o cronograma. */
+  restoresFully?: boolean;
+}
+
+export interface RestoreReportResult {
+  restoredFrom: number;
+  safetyReportNumber: number;
+  partial: boolean;
+  itemCount: number;
 }
 
 export interface ProjectMetrics {
