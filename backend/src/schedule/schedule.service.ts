@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PhysicalProgressService } from './physical-progress.service';
 
 export interface GanttDep {
   id: string;
@@ -53,6 +54,7 @@ export class ScheduleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
+    private readonly physicalProgress: PhysicalProgressService,
   ) {}
 
   async findAll(projectId: string) {
@@ -106,40 +108,117 @@ export class ScheduleService {
       }
     }
 
-    let order = dto.order;
-    if (order === undefined) {
+    // Posição da nova atividade: por padrão no fim dos irmãos; com `afterId`,
+    // logo abaixo do item indicado e no mesmo nível dele.
+    const placement = await this.resolvePlacement(projectId, dto);
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      // Abre espaço empurrando os irmãos posteriores.
+      if (placement.shiftFrom !== null) {
+        await tx.scheduleItem.updateMany({
+          where: {
+            projectId,
+            parentId: placement.parentId,
+            order: { gte: placement.shiftFrom },
+          },
+          data: { order: { increment: 1 } },
+        });
+      }
+
+      return tx.scheduleItem.create({
+        data: {
+          projectId,
+          parentId: placement.parentId,
+          activityTypeId: dto.activityTypeId ?? null,
+          code: dto.code,
+          name: dto.name,
+          level: placement.level,
+          startDate: new Date(dto.startDate),
+          endDate: new Date(dto.endDate),
+          durationDays: dto.durationDays,
+          plannedProgress: dto.plannedProgress ?? 0,
+          physicalProgress: dto.physicalProgress ?? 0,
+          weight: dto.weight ?? 1,
+          isCriticalPath: dto.isCriticalPath ?? false,
+          responsible: dto.responsible ?? null,
+          order: placement.order,
+        },
+        include: {
+          activityType: true,
+        },
+      });
+    });
+
+    // A nova folha entra na média ponderada dos ancestrais.
+    await this.physicalProgress.recalculateParentTasks(projectId);
+
+    this.realtime.emitScheduleChanged({ projectId, action: 'created', scheduleItemId: created.id });
+    return created;
+  }
+
+  /**
+   * Resolve pai, nível e ordem da nova atividade.
+   *
+   * Sem `afterId`, mantém o comportamento histórico: fim da lista de irmãos do
+   * `parentId` informado. Com `afterId`, a atividade nasce como irmã do item
+   * indicado, imediatamente abaixo dele.
+   */
+  private async resolvePlacement(
+    projectId: string,
+    dto: CreateScheduleItemDto,
+  ): Promise<{ parentId: string | null; level: number; order: number; shiftFrom: number | null }> {
+    if (!dto.afterId) {
       const last = await this.prisma.scheduleItem.findFirst({
         where: { projectId, parentId: dto.parentId ?? null },
         orderBy: { order: 'desc' },
         select: { order: true },
       });
-      order = last ? last.order + 1 : 0;
+      return {
+        parentId: dto.parentId ?? null,
+        level: dto.level,
+        order: dto.order ?? (last ? last.order + 1 : 0),
+        shiftFrom: null,
+      };
     }
 
-    const created = await this.prisma.scheduleItem.create({
-      data: {
-        projectId,
-        parentId: dto.parentId ?? null,
-        activityTypeId: dto.activityTypeId ?? null,
-        code: dto.code,
-        name: dto.name,
-        level: dto.level,
-        startDate: new Date(dto.startDate),
-        endDate: new Date(dto.endDate),
-        durationDays: dto.durationDays,
-        plannedProgress: dto.plannedProgress ?? 0,
-        physicalProgress: dto.physicalProgress ?? 0,
-        weight: dto.weight ?? 1,
-        isCriticalPath: dto.isCriticalPath ?? false,
-        responsible: dto.responsible ?? null,
-        order,
-      },
-      include: {
-        activityType: true,
-      },
+    const anchor = await this.prisma.scheduleItem.findUnique({
+      where: { id: dto.afterId },
+      select: { id: true, projectId: true, parentId: true, level: true, order: true },
     });
-    this.realtime.emitScheduleChanged({ projectId, action: 'created', scheduleItemId: created.id });
-    return created;
+    if (!anchor || anchor.projectId !== projectId) {
+      throw new NotFoundException(
+        `Item de referência com ID "${dto.afterId}" não encontrado neste projeto`,
+      );
+    }
+
+    // A raiz da EAP representa o Empreendimento e não admite irmãos: uma
+    // atividade "abaixo da raiz" só pode ser filha dela.
+    const anchorIsRoot = anchor.parentId === null && anchor.level === 0;
+    if (anchorIsRoot) {
+      const last = await this.prisma.scheduleItem.findFirst({
+        where: { projectId, parentId: anchor.id },
+        orderBy: { order: 'desc' },
+        select: { order: true },
+      });
+      return {
+        parentId: anchor.id,
+        level: anchor.level + 1,
+        order: last ? last.order + 1 : 0,
+        shiftFrom: null,
+      };
+    }
+
+    // Irmã imediatamente posterior. Se a âncora tiver filhos, a nova atividade
+    // aparece depois de toda a subárvore dela sem tratamento extra: os filhos
+    // pertencem a outro grupo de parentId, e a árvore é percorrida em
+    // profundidade — âncora, filhos da âncora, próxima irmã.
+    const order = anchor.order + 1;
+    return {
+      parentId: anchor.parentId,
+      level: anchor.level,
+      order,
+      shiftFrom: order,
+    };
   }
 
   async update(id: string, dto: UpdateScheduleItemDto) {
@@ -384,10 +463,49 @@ export class ScheduleService {
       throw new NotFoundException(`Item de cronograma com ID "${id}" não encontrado`);
     }
 
-    // Prisma cascade handles children deletion (defined in schema onDelete: Cascade)
-    await this.prisma.scheduleItem.delete({ where: { id } });
+    // A auto-relação parent_id é SET NULL, não CASCADE: apagar só este item
+    // transformaria os filhos em raízes órfãs, com o level antigo. A subárvore
+    // precisa ser removida explicitamente, das folhas para o topo.
+    const subtree = await this.collectSubtreeIds(item.projectId, id);
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const level of subtree) {
+        await tx.scheduleItem.deleteMany({ where: { id: { in: level } } });
+      }
+    });
+
+    // Remover folhas muda a média ponderada dos ancestrais sobreviventes.
+    await this.physicalProgress.recalculateParentTasks(item.projectId);
+
     this.realtime.emitScheduleChanged({ projectId: item.projectId, action: 'deleted', scheduleItemId: id });
     return { message: 'Item excluído com sucesso' };
+  }
+
+  /**
+   * IDs da subárvore enraizada em `rootId`, agrupados por profundidade e
+   * devolvidos das folhas para a raiz — a ordem em que devem ser apagados.
+   */
+  private async collectSubtreeIds(projectId: string, rootId: string): Promise<string[][]> {
+    const all = await this.prisma.scheduleItem.findMany({
+      where: { projectId },
+      select: { id: true, parentId: true },
+    });
+
+    const childrenByParent = new Map<string, string[]>();
+    for (const t of all) {
+      if (!t.parentId) continue;
+      const kids = childrenByParent.get(t.parentId);
+      if (kids) kids.push(t.id);
+      else childrenByParent.set(t.parentId, [t.id]);
+    }
+
+    const levels: string[][] = [];
+    let current = [rootId];
+    while (current.length > 0) {
+      levels.push(current);
+      current = current.flatMap((pid) => childrenByParent.get(pid) ?? []);
+    }
+    return levels.reverse();
   }
 
   async getGanttData(projectId: string): Promise<GanttRow[]> {

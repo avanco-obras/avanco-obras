@@ -62,58 +62,61 @@ export class PhysicalProgressService {
   }
 
   /**
-   * Recalculate all parent tasks' progress
+   * Recalcula o avanço de todas as tarefas-pai do projeto.
+   *
+   * Percorre a hierarquia de baixo para cima (nível mais profundo primeiro),
+   * atualizando os valores em memória à medida que avança. Isso importa: o
+   * avanço de um avô depende do valor JÁ recalculado do pai, não do valor que
+   * estava no banco quando a consulta rodou.
    */
   async recalculateParentTasks(projectId: string): Promise<void> {
     const allTasks = await this.prisma.scheduleItem.findMany({
       where: { projectId },
+      select: {
+        id: true,
+        parentId: true,
+        level: true,
+        weight: true,
+        physicalProgress: true,
+      },
     });
 
-    // Group tasks by parent
-    const parentGroups = new Map<string, any[]>();
-    const parentTasks = new Set<string>();
+    const childrenByParent = new Map<string, typeof allTasks>();
+    for (const task of allTasks) {
+      if (!task.parentId) continue;
+      const siblings = childrenByParent.get(task.parentId);
+      if (siblings) siblings.push(task);
+      else childrenByParent.set(task.parentId, [task]);
+    }
 
-    allTasks.forEach((task) => {
-      if (task.parentId) {
-        parentTasks.add(task.parentId);
-        if (!parentGroups.has(task.parentId)) {
-          parentGroups.set(task.parentId, []);
-        }
-        parentGroups.get(task.parentId)!.push(task);
+    // Só quem tem filhos é pai. Do nível mais profundo para a raiz.
+    const parents = allTasks
+      .filter((t) => childrenByParent.has(t.id))
+      .sort((a, b) => b.level - a.level);
+
+    const changed: Array<{ id: string; physicalProgress: number }> = [];
+
+    for (const parent of parents) {
+      const children = childrenByParent.get(parent.id)!;
+      const newProgress = this.calculateParentProgress(parent, children);
+
+      if (Number(parent.physicalProgress) !== newProgress) {
+        changed.push({ id: parent.id, physicalProgress: newProgress });
+        // Reflete em memória para que o pai deste nó use o valor novo.
+        parent.physicalProgress = newProgress as unknown as typeof parent.physicalProgress;
       }
-    });
-
-    // Update parent tasks recursively (from leaf to root)
-    for (const parentId of parentTasks) {
-      await this.updateParentProgress(parentId, allTasks);
-    }
-  }
-
-  /**
-   * Update parent task progress and recursively update its parent
-   */
-  private async updateParentProgress(
-    parentId: string,
-    allTasks: any[],
-  ): Promise<void> {
-    const parent = allTasks.find((t) => t.id === parentId);
-    if (!parent) return;
-
-    const children = allTasks.filter((t) => t.parentId === parentId);
-    const newProgress = this.calculateParentProgress(parent, children);
-
-    // Update only if changed
-    if (Number(parent.physicalProgress) !== newProgress) {
-      await this.prisma.scheduleItem.update({
-        where: { id: parentId },
-        data: { physicalProgress: newProgress },
-      });
     }
 
-    // Recursively update parent's parent
-    if (parent.parentId) {
-      await this.updateParentProgress(parent.parentId, allTasks);
-    }
+    if (changed.length === 0) return;
+
+    await this.prisma.$transaction(
+      changed.map((c) =>
+        this.prisma.scheduleItem.update({
+          where: { id: c.id },
+          data: { physicalProgress: c.physicalProgress },
+        }),
+      ),
+    );
   }
 
   /**

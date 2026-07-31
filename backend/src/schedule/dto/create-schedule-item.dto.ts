@@ -75,4 +75,14 @@ export class CreateScheduleItemDto {
   @IsOptional()
   @IsString()
   responsible?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Insere a nova atividade logo abaixo deste item, como irmã dele — herdando parentId e level. ' +
+      'Tem precedência sobre parentId/level/order informados. Se o item indicado for a raiz da EAP, ' +
+      'que não admite irmãos, a atividade vira filha da raiz.',
+  })
+  @IsOptional()
+  @IsUUID()
+  afterId?: string;
 }

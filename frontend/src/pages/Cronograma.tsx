@@ -1187,6 +1187,11 @@ interface TaskModalProps {
   open: boolean;
   editingTask: GanttTask | null;
   parentTask: GanttTask | null;
+  /**
+   * Atividade abaixo da qual a nova será inserida, como irmã dela. O backend
+   * resolve pai, nível e ordem a partir dela — tem precedência sobre parentId.
+   */
+  afterTask: GanttTask | null;
   allTasks: GanttTask[];
   projectId: string;
   addToast: (t: { type: string; title: string; description?: string }) => void;
@@ -1194,7 +1199,7 @@ interface TaskModalProps {
   onSaved: () => void;
 }
 
-function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
+function TaskModal({ open, editingTask, parentTask, afterTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
   const { push, triggerDataOnly } = useHistoryStore();
   const [form, setForm] = useState<FormState>(() =>
     editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks)
@@ -1297,7 +1302,12 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           },
         });
       } else {
-        const created = await scheduleApi.create(projectId, payload);
+        // afterId só na criação: posiciona a nova atividade logo abaixo da
+        // linha selecionada, herdando o nível dela.
+        const created = await scheduleApi.create(projectId, {
+          ...payload,
+          ...(afterTask ? { afterId: afterTask.id } : {}),
+        });
         addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
 
         const newId = (created as { id: string }).id;
@@ -2060,6 +2070,7 @@ export default function Cronograma() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<GanttTask | null>(null);
   const [parentTask, setParentTask] = useState<GanttTask | null>(null);
+  const [afterTask, setAfterTask] = useState<GanttTask | null>(null);
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<GanttTask | null>(null);
@@ -3242,14 +3253,28 @@ export default function Cronograma() {
   );
   const isRootTask = (task: GanttTask) => task.level === 0 && !task.parentId;
 
+  /**
+   * Nova atividade a partir da barra: entra logo abaixo da linha selecionada,
+   * como irmã dela (mesmo nível). Sem seleção, cai no comportamento antigo —
+   * filha da raiz, no fim. Com a raiz selecionada, também vira filha da raiz,
+   * porque a raiz representa o Empreendimento e não admite irmãos.
+   */
   function openNew() {
     setEditingTask(null);
-    // Sem permitir irmãos da raiz: nova atividade vira filha direta da raiz.
-    setParentTask(rootTask);
+    const selected = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) ?? null : null;
+
+    if (!selected || isRootTask(selected)) {
+      setParentTask(rootTask);
+      setAfterTask(selected && isRootTask(selected) ? selected : null);
+    } else {
+      // O pai da selecionada define os defaults de código e nível do formulário.
+      setParentTask(tasks.find(t => t.id === selected.parentId) ?? rootTask);
+      setAfterTask(selected);
+    }
     setModalOpen(true);
   }
-  function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
-  function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setModalOpen(true); }
+  function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setAfterTask(null); setModalOpen(true); }
+  function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setAfterTask(null); setModalOpen(true); }
   function openDelete(task: GanttTask, e: React.MouseEvent) {
     e.stopPropagation();
     if (isRootTask(task)) {
@@ -4031,6 +4056,7 @@ export default function Cronograma() {
         open={modalOpen}
         editingTask={editingTask}
         parentTask={parentTask}
+        afterTask={afterTask}
         allTasks={tasks}
         projectId={projectId!}
         addToast={addToast as any}

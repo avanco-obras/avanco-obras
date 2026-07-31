@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { PrismaService } from '../common/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PhysicalProgressService } from './physical-progress.service';
 
 const mockPrismaService = {
   project: {
@@ -14,7 +15,9 @@ const mockPrismaService = {
     findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     delete: jest.fn(),
+    deleteMany: jest.fn(),
   },
   activityType: {
     findUnique: jest.fn(),
@@ -26,9 +29,25 @@ const mockPrismaService = {
   $transaction: jest.fn(),
 };
 
+/**
+ * `create` e `remove` rodam dentro de `$transaction(cb)`. Executa o callback
+ * com o próprio mock, para que as asserções enxerguem as chamadas.
+ */
+function runTransactionInline() {
+  mockPrismaService.$transaction.mockImplementation(async (arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (tx: unknown) => unknown)(mockPrismaService)
+      : Promise.all(arg as unknown[]),
+  );
+}
+
 const mockRealtimeGateway = {
   emitScheduleChanged: jest.fn(),
   emitScheduleUpdated: jest.fn(),
+};
+
+const mockPhysicalProgressService = {
+  recalculateParentTasks: jest.fn().mockResolvedValue(undefined),
 };
 
 describe('ScheduleService', () => {
@@ -40,11 +59,13 @@ describe('ScheduleService', () => {
         ScheduleService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: RealtimeGateway, useValue: mockRealtimeGateway },
+        { provide: PhysicalProgressService, useValue: mockPhysicalProgressService },
       ],
     }).compile();
 
     service = module.get<ScheduleService>(ScheduleService);
     jest.clearAllMocks();
+    runTransactionInline();
   });
 
   // ---------------------------------------------------------------------------
@@ -148,6 +169,90 @@ describe('ScheduleService', () => {
         }),
       );
     });
+
+    describe('afterId — inserção abaixo da linha selecionada', () => {
+      const anchor = {
+        id: 'ancora',
+        projectId,
+        parentId: 'pai-1',
+        level: 2,
+        order: 3,
+      };
+
+      beforeEach(() => {
+        mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+        mockPrismaService.scheduleItem.create.mockResolvedValue({ id: 'nova' });
+        mockPrismaService.scheduleItem.updateMany.mockResolvedValue({ count: 0 });
+      });
+
+      it('herda parentId e level da âncora e entra logo abaixo dela', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        // O DTO traz nível divergente de propósito: afterId tem precedência.
+        await service.create(projectId, {
+          ...baseDto,
+          level: 99,
+          afterId: 'ancora',
+        });
+
+        expect(mockPrismaService.scheduleItem.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              parentId: 'pai-1',
+              level: 2,
+              order: 4,
+            }),
+          }),
+        );
+      });
+
+      it('empurra os irmãos posteriores para abrir espaço', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        await service.create(projectId, { ...baseDto, afterId: 'ancora' });
+
+        expect(mockPrismaService.scheduleItem.updateMany).toHaveBeenCalledWith({
+          where: { projectId, parentId: 'pai-1', order: { gte: 4 } },
+          data: { order: { increment: 1 } },
+        });
+      });
+
+      // A raiz representa o Empreendimento e não admite irmãos.
+      it('vira filha da raiz quando a âncora é a própria raiz', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue({
+          id: 'raiz', projectId, parentId: null, level: 0, order: 0,
+        });
+        mockPrismaService.scheduleItem.findFirst.mockResolvedValue({ order: 7 });
+
+        await service.create(projectId, { ...baseDto, afterId: 'raiz' });
+
+        expect(mockPrismaService.scheduleItem.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ parentId: 'raiz', level: 1, order: 8 }),
+          }),
+        );
+        // Filha no fim da lista: nada a empurrar.
+        expect(mockPrismaService.scheduleItem.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('rejeita âncora de outro projeto', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue({
+          ...anchor, projectId: 'outro-projeto',
+        });
+
+        await expect(
+          service.create(projectId, { ...baseDto, afterId: 'ancora' }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('recalcula os pais após criar', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        await service.create(projectId, { ...baseDto, afterId: 'ancora' });
+
+        expect(mockPhysicalProgressService.recalculateParentTasks).toHaveBeenCalledWith(projectId);
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -190,6 +295,8 @@ describe('ScheduleService', () => {
   // delete (remove)
   // ---------------------------------------------------------------------------
   describe('delete', () => {
+    const projectId = 'project-1';
+
     it('should throw NotFoundException when item not found', async () => {
       mockPrismaService.scheduleItem.findUnique.mockResolvedValue(null);
 
@@ -201,15 +308,52 @@ describe('ScheduleService', () => {
     it('should delete and return success message on success', async () => {
       const id = 'item-1';
 
-      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id });
-      mockPrismaService.scheduleItem.delete.mockResolvedValue({ id });
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id, projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([
+        { id, parentId: null },
+      ]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.remove(id);
 
       expect(result).toEqual({ message: 'Item excluído com sucesso' });
-      expect(mockPrismaService.scheduleItem.delete).toHaveBeenCalledWith({
-        where: { id },
+      expect(mockPrismaService.scheduleItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [id] } },
       });
+    });
+
+    // A FK parent_id é SET NULL, não CASCADE: sem remoção explícita da
+    // subárvore os filhos viram raízes órfãs com o level antigo.
+    it('apaga a subárvore inteira, das folhas para a raiz', async () => {
+      const id = 'pai';
+
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id, projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([
+        { id: 'pai', parentId: null },
+        { id: 'filho-a', parentId: 'pai' },
+        { id: 'filho-b', parentId: 'pai' },
+        { id: 'neto', parentId: 'filho-a' },
+        { id: 'outro-ramo', parentId: null },
+      ]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.remove(id);
+
+      const ordem = mockPrismaService.scheduleItem.deleteMany.mock.calls.map(
+        (c: [{ where: { id: { in: string[] } } }]) => c[0].where.id.in,
+      );
+      expect(ordem).toEqual([['neto'], ['filho-a', 'filho-b'], ['pai']]);
+      expect(ordem.flat()).not.toContain('outro-ramo');
+    });
+
+    it('recalcula os pais após excluir', async () => {
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id: 'x', projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([{ id: 'x', parentId: 'p' }]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.remove('x');
+
+      expect(mockPhysicalProgressService.recalculateParentTasks).toHaveBeenCalledWith(projectId);
     });
   });
 
