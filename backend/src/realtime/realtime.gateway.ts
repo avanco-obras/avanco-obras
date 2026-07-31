@@ -29,8 +29,8 @@ export interface ScheduleUpdatedPayload {
 export interface ScheduleChangedPayload {
   projectId: string;
   /** Kind of structural change so the client knows what to refresh. */
-  action: 'created' | 'updated' | 'deleted' | 'imported' | 'batch-update';
-  scheduleItemId?: string;
+  action: 'created' | 'updated' | 'deleted' | 'imported' | 'batch-update' | 'restored';
+  scheduleItemId?: string | null;
 }
 
 interface AuthedSocket extends Socket {

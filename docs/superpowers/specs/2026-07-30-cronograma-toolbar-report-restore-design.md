@@ -159,6 +159,8 @@ Executa em `prisma.$transaction`:
 
 Qualquer falha desfaz a transação inteira — não há estado meio-restaurado.
 
+**Limitação conhecida — vínculos semanais já perdidos não voltam.** A reconciliação preserva todo vínculo de `weekly_activities` que exista **no momento da restauração**. Ela não consegue ressuscitar um vínculo destruído *antes* dela: se uma atividade foi excluída (o `SET NULL` já apagou o ponteiro) e depois se restaura um report anterior à exclusão, a atividade volta com o mesmo ID, mas a linha semanal continua com `schedule_item_id` nulo — não há registro de para onde ela apontava. Verificado em teste real: 13 vínculos antes da restauração, 13 depois; o 14º havia sido destruído pela exclusão anterior. A alternativa de apagar-e-recriar seria estritamente pior, zerando os 14. Resolver isso exigiria gravar o mapa de vínculos no snapshot e reescrever `weekly_activities` na restauração — o que contraria o isolamento da Programação Semanal e fica fora do escopo até decisão em contrário.
+
 ### 3.3 Modal de confirmação
 
 Obrigatório antes de executar. Exibe número da versão, data, autor, descrição e o que será sobrescrito. Ação destrutiva em variante de perigo; confirmação explícita.

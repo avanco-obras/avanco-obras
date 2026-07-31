@@ -264,6 +264,11 @@ model ProjectReport {
   userId                String   @map("user_id")
   physicalProgress      Decimal  @default(0) @map("physical_progress") @db.Decimal(5, 2)
   scheduleSnapshot      Json     @map("schedule_snapshot") // Array of ScheduleItem snapshot with progress
+  dependencySnapshot    Json?    @map("dependency_snapshot") // Array of ScheduleDependency (só em snapshotVersion 2)
+  measurementSnapshot   Json?    @map("measurement_snapshot") // Array of Measurement (só em snapshotVersion 2)
+  /// 1 = só cronograma (reports gravados antes da restauração existir).
+  /// 2 = snapshot completo, restaurável por inteiro.
+  snapshotVersion       Int      @default(1) @map("snapshot_version")
   comparisonData        Json?    @map("comparison_data") // Comparison with baseline
   description           String?
 

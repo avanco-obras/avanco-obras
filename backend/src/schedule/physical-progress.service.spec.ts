@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { PhysicalProgressService } from './physical-progress.service';
 import { PrismaService } from '../common/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 type Row = {
   id: string;
@@ -11,12 +13,21 @@ type Row = {
 };
 
 const mockPrisma = {
+  project: { findUnique: jest.fn() },
+  projectBaseline: { findFirst: jest.fn() },
+  projectReport: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
   scheduleItem: {
     findMany: jest.fn(),
     update: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
   },
+  scheduleDependency: { findMany: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
+  measurement: { findMany: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
   $transaction: jest.fn(),
 };
+
+const mockRealtime = { emitScheduleChanged: jest.fn() };
 
 describe('PhysicalProgressService', () => {
   let service: PhysicalProgressService;
@@ -28,6 +39,7 @@ describe('PhysicalProgressService', () => {
       providers: [
         PhysicalProgressService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: RealtimeGateway, useValue: mockRealtime },
       ],
     }).compile();
 
@@ -158,6 +170,225 @@ describe('PhysicalProgressService', () => {
         { weight: 2, physicalProgress: 0 },
       ]);
       expect(progress).toBe(33.33);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // restoreReport
+  // ---------------------------------------------------------------------------
+  describe('restoreReport', () => {
+    const projectId = 'proj-1';
+    const userId = 'user-1';
+
+    function item(id: string, level: number, over: Record<string, unknown> = {}) {
+      return {
+        id, level,
+        parentId: null,
+        code: id, name: id,
+        startDate: '2026-01-01T00:00:00.000Z',
+        endDate: '2026-01-31T00:00:00.000Z',
+        durationDays: 30,
+        physicalProgress: 0,
+        ...over,
+      };
+    }
+
+    /** Report gravado + estado atual do banco. */
+    function scenario(opts: {
+      snapshotVersion?: number;
+      scheduleSnapshot?: unknown[];
+      dependencySnapshot?: unknown[];
+      measurementSnapshot?: unknown[];
+      currentItems?: Array<{ id: string; level: number }>;
+    }) {
+      mockPrisma.projectReport.findUnique.mockResolvedValue({
+        id: 'rep-1',
+        projectId,
+        reportNumber: 7,
+        snapshotVersion: opts.snapshotVersion ?? 2,
+        scheduleSnapshot: opts.scheduleSnapshot ?? [],
+        dependencySnapshot: opts.dependencySnapshot ?? [],
+        measurementSnapshot: opts.measurementSnapshot ?? [],
+      });
+
+      // createReport (rede de segurança) precisa de projeto e numeração.
+      mockPrisma.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrisma.projectBaseline.findFirst.mockResolvedValue(null);
+      mockPrisma.projectReport.findFirst.mockResolvedValue({ reportNumber: 9 });
+      mockPrisma.projectReport.create.mockResolvedValue({
+        id: 'safety', projectId, reportNumber: 10,
+        createdAt: new Date(), physicalProgress: 0,
+        user: null, baseline: null, description: null,
+      });
+      mockPrisma.scheduleDependency.findMany.mockResolvedValue([]);
+      mockPrisma.measurement.findMany.mockResolvedValue([]);
+
+      // findMany serve tanto ao recalculo quanto ao diff dentro da transação.
+      mockPrisma.scheduleItem.findMany.mockResolvedValue(opts.currentItems ?? []);
+    }
+
+    beforeEach(() => {
+      mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
+        typeof arg === 'function'
+          ? (arg as (tx: unknown) => unknown)(mockPrisma)
+          : Promise.all(arg as unknown[]),
+      );
+      mockPrisma.scheduleItem.create.mockResolvedValue({});
+      mockPrisma.scheduleItem.delete.mockResolvedValue({});
+      mockPrisma.scheduleDependency.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.scheduleDependency.createMany.mockResolvedValue({ count: 0 });
+      mockPrisma.measurement.deleteMany.mockResolvedValue({ count: 0 });
+      mockPrisma.measurement.createMany.mockResolvedValue({ count: 0 });
+    });
+
+    it('rejeita report de outro projeto', async () => {
+      mockPrisma.projectReport.findUnique.mockResolvedValue({
+        id: 'rep-1', projectId: 'outro', reportNumber: 1, snapshotVersion: 2,
+        scheduleSnapshot: [], dependencySnapshot: [], measurementSnapshot: [],
+      });
+
+      await expect(service.restoreReport(projectId, 'rep-1', userId))
+        .rejects.toThrow(NotFoundException);
+    });
+
+    it('grava um Report de segurança antes de sobrescrever', async () => {
+      scenario({ scheduleSnapshot: [item('a', 0)], currentItems: [{ id: 'a', level: 0 }] });
+
+      const result = await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockPrisma.projectReport.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            description: 'Antes da restauração do Report #7',
+          }),
+        }),
+      );
+      expect(result.safetyReportNumber).toBe(10);
+    });
+
+    /**
+     * O ponto central do desenho: itens que existem nos dois lados são
+     * ATUALIZADOS, nunca apagados e recriados. É o que mantém intactos os
+     * vínculos de weekly_activities (FK ON DELETE SET NULL).
+     */
+    it('atualiza itens coincidentes em vez de recriá-los', async () => {
+      scenario({
+        scheduleSnapshot: [item('mantido', 1, { name: 'Nome do snapshot' })],
+        currentItems: [{ id: 'mantido', level: 1 }],
+      });
+
+      await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockPrisma.scheduleItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'mantido' },
+          data: expect.objectContaining({ name: 'Nome do snapshot' }),
+        }),
+      );
+      expect(mockPrisma.scheduleItem.delete).not.toHaveBeenCalled();
+      expect(mockPrisma.scheduleItem.create).not.toHaveBeenCalled();
+    });
+
+    it('cria os que faltam do nível raso para o fundo', async () => {
+      scenario({
+        scheduleSnapshot: [item('neto', 2), item('pai', 0), item('filho', 1)],
+        currentItems: [],
+      });
+
+      await service.restoreReport(projectId, 'rep-1', userId);
+
+      const criados = mockPrisma.scheduleItem.create.mock.calls.map(
+        (c: [{ data: { id: string } }]) => c[0].data.id,
+      );
+      expect(criados).toEqual(['pai', 'filho', 'neto']);
+    });
+
+    it('remove os que sobram do nível fundo para o raso', async () => {
+      scenario({
+        scheduleSnapshot: [],
+        currentItems: [
+          { id: 'raso', level: 0 },
+          { id: 'fundo', level: 3 },
+          { id: 'meio', level: 1 },
+        ],
+      });
+
+      await service.restoreReport(projectId, 'rep-1', userId);
+
+      const apagados = mockPrisma.scheduleItem.delete.mock.calls.map(
+        (c: [{ where: { id: string } }]) => c[0].where.id,
+      );
+      expect(apagados).toEqual(['fundo', 'meio', 'raso']);
+    });
+
+    it('repõe dependências e medições em snapshot completo', async () => {
+      scenario({
+        snapshotVersion: 2,
+        scheduleSnapshot: [item('a', 0)],
+        currentItems: [{ id: 'a', level: 0 }],
+        dependencySnapshot: [
+          { id: 'd1', predecessorId: 'a', successorId: 'b', lagDays: 2, type: 'FS' },
+        ],
+        measurementSnapshot: [
+          {
+            id: 'm1', unitId: 'u1', activityTypeId: 't1', measuredById: userId,
+            date: '2026-01-05T00:00:00.000Z', percentComplete: 50,
+            executedQty: null, totalQty: null, notes: null, photoUrl: null,
+          },
+        ],
+      });
+
+      const result = await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockPrisma.scheduleDependency.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [{ id: 'd1', predecessorId: 'a', successorId: 'b', lagDays: 2, type: 'FS' }],
+        }),
+      );
+      expect(mockPrisma.measurement.deleteMany).toHaveBeenCalled();
+      expect(mockPrisma.measurement.createMany).toHaveBeenCalled();
+      expect(result.partial).toBe(false);
+    });
+
+    /**
+     * Reports v1 nunca gravaram dependências nem medições. Tocá-las apagaria
+     * dados que o snapshot não sabe repor.
+     */
+    it('não toca em dependências nem medições em report v1', async () => {
+      scenario({
+        snapshotVersion: 1,
+        scheduleSnapshot: [item('a', 0)],
+        currentItems: [{ id: 'a', level: 0 }],
+      });
+
+      const result = await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockPrisma.scheduleDependency.deleteMany).not.toHaveBeenCalled();
+      expect(mockPrisma.scheduleDependency.createMany).not.toHaveBeenCalled();
+      expect(mockPrisma.measurement.deleteMany).not.toHaveBeenCalled();
+      expect(mockPrisma.measurement.createMany).not.toHaveBeenCalled();
+      // O cronograma foi restaurado normalmente.
+      expect(mockPrisma.scheduleItem.update).toHaveBeenCalled();
+      expect(result.partial).toBe(true);
+    });
+
+    it('avisa as telas que o cronograma foi restaurado', async () => {
+      scenario({ scheduleSnapshot: [item('a', 0)], currentItems: [{ id: 'a', level: 0 }] });
+
+      await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockRealtime.emitScheduleChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId, action: 'restored' }),
+      );
+    });
+
+    it('propaga a falha da transação sem emitir evento', async () => {
+      scenario({ scheduleSnapshot: [item('a', 0)], currentItems: [{ id: 'a', level: 0 }] });
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error('deu ruim'));
+
+      await expect(service.restoreReport(projectId, 'rep-1', userId))
+        .rejects.toThrow('deu ruim');
+      expect(mockRealtime.emitScheduleChanged).not.toHaveBeenCalled();
     });
   });
 });
