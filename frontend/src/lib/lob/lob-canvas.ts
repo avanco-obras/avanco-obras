@@ -1,5 +1,5 @@
 import type { FlowBar, FlowRow, FlowlineModel } from './flowline-model';
-import { DAY_MS } from './types';
+import { DAY_MS, formatScheduleBR } from './types';
 
 /**
  * Engine de renderização da Linha de Balanço.
@@ -251,7 +251,7 @@ export class LobCanvas {
 
   /** Ajusta o zoom para caber todo o período na largura atual. */
   fit(): void {
-    const spanDays = Math.max(1, (this.model.maxDate - this.model.minDate) / DAY_MS);
+    const spanDays = Math.max(1, (this.model.maxDate - this.model.minDate) / DAY_MS + 1);
     const pad = 3; // dias de respiro em cada lado
     this.pxPerDay = Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, this.width / (spanDays + pad * 2)));
     this.originMs = this.model.minDate - pad * DAY_MS;
@@ -276,6 +276,15 @@ export class LobCanvas {
   /** Instante correspondente a um x (CSS px). */
   tOf(x: number): number { return this.originMs + (x / this.pxPerDay) * DAY_MS; }
 
+  /**
+   * Largura (CSS px) de um intervalo início→término INCLUSIVO: a barra cobre
+   * também a coluna do dia de término, exatamente como o Gantt do Cronograma
+   * (`daysBetween(start, end) + 1`).
+   */
+  private spanPx(start: number, end: number): number {
+    return Math.max(2, ((end - start) / DAY_MS + 1) * this.pxPerDay);
+  }
+
   /** Retângulo (CSS px, coords do canvas) de uma barra — para posicionar popover DOM. */
   barRect(taskId: string): { x: number; y: number; w: number; h: number } | null {
     const pos = this.barPos.get(taskId);
@@ -286,7 +295,7 @@ export class LobCanvas {
     return {
       x: this.xOf(bar.start),
       y: HEADER_H + entry.y - this.scrollY + pos.laneY,
-      w: Math.max(2, (bar.end - bar.start) / DAY_MS * this.pxPerDay),
+      w: this.spanPx(bar.start, bar.end),
       h: BAR_H,
     };
   }
@@ -549,7 +558,7 @@ export class LobCanvas {
 
   private drawBar(ctx: CanvasRenderingContext2D, bar: FlowBar, y: number, ghost = false): void {
     const x = this.xOf(bar.start);
-    const w = Math.max(2, ((bar.end - bar.start) / DAY_MS) * this.pxPerDay);
+    const w = this.spanPx(bar.start, bar.end);
     if (x + w < 0 || x > this.width) return;
 
     const r = Math.min(4, w / 2);
@@ -604,7 +613,7 @@ export class LobCanvas {
       const bl = this.baselines.get(bar.taskId);
       if (bl) {
         const bx = this.xOf(bl.start);
-        const bw = Math.max(2, ((bl.end - bl.start) / DAY_MS) * this.pxPerDay);
+        const bw = this.spanPx(bl.start, bl.end);
         ctx.globalAlpha = ghost ? 0.3 : 0.55;
         ctx.fillStyle = bar.color.dark;
         ctx.beginPath();
@@ -764,7 +773,7 @@ export class LobCanvas {
         this.drawBar(ctx, preview, rect.y);
         // guias verticais + etiqueta de datas
         const gx1 = this.xOf(curStart);
-        const gx2 = this.xOf(curEnd);
+        const gx2 = gx1 + this.spanPx(curStart, curEnd); // término inclusivo
         ctx.save();
         ctx.strokeStyle = COLORS.pending;
         ctx.setLineDash([3, 3]);
@@ -775,7 +784,7 @@ export class LobCanvas {
           ctx.stroke();
         }
         ctx.setLineDash([]);
-        const fmt = (t: number) => new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const fmt = (t: number) => formatScheduleBR(t).slice(0, 5); // dd/mm
         const label = `${fmt(curStart)} → ${fmt(curEnd)}`;
         ctx.font = '700 10px system-ui, sans-serif';
         const tw = ctx.measureText(label).width;
@@ -892,7 +901,7 @@ export class LobCanvas {
         const laneTop = entry.y + ROW_PAD + bar.subLane * LANE_H + (LANE_H - BAR_H) / 2;
         if (bodyY < laneTop - 2 || bodyY > laneTop + BAR_H + 2) continue;
         const bx = this.xOf(bar.start);
-        const bw = Math.max(2, ((bar.end - bar.start) / DAY_MS) * this.pxPerDay);
+        const bw = this.spanPx(bar.start, bar.end);
         if (x < bx - 2 || x > bx + bw + 2) continue;
         let edge: BarHit['edge'] = null;
         if (bw > EDGE_PX * 3) {
@@ -915,9 +924,13 @@ export class LobCanvas {
 
   // ── Interações ───────────────────────────────────────────────────────────────
 
+  /**
+   * Alinha um instante à meia-noite LOCAL — mesma âncora das datas do modelo
+   * (ver parseScheduleDate), para a barra encostar exatamente na coluna do dia.
+   */
   private snapDay(t: number): number {
-    const d = new Date(t);
-    d.setHours(12, 0, 0, 0); // meio-dia evita saltos por timezone
+    const d = new Date(t + DAY_MS / 2); // arredonda para o dia mais próximo
+    d.setHours(0, 0, 0, 0);
     return d.getTime();
   }
 
@@ -1008,11 +1021,12 @@ export class LobCanvas {
         this.drag.curStart = this.snapDay(origStart + dxMs);
         this.drag.curEnd = this.drag.curStart + (origEnd - origStart);
       } else if (kind === 'resize-start') {
-        this.drag.curStart = Math.min(this.snapDay(origStart + dxMs), this.snapDay(origEnd - DAY_MS / 2));
+        // término inclusivo: início pode chegar ao próprio dia do término (1 dia)
+        this.drag.curStart = Math.min(this.snapDay(origStart + dxMs), origEnd);
         this.drag.curEnd = origEnd;
       } else {
         this.drag.curStart = origStart;
-        this.drag.curEnd = Math.max(this.snapDay(origEnd + dxMs), this.snapDay(origStart + DAY_MS / 2));
+        this.drag.curEnd = Math.max(this.snapDay(origEnd + dxMs), origStart);
       }
       this.invalidate();
       return;

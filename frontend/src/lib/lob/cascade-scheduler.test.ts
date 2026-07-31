@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { GanttTask, TaskDep } from '@/types';
 import { applyMove } from './cascade-scheduler';
-import { DAY_MS } from './types';
+import { DAY_MS, parseScheduleDate } from './types';
 
-const D = (s: string) => `${s}T12:00:00.000Z`;
-const ms = (s: string) => new Date(D(s)).getTime();
+// O backend serializa datas como meia-noite UTC; a LDB as lê como dia de
+// calendário (meia-noite local) — ver parseScheduleDate.
+const D = (s: string) => `${s}T00:00:00.000Z`;
+const ms = (s: string) => parseScheduleDate(s);
 
 function dep(predecessorId: string, successorId: string, type = 'FS', lagDays = 0): TaskDep {
   return { id: `${predecessorId}->${successorId}`, predecessorId, successorId, lagDays, type };
@@ -33,7 +35,7 @@ function mkTask(
 
 function dates(changes: Map<string, { startDate: string; endDate: string }>, id: string) {
   const c = changes.get(id)!;
-  return { start: new Date(c.startDate).getTime(), end: new Date(c.endDate).getTime() };
+  return { start: parseScheduleDate(c.startDate), end: parseScheduleDate(c.endDate) };
 }
 
 describe('applyMove (cascata)', () => {

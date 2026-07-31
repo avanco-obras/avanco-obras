@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   RefreshCw, Plus, FileText, Download, CheckCircle2, ChevronLeft, ChevronRight, History, Trash2,
 } from 'lucide-react';
@@ -46,24 +47,46 @@ function DropMenu({ label, icon, items, disabled }: {
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Posiciona o menu (fixed) a partir do retângulo do botão. Renderizado em portal
+  // p/ escapar do overflow:hidden do card e do scroll de .ao-content.
+  const place = useCallback(() => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+  }, []);
+
+  useLayoutEffect(() => {
     if (!open) return;
+    place();
+    const onScroll = () => place();
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+      document.removeEventListener('mousedown', onDoc);
+    };
+  }, [open, place]);
+
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className="ao-btn ao-btn-sm" onClick={() => setOpen((o) => !o)} disabled={disabled}>
+    <>
+      <button ref={btnRef} className="ao-btn ao-btn-sm" onClick={() => setOpen((o) => !o)} disabled={disabled}>
         {icon} {label} <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
       </button>
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={menuRef}
           style={{
-            position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 40, minWidth: 170,
+            position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000, minWidth: 170,
             background: 'var(--s0)', border: '1px solid var(--bd2)', borderRadius: 'var(--r-lg)',
             boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
           }}
@@ -84,9 +107,10 @@ function DropMenu({ label, icon, items, disabled }: {
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

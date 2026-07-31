@@ -1,5 +1,5 @@
 import type { GanttTask } from '@/types';
-import { buildForest, FLOOR_PATTERN, inferFloorLevel, type WbsNode } from '@/lib/wbs-tree';
+import { buildForest, childrenMap, FLOOR_PATTERN, inferFloorLevel, type WbsNode } from '@/lib/wbs-tree';
 import { groupColor, type GroupColor } from './group-colors';
 import { effectiveDates, type DraftMap } from './types';
 
@@ -14,6 +14,35 @@ import { effectiveDates, type DraftMap } from './types';
  */
 
 export const CANTEIRO_ROW_ID = '__canteiro__';
+
+/**
+ * Chave da atividade para o filtro: o tipo de atividade quando existir
+ * (Pintura, Alvenaria…), senão o próprio nome. É a mesma base usada para a cor,
+ * então filtrar por "Pintura" pega todas as barras de pintura da obra.
+ */
+export function activityKey(task: GanttTask): string {
+  return (task.activityTypeName ?? task.name ?? '').trim() || 'Outros';
+}
+
+export interface ActivityOption {
+  key: string;
+  count: number;    // nº de atividades-folha com essa chave
+  color: GroupColor;
+}
+
+/** Catálogo de atividades do cronograma (folhas), para o filtro da toolbar. */
+export function listActivities(tasks: GanttTask[]): ActivityOption[] {
+  const cmap = childrenMap(tasks);
+  const byKey = new Map<string, ActivityOption>();
+  for (const t of tasks) {
+    if ((cmap.get(t.id)?.length ?? 0) > 0) continue; // só folhas viram barras
+    const key = activityKey(t);
+    const cur = byKey.get(key);
+    if (cur) cur.count++;
+    else byKey.set(key, { key, count: 1, color: groupColor(key) });
+  }
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key, 'pt-BR'));
+}
 
 export interface FlowBar {
   taskId: string;
@@ -95,7 +124,7 @@ function makeBar(task: GanttTask, draft: DraftMap): Omit<FlowBar, 'subLane'> {
     end,
     durationDays,
     progress: task.physicalProgress ?? 0,
-    color: groupColor(task.activityTypeName ?? task.name),
+    color: groupColor(activityKey(task)),
     pending: draft.has(task.id),
   };
 }
@@ -103,16 +132,21 @@ function makeBar(task: GanttTask, draft: DraftMap): Omit<FlowBar, 'subLane'> {
 /**
  * Monta o modelo flowline a partir do cronograma + draft.
  * `collapsed` contém IDs de linhas de grupo recolhidas (filhos ocultos).
+ * `activityFilter` (opcional) restringe as barras às chaves selecionadas — as
+ * linhas de local continuam visíveis, preservando o eixo Y da obra.
  */
 export function buildFlowlineModel(
   tasks: GanttTask[],
   draft: DraftMap,
   collapsed: Set<string>,
+  activityFilter?: ReadonlySet<string> | null,
 ): FlowlineModel {
   const forest = buildForest(tasks);
   const rows: FlowRow[] = [];
   const canteiroLeaves: GanttTask[] = [];
   const groupUse = new Map<string, { color: GroupColor; count: number }>();
+  const filtering = !!activityFilter;
+  const isVisible = (t: GanttTask) => !filtering || activityFilter!.has(activityKey(t));
 
   const registerGroups = (bars: FlowBar[]) => {
     for (const b of bars) {
@@ -129,7 +163,7 @@ export function buildFlowlineModel(
       // Linha de fluxo: TODAS as folhas descendentes viram barras aqui.
       const leaves: GanttTask[] = [];
       collectLeaves(node, leaves);
-      const bars = assignSubLanes(leaves.map((t) => makeBar(t, draft)));
+      const bars = assignSubLanes(leaves.filter(isVisible).map((t) => makeBar(t, draft)));
       registerGroups(bars);
       if (!hidden) {
         rows.push({
@@ -170,7 +204,7 @@ export function buildFlowlineModel(
   orderFloorsPhysically(forest).forEach((root) => walk(root, 0, false));
 
   if (canteiroLeaves.length > 0) {
-    const bars = assignSubLanes(canteiroLeaves.map((t) => makeBar(t, draft)));
+    const bars = assignSubLanes(canteiroLeaves.filter(isVisible).map((t) => makeBar(t, draft)));
     registerGroups(bars);
     const hidden = collapsed.has(CANTEIRO_ROW_ID);
     rows.push({
@@ -195,11 +229,12 @@ export function buildFlowlineModel(
     }
   }
 
-  // Janela de tempo com base em TODAS as barras (mesmo linhas ocultas não
-  // alteram o range — usa as tasks diretamente para estabilidade do eixo X).
+  // Janela de tempo: com filtro ativo acompanha as atividades selecionadas;
+  // sem filtro usa TODAS as tasks (linhas recolhidas não encolhem o eixo X).
   let minDate = Infinity;
   let maxDate = -Infinity;
   for (const t of tasks) {
+    if (filtering && !isVisible(t)) continue;
     const { start, end } = effectiveDates(t, draft);
     if (start < minDate) minDate = start;
     if (end > maxDate) maxDate = end;

@@ -1,5 +1,8 @@
 import type { GanttTask } from '@/types';
-import { DAY_MS, effectiveDates, type DraftChange, type DraftMap } from './types';
+import {
+  DAY_MS, durationFromRange, effectiveDates, parseScheduleDate, toScheduleDate,
+  type DraftChange, type DraftMap,
+} from './types';
 
 /**
  * Scheduler de cascata em memória (Linha de Balanço).
@@ -23,10 +26,14 @@ export interface CascadeResult {
 
 const MAX_VISITS = 3; // por nó — tolera diamantes; corta ciclos
 
+/**
+ * Serializa como data pura (YYYY-MM-DD) — mesma convenção que o Cronograma usa
+ * ao gravar. Evita que o fuso desloque o dia no round-trip draft → API → recarga.
+ */
 function toDraftChange(startMs: number, endMs: number, durationDays: number): DraftChange {
   return {
-    startDate: new Date(startMs).toISOString(),
-    endDate: new Date(endMs).toISOString(),
+    startDate: toScheduleDate(startMs),
+    endDate: toScheduleDate(endMs),
     durationDays,
   };
 }
@@ -57,8 +64,8 @@ export function applyMove(
     const c = changes.get(id);
     if (c) {
       return {
-        start: new Date(c.startDate).getTime(),
-        end: new Date(c.endDate).getTime(),
+        start: parseScheduleDate(c.startDate),
+        end: parseScheduleDate(c.endDate),
         durationDays: c.durationDays,
       };
     }
@@ -115,7 +122,10 @@ export function applyMove(
       if (delta > 0) {
         const newStart = succDates.start + delta;
         const newEnd = succDates.end + delta; // duração preservada
-        changes.set(succId, toDraftChange(newStart, newEnd, succDates.durationDays));
+        // O intervalo é transladado (duração de calendário preservada), mas o
+        // campo durationDays é em dias úteis: re-deriva para não descolar das
+        // datas quando o empurrão atravessa um fim de semana.
+        changes.set(succId, toDraftChange(newStart, newEnd, durationFromRange(newStart, newEnd)));
         if (!pushedIds.includes(succId)) pushedIds.push(succId);
         visits.set(succId, v + 1);
         queue.push(succId);

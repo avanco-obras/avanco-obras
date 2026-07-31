@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  Save, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2, Settings2,
+  Save, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2, Settings2, Filter, Search,
   GitBranch, Layers, History, ChevronDown, ChevronRight, X, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { useStore } from '@/store';
@@ -8,10 +8,13 @@ import { useHistoryStore } from '@/store/historyStore';
 import { scheduleApi, baselineApi } from '@/services/api';
 import type { GanttTask, ScheduleRevision } from '@/types';
 import { useRealtime, useScheduleChanges } from '@/hooks/useRealtime';
-import { buildFlowlineModel } from '@/lib/lob/flowline-model';
+import { buildFlowlineModel, listActivities, type ActivityOption } from '@/lib/lob/flowline-model';
 import { applyMove } from '@/lib/lob/cascade-scheduler';
 import { findEquivalents } from '@/lib/lob/equivalence';
-import { DAY_MS, durationFromRange, effectiveDates, type DraftChange, type DraftMap } from '@/lib/lob/types';
+import {
+  durationFromRange, effectiveDates, endFromDuration, formatScheduleBR, parseScheduleDate, toScheduleDate,
+  type DraftChange, type DraftMap,
+} from '@/lib/lob/types';
 import {
   LobCanvas, computeRowLayout, DEFAULT_DISPLAY, HEADER_H,
   type BarHit, type DisplayOptions, type BaselineRange, type DragResult,
@@ -35,17 +38,12 @@ function loadDisplay(): DisplayOptions {
   return { ...DEFAULT_DISPLAY };
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-const msToInput = (ms: number) => {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-};
-const inputToMs = (s: string) => {
-  const [y, m, d] = s.split('-').map(Number);
-  return new Date(y, m - 1, d, 12).getTime();
-};
+// Datas trafegam como dia de calendário (mesma convenção do Cronograma):
+// input date ⇄ YYYY-MM-DD ⇄ meia-noite local.
+const msToInput = (ms: number) => toScheduleDate(ms);
+const inputToMs = (s: string) => parseScheduleDate(s);
 const fmtBR = (iso: string | number) =>
-  new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  formatScheduleBR(typeof iso === 'number' ? iso : parseScheduleDate(iso));
 
 // ── Página ────────────────────────────────────────────────────────────────────
 export default function LinhaBalanco() {
@@ -57,6 +55,7 @@ export default function LinhaBalanco() {
   const [baselines, setBaselines] = useState<Map<string, BaselineRange>>(new Map());
   const [draft, setDraft] = useState<DraftMap>(new Map());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [hiddenActivities, setHiddenActivities] = useState<Set<string>>(new Set());
   const [display, setDisplay] = useState<DisplayOptions>(loadDisplay);
   const [scaleIdx, setScaleIdx] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -70,6 +69,7 @@ export default function LinhaBalanco() {
     taskId: string; newStart: number; newEnd: number; newDur: number; equivalents: GanttTask[];
   } | null>(null);
   const [showDisplayMenu, setShowDisplayMenu] = useState(false);
+  const [showActivityMenu, setShowActivityMenu] = useState(false);
   const [showSave, setShowSave] = useState(false);
   const [saveDescription, setSaveDescription] = useState('');
   const [saving, setSaving] = useState(false);
@@ -80,6 +80,7 @@ export default function LinhaBalanco() {
   const engineRef = useRef<LobCanvas | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const displayBtnRef = useRef<HTMLButtonElement>(null);
+  const activityBtnRef = useRef<HTMLButtonElement>(null);
 
   // refs para callbacks do engine (evita closures obsoletas)
   const tasksRef = useRef(tasks); tasksRef.current = tasks;
@@ -121,6 +122,7 @@ export default function LinhaBalanco() {
     if (!projectId) return;
     setDraft(new Map());
     setConflict(false);
+    setHiddenActivities(new Set());
     loadData(projectId);
   }, [projectId, loadData]);
 
@@ -136,7 +138,18 @@ export default function LinhaBalanco() {
   });
 
   // ── Modelo derivado ─────────────────────────────────────────────────────────
-  const model = useMemo(() => buildFlowlineModel(tasks, draft, collapsed), [tasks, draft, collapsed]);
+  const activities = useMemo(() => listActivities(tasks), [tasks]);
+  /** null = todas visíveis (sem filtro). */
+  const activityFilter = useMemo(() => {
+    if (hiddenActivities.size === 0) return null;
+    return new Set(activities.map((a) => a.key).filter((k) => !hiddenActivities.has(k)));
+  }, [activities, hiddenActivities]);
+  const visibleActivityCount = activityFilter ? activityFilter.size : activities.length;
+
+  const model = useMemo(
+    () => buildFlowlineModel(tasks, draft, collapsed, activityFilter),
+    [tasks, draft, collapsed, activityFilter],
+  );
   const layout = useMemo(() => computeRowLayout(model), [model]);
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const deps = useMemo(
@@ -160,7 +173,7 @@ export default function LinhaBalanco() {
 
     for (const eq of equivalents) {
       const cur = effectiveDates(eq, working);
-      const eqEnd = cur.start + newDur * DAY_MS;
+      const eqEnd = endFromDuration(cur.start, newDur); // duração em dias úteis
       const res = applyMove(tasksRef.current, working, eq.id, cur.start, eqEnd, newDur);
       for (const [id, c] of res.changes) working.set(id, c);
     }
@@ -171,8 +184,8 @@ export default function LinhaBalanco() {
       const t = tasksRef.current.find((x) => x.id === id);
       if (!t) continue;
       const same =
-        new Date(t.startDate).getTime() === new Date(c.startDate).getTime() &&
-        new Date(t.endDate).getTime() === new Date(c.endDate).getTime() &&
+        parseScheduleDate(t.startDate) === parseScheduleDate(c.startDate) &&
+        parseScheduleDate(t.endDate) === parseScheduleDate(c.endDate) &&
         (t.durationDays ?? 0) === c.durationDays;
       if (!same) cleaned.set(id, c);
     }
@@ -193,9 +206,9 @@ export default function LinhaBalanco() {
     const task = tasksRef.current.find((t) => t.id === result.taskId);
     if (!task) return;
     const isResize = result.kind !== 'move';
-    const newDur = isResize
-      ? durationFromRange(result.newStart, result.newEnd)
-      : effectiveDates(task, draftRef.current).durationDays;
+    // Duração sempre derivada do novo intervalo (dias úteis) — mesmo ao mover,
+    // pois atravessar um fim de semana muda a contagem.
+    const newDur = durationFromRange(result.newStart, result.newEnd);
 
     if (isResize) {
       const eqs = findEquivalents(task, tasksRef.current);
@@ -243,7 +256,7 @@ export default function LinhaBalanco() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        setPopover(null); setMassDialog(null); setShowDisplayMenu(false);
+        setPopover(null); setMassDialog(null); setShowDisplayMenu(false); setShowActivityMenu(false);
         engineRef.current?.setSelected(null);
       }
     }
@@ -308,7 +321,11 @@ export default function LinhaBalanco() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100vh - 140px)', minHeight: 520 }}>
+    // flex:1 → ocupa toda a altura livre do .ao-content (sem sobra em branco e
+    // sem rolagem da página): o gráfico cresce até o rodapé. O minHeight evita
+    // que a área do gráfico seja espremida em janelas muito baixas — aí, sim,
+    // o container volta a rolar.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 420 }}>
       {conflict && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderRadius: 10,
@@ -340,6 +357,33 @@ export default function LinhaBalanco() {
         >
           {SCALE_PRESETS.map((s, i) => <option key={s.label} value={i}>Escala: {s.label}</option>)}
         </select>
+
+        <div style={{ position: 'relative' }}>
+          <button
+            ref={activityBtnRef}
+            className="ao-btn ao-btn-sm"
+            onClick={() => setShowActivityMenu((v) => !v)}
+            title="Escolher quais atividades aparecem no gráfico"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              ...(activityFilter ? { background: 'var(--blu-bg, #eff6ff)', borderColor: 'var(--blue, #3b82f6)', color: 'var(--blue, #1d4ed8)' } : {}),
+            }}
+          >
+            <Filter size={12} /> Filtro de Atividades
+            {activityFilter && (
+              <span style={{ fontWeight: 800 }}>· {visibleActivityCount}/{activities.length}</span>
+            )}
+          </button>
+          {showActivityMenu && (
+            <ActivityFilterMenu
+              anchorRef={activityBtnRef}
+              activities={activities}
+              hidden={hiddenActivities}
+              onChange={setHiddenActivities}
+              onClose={() => setShowActivityMenu(false)}
+            />
+          )}
+        </div>
 
         <div style={{ position: 'relative' }}>
           <button ref={displayBtnRef} className="ao-btn ao-btn-sm" onClick={() => setShowDisplayMenu((v) => !v)}
@@ -397,7 +441,12 @@ export default function LinhaBalanco() {
       </div>
 
       {/* ── Área principal: árvore + canvas ── */}
-      <div ref={wrapRef} className="ao-card" style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 0, position: 'relative' }}>
+      <div
+        ref={wrapRef}
+        className="ao-card"
+        title="Arraste a barra para mover · bordas para redimensionar · Ctrl+scroll = zoom · Shift+scroll = rolagem horizontal · borda azul = alteração pendente · barra fina = baseline · linha vermelha = hoje"
+        style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 0, position: 'relative' }}
+      >
         {/* Árvore de locais */}
         <div
           style={{ width: TREE_W, flexShrink: 0, borderRight: '1px solid var(--bd)', background: 'var(--s1)', overflow: 'hidden', position: 'relative' }}
@@ -479,19 +528,6 @@ export default function LinhaBalanco() {
         )}
       </div>
 
-      {/* Legenda de grupos */}
-      <div className="ao-card" style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 10, color: 'var(--t2)' }}>
-        {model.groups.slice(0, 12).map((g) => (
-          <span key={g.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: g.dark }} />
-            {g.label}
-          </span>
-        ))}
-        <span style={{ marginLeft: 'auto', color: 'var(--t3)' }}>
-          borda azul = pendente · barra fina = baseline · linha vermelha = hoje · arraste para mover · bordas para redimensionar · Ctrl+scroll = zoom · Shift+scroll = horizontal
-        </span>
-      </div>
-
       {/* ── Dialogs ── */}
       {massDialog && (
         <MassEditDialog
@@ -560,6 +596,111 @@ function ToggleBtn({ active, icon, label, onClick }: { active: boolean; icon: Re
     >
       {icon} {label}
     </button>
+  );
+}
+
+/**
+ * Dropdown de filtro de atividades: busca + checkboxes multi-seleção.
+ * Substitui a antiga legenda inferior — a bolinha colorida de cada item já
+ * cumpre o papel de legenda, sem consumir altura do gráfico.
+ */
+function ActivityFilterMenu({ anchorRef, activities, hidden, onChange, onClose }: {
+  anchorRef: React.RefObject<HTMLButtonElement>;
+  activities: ActivityOption[];
+  hidden: Set<string>;
+  onChange: (next: Set<string>) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const filtered = query.trim()
+    ? activities.filter((a) => norm(a.key).includes(norm(query.trim())))
+    : activities;
+
+  const toggle = (key: string) => {
+    const next = new Set(hidden);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    onChange(next);
+  };
+  /** Marca só as atividades da busca atual (atalho "Somente estas"). */
+  const onlyThese = () => onChange(new Set(activities.filter((a) => !filtered.includes(a)).map((a) => a.key)));
+
+  const MENU_W = 290;
+  const rect = anchorRef.current?.getBoundingClientRect();
+  const left = rect ? Math.min(rect.left, window.innerWidth - MENU_W - 8) : 8;
+  const top = rect ? rect.bottom + 6 : 60;
+  const selectedCount = activities.length - activities.filter((a) => hidden.has(a.key)).length;
+
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={onClose} />
+      <div style={{
+        position: 'fixed', top, left, zIndex: 41, width: MENU_W,
+        background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 10,
+        boxShadow: '0 10px 30px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column',
+        maxHeight: `min(70vh, ${Math.max(220, window.innerHeight - top - 16)}px)`,
+      }}>
+        <div style={{ padding: '10px 12px 8px', borderBottom: '1px solid var(--bd)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Atividades ({selectedCount}/{activities.length})
+            </span>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t3)', display: 'flex' }}>
+              <X size={13} />
+            </button>
+          </div>
+          <div style={{ position: 'relative' }}>
+            <Search size={12} style={{ position: 'absolute', left: 7, top: '50%', transform: 'translateY(-50%)', color: 'var(--t3)' }} />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar atividade…"
+              style={{
+                width: '100%', fontSize: 11.5, padding: '5px 8px 5px 24px',
+                border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s1)', color: 'var(--t1)',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button className="ao-btn ao-btn-sm" style={{ flex: 1, fontSize: 10.5 }} onClick={() => onChange(new Set())}>
+              Selecionar todas
+            </button>
+            <button className="ao-btn ao-btn-sm" style={{ flex: 1, fontSize: 10.5 }}
+              onClick={() => onChange(new Set(activities.map((a) => a.key)))}>
+              Limpar
+            </button>
+            {query.trim() && filtered.length > 0 && (
+              <button className="ao-btn ao-btn-sm" style={{ flex: 1, fontSize: 10.5 }} onClick={onlyThese}>
+                Somente estas
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '6px 6px 8px' }}>
+          {filtered.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--t3)', padding: '10px 6px', textAlign: 'center' }}>
+              Nenhuma atividade encontrada.
+            </div>
+          )}
+          {filtered.map((a) => (
+            <label
+              key={a.key}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--t1)',
+                padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
+              }}
+            >
+              <input type="checkbox" checked={!hidden.has(a.key)} onChange={() => toggle(a.key)} />
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: a.color.dark, flexShrink: 0 }} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.key}</span>
+              <span style={{ fontSize: 10, color: 'var(--t3)', fontWeight: 700 }}>{a.count}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -679,10 +820,11 @@ function EditPopover({ taskId, x, y, taskById, draft, wrapRef, onClose, onApply 
   const [dur, setDur] = useState(eff ? String(eff.durationDays) : '1');
   if (!task || !eff) return null;
 
+  // Duração em dias úteis, inclusiva nas duas pontas — mesma regra do Cronograma.
   const setStartLinked = (v: string) => {
     setStart(v);
     const d = Math.max(1, parseInt(dur, 10) || 1);
-    setEnd(msToInput(inputToMs(v) + d * DAY_MS));
+    setEnd(msToInput(endFromDuration(inputToMs(v), d)));
   };
   const setEndLinked = (v: string) => {
     setEnd(v);
@@ -691,7 +833,7 @@ function EditPopover({ taskId, x, y, taskById, draft, wrapRef, onClose, onApply 
   const setDurLinked = (v: string) => {
     setDur(v);
     const d = Math.max(1, parseInt(v, 10) || 1);
-    setEnd(msToInput(inputToMs(start) + d * DAY_MS));
+    setEnd(msToInput(endFromDuration(inputToMs(start), d)));
   };
 
   const pos = overlayPos(wrapRef, x, y, 250, 210);

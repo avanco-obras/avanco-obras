@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { GanttTask } from '@/types';
-import { buildFlowlineModel, assignSubLanes, orderFloorsPhysically, CANTEIRO_ROW_ID } from './flowline-model';
+import { buildFlowlineModel, assignSubLanes, orderFloorsPhysically, listActivities, activityKey, CANTEIRO_ROW_ID } from './flowline-model';
 import { buildForest } from '@/lib/wbs-tree';
-import type { DraftChange } from './types';
+import { parseScheduleDate, type DraftChange } from './types';
 
-const D = (s: string) => `${s}T12:00:00.000Z`;
+const D = (s: string) => `${s}T00:00:00.000Z`;
 
 function mkTask(p: Partial<GanttTask> & { id: string; name: string }): GanttTask {
   return {
@@ -84,7 +84,7 @@ describe('buildFlowlineModel', () => {
     const model = buildFlowlineModel(towerTasks(), draft, new Set());
     const bar = model.rows.flatMap((r) => r.bars).find((b) => b.taskId === 'est1')!;
 
-    expect(new Date(bar.start).toISOString()).toBe(D('2025-02-01'));
+    expect(bar.start).toBe(parseScheduleDate('2025-02-01'));
     expect(bar.pending).toBe(true);
     const other = model.rows.flatMap((r) => r.bars).find((b) => b.taskId === 'alv1')!;
     expect(other.pending).toBe(false);
@@ -167,5 +167,49 @@ describe('buildFlowlineModel', () => {
     expect(alv.color.key).toBe('alvenaria');
     expect(est.color.dark).not.toBe(alv.color.dark);
     expect(model.groups.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('filtro de atividades', () => {
+  it('listActivities cataloga só as folhas, com contagem e cor', () => {
+    const opts = listActivities(towerTasks());
+    expect(opts.map((o) => o.key)).toEqual(['Alvenaria', 'Estrutura']); // pavimentos/blocos ficam de fora
+    expect(opts.find((o) => o.key === 'Estrutura')!.count).toBe(2); // est1 + est2
+    expect(opts.find((o) => o.key === 'Alvenaria')!.color.key).toBe('alvenaria');
+  });
+
+  it('activityKey usa o tipo de atividade e cai no nome quando não há tipo', () => {
+    expect(activityKey(mkTask({ id: 'x', name: 'Pintura teto', activityTypeName: 'Pintura' }))).toBe('Pintura');
+    expect(activityKey(mkTask({ id: 'y', name: 'Terraplenagem' }))).toBe('Terraplenagem');
+  });
+
+  it('exibe apenas as atividades selecionadas', () => {
+    const model = buildFlowlineModel(towerTasks(), new Map(), new Set(), new Set(['Alvenaria']));
+    expect(model.rows.flatMap((r) => r.bars).map((b) => b.taskId)).toEqual(['alv1']);
+  });
+
+  it('seleção múltipla soma as atividades escolhidas', () => {
+    const model = buildFlowlineModel(towerTasks(), new Map(), new Set(), new Set(['Alvenaria', 'Estrutura']));
+    expect(model.rows.flatMap((r) => r.bars).map((b) => b.taskId).sort()).toEqual(['alv1', 'est1', 'est2']);
+  });
+
+  it('mantém as linhas de local visíveis (eixo Y da obra não muda com o filtro)', () => {
+    const semFiltro = buildFlowlineModel(towerTasks(), new Map(), new Set());
+    const comFiltro = buildFlowlineModel(towerTasks(), new Map(), new Set(), new Set(['Alvenaria']));
+    expect(comFiltro.rows.map((r) => r.name)).toEqual(semFiltro.rows.map((r) => r.name));
+    // 1º Pavimento (só a alvenaria) segue com barra; 2º Pavimento fica vazio
+    expect(comFiltro.rows.find((r) => r.name === '2º Pavimento')!.bars).toEqual([]);
+  });
+
+  it('a janela de tempo acompanha as atividades filtradas', () => {
+    const model = buildFlowlineModel(towerTasks(), new Map(), new Set(), new Set(['Alvenaria']));
+    expect(model.minDate).toBe(parseScheduleDate('2025-01-11'));
+    expect(model.maxDate).toBe(parseScheduleDate('2025-01-20'));
+  });
+
+  it('filtro vazio (nada selecionado) não quebra o modelo', () => {
+    const model = buildFlowlineModel(towerTasks(), new Map(), new Set(), new Set());
+    expect(model.rows.flatMap((r) => r.bars)).toEqual([]);
+    expect(Number.isFinite(model.minDate)).toBe(true);
   });
 });
