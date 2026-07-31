@@ -11,6 +11,9 @@ import FloorPlanViewer2D from '@/components/viewer/FloorPlanViewer2D';
 import ScheduleBlocksPanel from '@/components/medicao/ScheduleBlocksPanel';
 import HeatmapMatrix, { type HeatRow, type HeatCell } from '@/components/medicao/HeatmapMatrix';
 import { SaveReportModal, ReportHistoryModal } from '@/components/medicao/ReportDialogs';
+import {
+  Toolbar, ToolbarLabeledSelect, ToolbarSeparator, ToolbarToggleGroup,
+} from '@/components/Toolbar';
 import { useRealtime, useScheduleUpdates, useScheduleChanges } from '@/hooks/useRealtime';
 
 type ViewerMode = '3d' | '2d' | 'heatmap';
@@ -174,47 +177,42 @@ function CurvaSSparkline({ points, realized, planned }: { points: CurvaSPoint[];
 
 // ── Toolbar ──────────────────────────────────────────────────────────────────
 
-const selectStyle: React.CSSProperties = {
-  padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 6,
-  background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)', minWidth: 130,
-};
-
 function MedicaoToolbar({ mode, onModeChange, towers, floors, selectedTowerId, selectedFloorId, onTowerChange, onFloorChange, hasIfc }: {
   mode: ViewerMode; onModeChange: (m: ViewerMode) => void; towers: Tower[]; floors: Floor[];
   selectedTowerId: string | null; selectedFloorId: string | null;
   onTowerChange: (id: string | null) => void; onFloorChange: (id: string | null) => void; hasIfc: boolean;
 }) {
   return (
-    <div className="ao-card" style={{ padding: '10px 12px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', borderRadius: 8, border: '1px solid var(--bd)', overflow: 'hidden' }}>
-        <button onClick={() => onModeChange('3d')} className="ao-btn ao-btn-sm"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: mode === '3d' ? 'var(--blue)' : 'transparent', color: mode === '3d' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 0, padding: '6px 12px' }}>
-          <Box size={12} /> Modelo 3D {hasIfc && <span style={{ fontSize: 8, opacity: .85 }}>· IFC</span>}
-        </button>
-        <button onClick={() => onModeChange('2d')} className="ao-btn ao-btn-sm"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: mode === '2d' ? 'var(--blue)' : 'transparent', color: mode === '2d' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 0, padding: '6px 12px' }}>
-          <FileImage size={12} /> Planta 2D
-        </button>
-        <button onClick={() => onModeChange('heatmap')} className="ao-btn ao-btn-sm"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: mode === 'heatmap' ? 'var(--blue)' : 'transparent', color: mode === 'heatmap' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 0, padding: '6px 12px' }}>
-          <LayoutGrid size={12} /> Mapa de calor
-        </button>
-      </div>
-      <div style={{ width: 1, height: 20, background: 'var(--bd)' }} />
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-        <span style={{ color: 'var(--t2)' }}>Torre:</span>
-        <select value={selectedTowerId ?? ''} onChange={(e) => onTowerChange(e.target.value || null)} style={selectStyle}>
-          <option value="">—</option>
-          {towers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      </label>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-        <span style={{ color: 'var(--t2)' }}>Pavto:</span>
-        <select value={selectedFloorId ?? ''} onChange={(e) => onFloorChange(e.target.value || null)} disabled={floors.length === 0} style={selectStyle}>
-          <option value="">—</option>
-          {floors.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-      </label>
+    <div className="ao-card" style={{ padding: '10px 12px', marginBottom: 12 }}>
+      <Toolbar style={{ gap: 12 }}>
+        <ToolbarToggleGroup
+          value={mode}
+          onChange={onModeChange}
+          options={[
+            {
+              value: '3d' as const,
+              icon: <Box size={12} />,
+              label: <>Modelo 3D {hasIfc && <span style={{ fontSize: 8, opacity: .85 }}>· IFC</span>}</>,
+            },
+            { value: '2d' as const, icon: <FileImage size={12} />, label: 'Planta 2D' },
+            { value: 'heatmap' as const, icon: <LayoutGrid size={12} />, label: 'Mapa de calor' },
+          ]}
+        />
+        <ToolbarSeparator />
+        <ToolbarLabeledSelect
+          label="Torre:"
+          value={selectedTowerId}
+          onChange={onTowerChange}
+          options={towers.map((t) => ({ value: t.id, label: t.name }))}
+        />
+        <ToolbarLabeledSelect
+          label="Pavto:"
+          value={selectedFloorId}
+          onChange={onFloorChange}
+          disabled={floors.length === 0}
+          options={floors.map((f) => ({ value: f.id, label: f.name }))}
+        />
+      </Toolbar>
     </div>
   );
 }

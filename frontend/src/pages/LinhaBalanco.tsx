@@ -2,7 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Save, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2, Settings2, Filter, Search,
   GitBranch, Layers, History, ChevronDown, ChevronRight, X, AlertTriangle, RefreshCw,
+  CalendarRange,
 } from 'lucide-react';
+import {
+  Toolbar, ToolbarButton, ToolbarSelect, ToolbarSeparator, ToolbarSpacer, ToolbarToggle,
+} from '@/components/Toolbar';
 import { useStore } from '@/store';
 import { useHistoryStore } from '@/store/historyStore';
 import { scheduleApi, baselineApi } from '@/services/api';
@@ -344,19 +348,21 @@ export default function LinhaBalanco() {
       )}
 
       {/* ── Barra superior ── */}
-      <div className="ao-card" style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div className="ao-card" style={{ padding: '8px 12px' }}>
+        <Toolbar style={{ gap: 8 }}>
         <div style={{ fontWeight: 800, fontSize: 13 }}>
           {currentProject.name}
           <span style={{ color: 'var(--t3)', fontWeight: 600, fontSize: 11 }}> · Linha de Balanço</span>
         </div>
 
-        <select
+        <ToolbarSelect
+          icon={<CalendarRange size={12} />}
           value={scaleIdx}
-          onChange={(e) => applyScale(Number(e.target.value))}
-          style={{ padding: '4px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s0)', color: 'var(--t1)' }}
-        >
-          {SCALE_PRESETS.map((s, i) => <option key={s.label} value={i}>Escala: {s.label}</option>)}
-        </select>
+          onChange={(v) => applyScale(Number(v))}
+          options={SCALE_PRESETS.map((s, i) => ({ value: i, label: s.label }))}
+          title="Escala de tempo do gráfico"
+          ariaLabel="Escala de tempo"
+        />
 
         <div style={{ position: 'relative' }}>
           <button
@@ -364,10 +370,10 @@ export default function LinhaBalanco() {
             className="ao-btn ao-btn-sm"
             onClick={() => setShowActivityMenu((v) => !v)}
             title="Escolher quais atividades aparecem no gráfico"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              ...(activityFilter ? { background: 'var(--blu-bg, #eff6ff)', borderColor: 'var(--blue, #3b82f6)', color: 'var(--blue, #1d4ed8)' } : {}),
-            }}
+            aria-pressed={!!activityFilter}
+            style={activityFilter
+              ? { background: 'var(--blu-bg, #eff6ff)', borderColor: 'var(--blue)', color: 'var(--blue)' }
+              : undefined}
           >
             <Filter size={12} /> Filtro de Atividades
             {activityFilter && (
@@ -386,8 +392,7 @@ export default function LinhaBalanco() {
         </div>
 
         <div style={{ position: 'relative' }}>
-          <button ref={displayBtnRef} className="ao-btn ao-btn-sm" onClick={() => setShowDisplayMenu((v) => !v)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <button ref={displayBtnRef} className="ao-btn ao-btn-sm" onClick={() => setShowDisplayMenu((v) => !v)}>
             <Settings2 size={12} /> Exibição
           </button>
           {showDisplayMenu && (
@@ -395,49 +400,46 @@ export default function LinhaBalanco() {
           )}
         </div>
 
-        <div style={{ width: 1, height: 18, background: 'var(--bd)' }} />
+        <ToolbarSeparator />
 
-        <ToggleBtn active={display.showBaseline} icon={<Layers size={12} />} label="Baseline"
+        <ToolbarToggle active={display.showBaseline} icon={<Layers size={12} />} label="Baseline"
           onClick={() => setDisplay((d) => ({ ...d, showBaseline: !d.showBaseline }))} />
-        <ToggleBtn active={display.showDeps} icon={<GitBranch size={12} />} label="Dependências"
+        <ToolbarToggle active={display.showDeps} icon={<GitBranch size={12} />} label="Dependências"
           onClick={() => setDisplay((d) => ({ ...d, showDeps: !d.showDeps }))} />
 
-        <div style={{ width: 1, height: 18, background: 'var(--bd)' }} />
+        <ToolbarSeparator />
 
-        <button className="ao-btn ao-btn-sm" title="Diminuir zoom" onClick={() => engineRef.current?.zoomOut()}><ZoomOut size={13} /></button>
-        <button className="ao-btn ao-btn-sm" title="Aumentar zoom" onClick={() => engineRef.current?.zoomIn()}><ZoomIn size={13} /></button>
-        <button className="ao-btn ao-btn-sm" title="Ajustar à tela" onClick={() => engineRef.current?.fit()}><Maximize2 size={13} /></button>
+        <ToolbarButton icon={<ZoomOut />} ariaLabel="Diminuir zoom" title="Diminuir zoom" onClick={() => engineRef.current?.zoomOut()} />
+        <ToolbarButton icon={<ZoomIn />} ariaLabel="Aumentar zoom" title="Aumentar zoom" onClick={() => engineRef.current?.zoomIn()} />
+        <ToolbarButton icon={<Maximize2 />} ariaLabel="Ajustar à tela" title="Ajustar à tela" onClick={() => engineRef.current?.fit()} />
 
-        <div style={{ width: 1, height: 18, background: 'var(--bd)' }} />
+        <ToolbarSeparator />
 
-        <button className="ao-btn ao-btn-sm" title="Desfazer (Ctrl+Z)" disabled={historyStore.past.length === 0}
-          onClick={() => historyStore.undo()}><Undo2 size={13} /></button>
-        <button className="ao-btn ao-btn-sm" title="Refazer (Ctrl+Y)" disabled={historyStore.future.length === 0}
-          onClick={() => historyStore.redo()}><Redo2 size={13} /></button>
+        <ToolbarButton icon={<Undo2 />} ariaLabel="Desfazer" title="Desfazer (Ctrl+Z)"
+          disabled={historyStore.past.length === 0} onClick={() => historyStore.undo()} />
+        <ToolbarButton icon={<Redo2 />} ariaLabel="Refazer" title="Refazer (Ctrl+Y)"
+          disabled={historyStore.future.length === 0} onClick={() => historyStore.redo()} />
 
-        <button className="ao-btn ao-btn-sm" title="Histórico de reprogramações" onClick={openHistory}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <History size={12} /> Histórico
-        </button>
+        <ToolbarButton icon={<History />} label="Histórico" title="Histórico de reprogramações" onClick={openHistory} />
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {draft.size > 0 && (
-            <span style={{
-              background: 'var(--amb-bg, #fef3c7)', color: 'var(--amber, #92400e)', border: '1px solid var(--amber, #f59e0b)',
-              borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700,
-            }}>
-              ● {draft.size} alteração(ões) pendente(s)
-            </span>
-          )}
-          <button
-            className="ao-btn ao-btn-primary ao-btn-sm"
-            disabled={draft.size === 0 || saving}
-            onClick={() => setShowSave(true)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <Save size={13} /> Gravar Report
-          </button>
-        </div>
+        <ToolbarSpacer />
+
+        {draft.size > 0 && (
+          <span style={{
+            background: 'var(--amb-bg, #fef3c7)', color: 'var(--amber, #92400e)', border: '1px solid var(--amber, #f59e0b)',
+            borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700,
+          }}>
+            ● {draft.size} alteração(ões) pendente(s)
+          </span>
+        )}
+        <ToolbarButton
+          icon={<Save />}
+          label="Gravar Report"
+          variant="primary"
+          disabled={draft.size === 0 || saving}
+          onClick={() => setShowSave(true)}
+        />
+        </Toolbar>
       </div>
 
       {/* ── Área principal: árvore + canvas ── */}
@@ -583,21 +585,6 @@ export default function LinhaBalanco() {
 }
 
 // ── Componentes auxiliares ────────────────────────────────────────────────────
-
-function ToggleBtn({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      className="ao-btn ao-btn-sm"
-      onClick={onClick}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        ...(active ? { background: 'var(--blu-bg, #eff6ff)', borderColor: 'var(--blue, #3b82f6)', color: 'var(--blue, #1d4ed8)' } : {}),
-      }}
-    >
-      {icon} {label}
-    </button>
-  );
-}
 
 /**
  * Dropdown de filtro de atividades: busca + checkboxes multi-seleção.

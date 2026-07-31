@@ -156,6 +156,107 @@ export function ToolbarSelect<T extends string | number>({
   );
 }
 
+/**
+ * Select precedido de um rótulo textual (ex.: `Torre: [—]`). Usado onde um
+ * ícone seria ambíguo — dois selects do mesmo domínio pedem palavras, não
+ * pictogramas parecidos.
+ */
+export function ToolbarLabeledSelect<T extends string>({
+  label, value, onChange, options, disabled, placeholder = '—',
+}: {
+  label: string;
+  value: T | null;
+  onChange: (v: string | null) => void;
+  options: Array<{ value: T; label: string }>;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+      <span style={{ color: 'var(--t2)' }}>{label}</span>
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        disabled={disabled}
+        style={{ ...FIELD_STYLE, paddingLeft: 8, width: 'auto', cursor: disabled ? 'not-allowed' : 'pointer' }}
+      >
+        <option value="">{placeholder}</option>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/**
+ * Botão de alternância (liga/desliga). Diferente do `ToolbarToggleGroup`: aqui
+ * cada botão é independente, e o estado ligado é sinalizado por realce suave —
+ * não pelo azul sólido do `primary`, reservado à ação principal da tela.
+ */
+export function ToolbarToggle({ active, icon, label, onClick, title }: {
+  active: boolean;
+  icon?: ReactNode;
+  label: ReactNode;
+  onClick: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="ao-btn ao-btn-sm"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      style={active
+        ? { background: 'var(--blu-bg, #eff6ff)', borderColor: 'var(--blue)', color: 'var(--blue)' }
+        : undefined}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Grupo segmentado — seleção exclusiva entre modos de visualização. Os botões
+ * ficam colados numa moldura única, sinalizando que são alternativas de um
+ * mesmo eixo, não ações independentes.
+ */
+export function ToolbarToggleGroup<T extends string>({ value, onChange, options }: {
+  value: T;
+  onChange: (v: T) => void;
+  options: Array<{ value: T; label: ReactNode; icon?: ReactNode; title?: string }>;
+}) {
+  return (
+    <div
+      role="group"
+      style={{ display: 'flex', borderRadius: 'var(--r-md)', border: '1px solid var(--bd)', overflow: 'hidden' }}
+    >
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className="ao-btn ao-btn-sm"
+            onClick={() => onChange(o.value)}
+            title={o.title}
+            aria-pressed={active}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              background: active ? 'var(--blue)' : 'transparent',
+              color: active ? '#fff' : 'var(--t2)',
+              border: 'none', borderRadius: 0,
+            }}
+          >
+            {o.icon}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── ToolbarMenu ───────────────────────────────────────────────────────────────
 
 export interface ToolbarMenuItem {

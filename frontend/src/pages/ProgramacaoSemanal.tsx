@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  RefreshCw, Plus, FileText, Download, CheckCircle2, ChevronLeft, ChevronRight, History, Trash2,
+  RefreshCw, Plus, FileText, Download, CheckCircle2, ChevronLeft, ChevronRight, History, Trash2, Save,
 } from 'lucide-react';
+import {
+  Toolbar, ToolbarButton, ToolbarMenu, ToolbarSpacer,
+} from '../components/Toolbar';
 import { useStore } from '../store';
 import { contractorsApi, restrictionTypesApi, weeklyPlanningApi } from '../services/api';
 import type {
@@ -39,80 +41,6 @@ const labelStyle: React.CSSProperties = {
   letterSpacing: '0.6px', display: 'block', marginBottom: 3,
 };
 
-// ── Menu suspenso simples ─────────────────────────────────────────────────────
-function DropMenu({ label, icon, items, disabled }: {
-  label: string;
-  icon: React.ReactNode;
-  items: Array<{ label: string; onClick: () => void }>;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Posiciona o menu (fixed) a partir do retângulo do botão. Renderizado em portal
-  // p/ escapar do overflow:hidden do card e do scroll de .ao-content.
-  const place = useCallback(() => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    place();
-    const onScroll = () => place();
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-      document.removeEventListener('mousedown', onDoc);
-    };
-  }, [open, place]);
-
-  return (
-    <>
-      <button ref={btnRef} className="ao-btn ao-btn-sm" onClick={() => setOpen((o) => !o)} disabled={disabled}>
-        {icon} {label} <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
-      </button>
-      {open && pos && createPortal(
-        <div
-          ref={menuRef}
-          style={{
-            position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000, minWidth: 170,
-            background: 'var(--s0)', border: '1px solid var(--bd2)', borderRadius: 'var(--r-lg)',
-            boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
-          }}
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => { setOpen(false); item.onClick(); }}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left', fontSize: 11.5, fontWeight: 500,
-                padding: '8px 12px', border: 'none', background: 'none', color: 'var(--t2)',
-                cursor: 'pointer', fontFamily: 'var(--font)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--s1)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
 
 // ── Página ────────────────────────────────────────────────────────────────────
 export default function ProgramacaoSemanal() {
@@ -372,9 +300,12 @@ export default function ProgramacaoSemanal() {
       <div className="ao-card">
         <div className="ao-card-hdr" style={{ minHeight: 52, flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="ao-btn ao-btn-sm" onClick={() => setProgramIndex((i) => Math.max(0, i - 1))} disabled={programIndex <= 0 || loading} aria-label="Semana anterior">
-              <ChevronLeft size={13} />
-            </button>
+            <ToolbarButton
+              icon={<ChevronLeft />}
+              ariaLabel="Semana anterior"
+              onClick={() => setProgramIndex((i) => Math.max(0, i - 1))}
+              disabled={programIndex <= 0 || loading}
+            />
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--t1)', lineHeight: 1.2 }}>
                 {loading ? 'Carregando…' : meta
@@ -387,9 +318,12 @@ export default function ProgramacaoSemanal() {
                 </div>
               )}
             </div>
-            <button className="ao-btn ao-btn-sm" onClick={() => setProgramIndex((i) => Math.min(programs.length - 1, i + 1))} disabled={programIndex >= programs.length - 1 || loading} aria-label="Próxima semana">
-              <ChevronRight size={13} />
-            </button>
+            <ToolbarButton
+              icon={<ChevronRight />}
+              ariaLabel="Próxima semana"
+              onClick={() => setProgramIndex((i) => Math.min(programs.length - 1, i + 1))}
+              disabled={programIndex >= programs.length - 1 || loading}
+            />
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
@@ -433,63 +367,79 @@ export default function ProgramacaoSemanal() {
         </div>
 
         {/* ── Toolbar ─────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 14px', flexWrap: 'wrap' }}>
+        <Toolbar style={{ gap: 8, padding: '10px 14px' }}>
           {!meta && !loading && (
-            <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handleCreateWeek} disabled={busy !== null}>
-              <Plus size={12} /> {busy === 'create' ? 'Criando…' : 'Criar programação da semana'}
-            </button>
+            <ToolbarButton
+              icon={<Plus />}
+              label={busy === 'create' ? 'Criando…' : 'Criar programação da semana'}
+              variant="primary"
+              onClick={handleCreateWeek}
+              disabled={busy !== null}
+            />
           )}
           {program && (
             <>
-              <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handleRefresh} disabled={busy !== null || readOnly}>
-                <RefreshCw size={12} /> {busy === 'refresh' ? 'Atualizando…' : 'Atualizar Programação'}
-              </button>
-              <button className="ao-btn ao-btn-sm" onClick={() => setShowNewActivity(true)} disabled={busy !== null || readOnly}>
-                <Plus size={12} /> Nova Atividade
-              </button>
-              <DropMenu
+              <ToolbarButton
+                icon={<RefreshCw />}
+                label={busy === 'refresh' ? 'Atualizando…' : 'Atualizar Programação'}
+                variant="primary"
+                onClick={handleRefresh}
+                disabled={busy !== null || readOnly}
+              />
+              <ToolbarButton
+                icon={<Plus />}
+                label="Nova Atividade"
+                onClick={() => setShowNewActivity(true)}
+                disabled={busy !== null || readOnly}
+              />
+              <ToolbarMenu
                 label="Report"
-                icon={<FileText size={12} />}
+                icon={<FileText />}
                 disabled={busy !== null}
+                align="right"
                 items={[
-                  { label: 'Gravar Report', onClick: handleReport },
-                  { label: 'Histórico Report', onClick: openHistory },
+                  { label: 'Gravar Report', icon: <Save size={12} />, onClick: handleReport },
+                  { label: 'Histórico Report', icon: <History size={12} />, onClick: openHistory },
                 ]}
               />
-              <DropMenu
+              <ToolbarMenu
                 label="Exportar"
-                icon={<Download size={12} />}
+                icon={<Download />}
                 disabled={busy !== null || activities.length === 0}
+                align="right"
                 items={[
                   { label: 'Excel (.xlsx)', onClick: () => exportToExcel(program, activities, restrictions) },
                   { label: 'PDF', onClick: () => exportToPdf(program, activities, restrictions) },
                 ]}
               />
-              <div style={{ flex: 1 }} />
+              <ToolbarSpacer />
               <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>
                 {activities.length} atividade(s) · {pendingRestrictions} restrição(ões) pendente(s)
               </span>
               {program.status === 'RASCUNHO' && (
-                <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={handlePublish} disabled={busy !== null || activities.length === 0}>
-                  <CheckCircle2 size={12} /> {busy === 'publish' ? 'Publicando…' : 'Publicar Programação'}
-                </button>
+                <ToolbarButton
+                  icon={<CheckCircle2 />}
+                  label={busy === 'publish' ? 'Publicando…' : 'Publicar Programação'}
+                  variant="primary"
+                  onClick={handlePublish}
+                  disabled={busy !== null || activities.length === 0}
+                />
               )}
               {program.status === 'PUBLICADA' && (
-                <button
-                  className="ao-btn ao-btn-sm"
+                <ToolbarButton
+                  icon={<CheckCircle2 />}
+                  label={busy === 'close' ? 'Fechando…' : 'Publicar Fechamento'}
                   onClick={handleClose}
                   disabled={busy !== null}
                   style={{ background: 'var(--green)', borderColor: 'var(--green)', color: '#fff' }}
-                >
-                  <CheckCircle2 size={12} /> {busy === 'close' ? 'Fechando…' : 'Publicar Fechamento'}
-                </button>
+                />
               )}
               {readOnly && (
                 <span className="ao-badge ao-bg">Semana fechada — somente leitura</span>
               )}
             </>
           )}
-        </div>
+        </Toolbar>
       </div>
 
       {/* ── Tabela ────────────────────────────────────────────────── */}

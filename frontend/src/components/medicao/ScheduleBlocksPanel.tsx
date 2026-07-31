@@ -3,6 +3,7 @@ import { Save, History, Check, CornerDownRight, AlertTriangle } from 'lucide-rea
 import type { GanttTask } from '@/types';
 import { buildForest, indexNodes, subtreeProgress, leafStats, FLOOR_PATTERN, type WbsNode } from '@/lib/wbs-tree';
 import { statusLabel, statusBadgeClass, STATUS_COLORS, inferDiscipline, DISCIPLINE_ORDER, type Discipline } from '@/lib/measurement-helpers';
+import { Toolbar, ToolbarButton } from '@/components/Toolbar';
 
 export interface ScheduleBlocksPanelProps {
   tasks: GanttTask[];
@@ -68,22 +69,32 @@ export default function ScheduleBlocksPanel({
       {/* Header: título + Report */}
       <div className="ao-card-hdr" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
         <span className="ao-card-title">Atividades {canteiroMode && <span style={{ fontSize: 10, color: 'var(--amber)' }}>· Canteiro</span>}</span>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Toolbar>
           {childrenAreLeaves && (
-            <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={markAllDone} disabled={saving} title="Marcar todas as atividades como concluídas">
-              <Check size={12} /> Tudo concluído
-            </button>
+            <ToolbarButton
+              icon={<Check />}
+              label="Tudo concluído"
+              onClick={markAllDone}
+              disabled={saving}
+              title="Marcar todas as atividades como concluídas"
+              style={{ background: 'var(--grn-bg)', color: 'var(--grn-t)', borderColor: 'var(--grn-bd)' }}
+            />
           )}
-          <button className="ao-btn ao-btn-sm ao-btn-primary" onClick={onSaveReport} disabled={saving}
+          <ToolbarButton
+            icon={<Save />}
+            label={saving ? 'Gravando…' : 'Gravar Report'}
+            variant="primary"
+            onClick={onSaveReport}
+            disabled={saving}
             title="Gravar Report — consolida o avanço físico no cronograma"
-            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px' }}>
-            <Save size={12} /> {saving ? 'Gravando…' : 'Gravar Report'}
-          </button>
-          <button className="ao-btn ao-btn-sm" onClick={onOpenHistory} title="Histórico de Reports"
-            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}>
-            <History size={12} /> Histórico
-          </button>
-        </div>
+          />
+          <ToolbarButton
+            icon={<History />}
+            label="Histórico"
+            onClick={onOpenHistory}
+            title="Histórico de Reports"
+          />
+        </Toolbar>
       </div>
 
       {/* Breadcrumb de navegação */}
