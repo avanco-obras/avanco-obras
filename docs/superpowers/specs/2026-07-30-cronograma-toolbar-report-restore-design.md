@@ -75,7 +75,7 @@ Tamanho, fonte e espaçamento passam a viver em um lugar só: um botão presente
 | 6 | Filtros avançados | `SlidersHorizontal` | Mantém realce quando há filtro ativo |
 | 7 | Nova atividade | `Plus` | Variante `primary` |
 | 8 | Remover · Adicionar recuo | `ArrowLeft` · `ArrowRight` | Ícone puro, com `aria-label` |
-| 9 | Colunas | `Columns3` | Menu |
+| 9 | Colunas | `Columns` | Menu (`Columns3` não existe no lucide-react 0.294) |
 | 10 | Exportar | `Download` | **Gera `.xlsx`; CSV removido** |
 | 11 | Importar | `Upload` | Inalterado |
 | 12 | Baseline | `Flag` | Menu; perde o roxo |
