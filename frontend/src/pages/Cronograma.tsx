@@ -5,6 +5,10 @@ import {
   Flag, FileText, Save, History,
 } from 'lucide-react';
 import { Toolbar, ToolbarButton, ToolbarMenu, ToolbarSearch, ToolbarSelect } from '@/components/Toolbar';
+import {
+  DEP_TYPE_PT_TO_DB, formatDepsAsText, formatSuccessorsText,
+} from '@/lib/schedule-deps';
+import { buildScheduleWorkbook, scheduleExportFilename } from '@/lib/schedule-export';
 import { useStore } from '@/store';
 import { scheduleApi, baselineApi, progressApi } from '@/services/api';
 import { useHistoryStore } from '@/store/historyStore';
@@ -95,10 +99,6 @@ function compareWbs(a: string, b: string): number {
   return 0;
 }
 
-// Dependency type mapping: PT (português) → DB
-const DEP_TYPE_PT_TO_DB: Record<string, string> = { 'TI':'FS', 'II':'SS', 'TT':'FF', 'IT':'SF' };
-const DEP_TYPE_DB_TO_PT: Record<string, string> = { 'FS':'TI', 'SS':'II', 'FF':'TT', 'SF':'IT' };
-
 interface ParsedDep { rowId: number; type: string; lag: number; }
 interface ParseResult { deps: ParsedDep[]; errors: string[]; }
 
@@ -120,25 +120,6 @@ function parsePredecessorText(text: string, tasks: GanttTask[]): ParseResult {
     deps.push({ rowId, type, lag });
   }
   return { deps, errors };
-}
-
-function formatDepsAsText(task: GanttTask, tasks: GanttTask[]): string {
-  if (!task.predecessorDeps?.length) return '';
-  return task.predecessorDeps.map(dep => {
-    const pred = tasks.find(t => t.id === dep.predecessorId);
-    const rowId = pred?.rowId ?? '?';
-    const type = DEP_TYPE_DB_TO_PT[dep.type] ?? dep.type;
-    const lag = dep.lagDays > 0 ? `+${dep.lagDays}` : dep.lagDays < 0 ? `${dep.lagDays}` : '';
-    return type === 'TI' && lag === '' ? `${rowId}` : `${rowId}${type}${lag}`;
-  }).join(';');
-}
-
-function formatSuccessorsText(task: GanttTask, tasks: GanttTask[]): string {
-  if (!task.successorDeps?.length) return '';
-  return task.successorDeps.map(dep => {
-    const succ = tasks.find(t => t.id === dep.successorId);
-    return succ?.rowId ?? '?';
-  }).join(';');
 }
 
 function addWorkDays(date: Date, days: number): Date {
@@ -3188,18 +3169,20 @@ export default function Cronograma() {
   }
 
   function handleExport() {
-    if (tasks.length === 0) return;
-    const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
-    const rows = tasks.map((t) =>
-      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.physicalProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
-    );
-    const csv = [header, ...rows].join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'cronograma.csv'; a.click();
-    URL.revokeObjectURL(url);
-    addToast({ type: 'success', title: 'Exportado', description: 'CSV gerado com sucesso.' });
+    if (tasks.length === 0) {
+      addToast({ type: 'warning', title: 'Nada para exportar', description: 'O cronograma está vazio.' });
+      return;
+    }
+    // Exporta as colunas visíveis, na ordem da tabela.
+    const columns = COL_DEFS
+      .filter(col => visibleCols.has(col.key))
+      .map(col => ({ key: col.key, label: col.label }));
+
+    const wb = buildScheduleWorkbook(tasks, columns);
+    const filename = scheduleExportFilename(currentProject?.name ?? 'projeto');
+    xlsx.writeFile(wb, filename);
+
+    addToast({ type: 'success', title: 'Exportado', description: `${filename} gerado com ${tasks.length} atividade(s).` });
   }
 
   // Column resize handlers
