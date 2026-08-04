@@ -32,7 +32,9 @@ export function AppRoutes() {
           </PrivateRoute>
         }
       >
-        <Route index element={<Navigate to="/cadastro" replace />} />
+        {/* Entrada padrão: Dashboard. Sem projeto, o AppLayout mostra o
+            estado vazio com CTA para o Cadastro. */}
+        <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="cadastro" element={<Cadastro />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="cronograma" element={<Cronograma />} />
