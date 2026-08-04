@@ -230,11 +230,14 @@ export function AppLayout() {
       }
 
       if (isInput) return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o) }
-      if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); navigate('/dashboard') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); navigate('/cronograma') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); navigate('/medicao') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); navigate('/programacao-semanal') }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o); return }
+      // ⌘/Ctrl + 1..N → itens do menu principal, na mesma ordem em que aparecem.
+      if (e.metaKey || e.ctrlKey) {
+        const n = Number(e.key)
+        if (Number.isInteger(n) && n >= 1 && n <= NAV_MAIN.length) {
+          e.preventDefault(); navigate(NAV_MAIN[n - 1].to)
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
