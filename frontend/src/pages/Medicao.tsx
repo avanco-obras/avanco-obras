@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Box, FileImage, LayoutGrid } from 'lucide-react';
 import { useStore } from '@/store';
+import { NoProjectState } from '@/components/NoProjectState';
 import { towersApi, measurementsApi, scheduleApi, uploadsApi, progressApi } from '@/services/api';
 import type { Tower, Floor, Unit, GanttTask, ProjectReport, ProjectMetrics, ReportComparison, CurvaSPoint } from '@/types';
 import {
@@ -576,14 +577,7 @@ export default function Medicao() {
   }, []);
 
   if (!currentProject) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
-        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
-          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
-          <p>Escolha um projeto no seletor acima para registrar medições.</p>
-        </div>
-      </div>
-    );
+    return <NoProjectState message="Escolha um projeto no seletor acima para registrar medições." />;
   }
 
   return (

@@ -6,6 +6,7 @@ import {
   Toolbar, ToolbarButton, ToolbarMenu, ToolbarSpacer,
 } from '../components/Toolbar';
 import { useStore } from '../store';
+import { NoProjectState } from '../components/NoProjectState';
 import { contractorsApi, restrictionTypesApi, weeklyPlanningApi } from '../services/api';
 import type {
   Contractor, RestrictionType, WeeklyActivity, WeeklyProgram, WeeklyRestriction, WeeklySnapshotMeta,
@@ -282,11 +283,7 @@ export default function ProgramacaoSemanal() {
 
   // ── Guard ─────────────────────────────────────────────────────────────────
   if (!currentProject) {
-    return (
-      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--t2)' }}>
-        <p style={{ fontSize: 14 }}>Selecione um empreendimento para visualizar a programação semanal.</p>
-      </div>
-    );
+    return <NoProjectState message="Selecione um empreendimento para visualizar a programação semanal." />;
   }
 
   const meta = programs[programIndex];

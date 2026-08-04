@@ -13,6 +13,7 @@ import type { Project } from '@/types'
 import { useHistoryStore } from '@/store/historyStore'
 import { jsPDF } from 'jspdf'
 import type { LucideIcon } from 'lucide-react'
+import { NoProjectState } from '@/components/NoProjectState'
 
 // ── Route registry — fonte única de nome/ícone/crumb por rota ─────────────────
 // Menu principal, menu de configuração, breadcrumb e command palette derivam
@@ -636,20 +637,7 @@ export function AppLayout() {
           {/* Page content */}
           <div className="ao-content ao-fade-in">
             {!currentProject && location.pathname !== '/cadastro' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: 16, textAlign: 'center' }}>
-                <div style={{ width: 48, height: 48, background: 'var(--s2)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Building2 style={{ width: 24, height: 24, color: 'var(--t3)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--t1)', marginBottom: 6 }}>Nenhum projeto selecionado</div>
-                  <div style={{ fontSize: 12, color: 'var(--t3)', maxWidth: 280, lineHeight: 1.5 }}>
-                    Selecione um projeto no menu lateral ou cadastre um novo empreendimento.
-                  </div>
-                </div>
-                <button className="ao-btn ao-btn-primary" onClick={() => navigate('/cadastro')}>
-                  <Building2 style={{ width: 13, height: 13 }} /> Cadastrar projeto
-                </button>
-              </div>
+              <NoProjectState action={{ label: 'Cadastrar projeto', onClick: () => navigate('/cadastro') }} />
             ) : (
               <Outlet />
             )}

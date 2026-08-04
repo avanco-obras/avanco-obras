@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, AlertCircle } from 'lucide-react';
 import { useStore } from '@/store';
+import { NoProjectState } from '@/components/NoProjectState';
 import { dashboardApi, scheduleApi, weeklyPlanningApi } from '@/services/api';
 import { formatDate } from '@/utils/calculations';
 import {
@@ -337,30 +338,7 @@ export default function Dashboard() {
 
   // ── No project selected ───────────────────────────────────────────────────
   if (!currentProject) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '60vh',
-          gap: 16,
-          textAlign: 'center',
-          padding: '0 16px',
-        }}
-      >
-        <AlertTriangle size={56} color={C.t3} />
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 600, color: C.t1, marginBottom: 4 }}>
-            Selecione um empreendimento
-          </h2>
-          <p style={{ fontSize: 14, color: C.t2 }}>
-            Escolha um projeto no seletor acima para visualizar o dashboard.
-          </p>
-        </div>
-      </div>
-    );
+    return <NoProjectState message="Escolha um projeto no seletor acima para visualizar o dashboard." />;
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
