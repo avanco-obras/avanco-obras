@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useStore } from '../../store';
+import { useConfirm } from '../ConfirmDialog';
 import { contractorsApi, restrictionTypesApi } from '../../services/api';
 import type { Contractor, RestrictionType } from '../../types';
 
@@ -18,6 +19,7 @@ const rowStyle: React.CSSProperties = {
 
 export function ContractorsCard() {
   const { currentProject, addToast } = useStore();
+  const confirm = useConfirm();
   const projectId = currentProject?.id;
   const [items, setItems] = useState<Contractor[]>([]);
   const [name, setName] = useState('');
@@ -57,7 +59,12 @@ export function ContractorsCard() {
   };
 
   const handleRemove = async (item: Contractor) => {
-    if (!window.confirm(`Remover a empreiteira "${item.name}"? Atividades já vinculadas ficam sem empresa.`)) return;
+    if (!(await confirm({
+      title: 'Remover empreiteira',
+      message: `Remover a empreiteira "${item.name}"? Atividades já vinculadas ficam sem empresa.`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await contractorsApi.remove(item.id);
       await load();
@@ -117,6 +124,7 @@ export function ContractorsCard() {
 
 export function RestrictionTypesCard() {
   const { currentProject, addToast } = useStore();
+  const confirm = useConfirm();
   const projectId = currentProject?.id;
   const [items, setItems] = useState<RestrictionType[]>([]);
   const [name, setName] = useState('');
@@ -147,7 +155,12 @@ export function RestrictionTypesCard() {
   };
 
   const handleRemove = async (item: RestrictionType) => {
-    if (!window.confirm(`Remover o tipo "${item.name}"? Restrições existentes ficam sem tipo.`)) return;
+    if (!(await confirm({
+      title: 'Remover tipo de restrição',
+      message: `Remover o tipo "${item.name}"? Restrições existentes ficam sem tipo.`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await restrictionTypesApi.remove(item.id);
       await load();

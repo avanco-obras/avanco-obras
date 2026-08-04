@@ -7,6 +7,7 @@ import {
 } from '../components/Toolbar';
 import { useStore } from '../store';
 import { NoProjectState } from '../components/NoProjectState';
+import { useConfirm } from '../components/ConfirmDialog';
 import { contractorsApi, restrictionTypesApi, weeklyPlanningApi } from '../services/api';
 import type {
   Contractor, RestrictionType, WeeklyActivity, WeeklyProgram, WeeklyRestriction, WeeklySnapshotMeta,
@@ -46,6 +47,7 @@ const labelStyle: React.CSSProperties = {
 // ── Página ────────────────────────────────────────────────────────────────────
 export default function ProgramacaoSemanal() {
   const { currentProject, addToast } = useStore();
+  const confirm = useConfirm();
   const projectId = currentProject?.id;
 
   const [programs, setPrograms] = useState<WeeklyProgram[]>([]);
@@ -151,7 +153,11 @@ export default function ProgramacaoSemanal() {
 
   const handlePublish = async () => {
     if (!program) return;
-    if (!window.confirm('Publicar a programação desta semana? O conjunto publicado passa a ser a base do PPC.')) return;
+    if (!(await confirm({
+      title: 'Publicar programação',
+      message: 'Publicar a programação desta semana? O conjunto publicado passa a ser a base do PPC.',
+      confirmLabel: 'Publicar',
+    }))) return;
     setBusy('publish');
     try {
       await weeklyPlanningApi.publish(program.id);
@@ -166,9 +172,11 @@ export default function ProgramacaoSemanal() {
 
   const handleClose = async () => {
     if (!program) return;
-    if (!window.confirm(
-      'Publicar o fechamento da semana?\n\nIsso congela a semana (somente leitura), grava os indicadores e cria automaticamente a próxima programação com as atividades não concluídas.',
-    )) return;
+    if (!(await confirm({
+      title: 'Publicar fechamento',
+      message: 'Publicar o fechamento da semana?\n\nIsso congela a semana (somente leitura), grava os indicadores e cria automaticamente a próxima programação com as atividades não concluídas.',
+      confirmLabel: 'Publicar fechamento',
+    }))) return;
     setBusy('close');
     try {
       const result = await weeklyPlanningApi.close(program.id);
@@ -226,7 +234,12 @@ export default function ProgramacaoSemanal() {
 
   const removeActivity = async (activity: WeeklyActivity) => {
     if (!program) return;
-    if (!window.confirm(`Remover a atividade "${activity.activityName}" da programação?`)) return;
+    if (!(await confirm({
+      title: 'Remover atividade',
+      message: `Remover a atividade "${activity.activityName}" da programação?`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await weeklyPlanningApi.removeActivity(activity.id);
       setProgram((prev) => prev && {
@@ -271,7 +284,12 @@ export default function ProgramacaoSemanal() {
 
   const removeRestriction = async (restriction: WeeklyRestriction) => {
     if (!program) return;
-    if (!window.confirm(`Remover a restrição "${restriction.description}"?`)) return;
+    if (!(await confirm({
+      title: 'Remover restrição',
+      message: `Remover a restrição "${restriction.description}"?`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await weeklyPlanningApi.removeRestriction(restriction.id);
       await loadProgram(program.id);

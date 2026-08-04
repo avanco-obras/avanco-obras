@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
 import {
   FileText,
@@ -131,6 +132,7 @@ function sketchfabEmbedUrl(url: string): string {
 
 export default function Cadastro() {
   const { currentProject, setCurrentProject, addToast } = useStore();
+  const confirm = useConfirm();
 
   const [form, setForm] = useState<ProjectFormData>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
@@ -322,7 +324,12 @@ export default function Cadastro() {
 
   async function handleRemoveIfc() {
     if (!ifcUpload) return;
-    if (!window.confirm('Remover o modelo IFC atual?')) return;
+    if (!(await confirm({
+      title: 'Remover modelo IFC',
+      message: 'Remover o modelo IFC atual?',
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await uploadsApi.delete(ifcUpload.id);
       setIfcUpload(null);

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { Upload, Trash2 } from 'lucide-react';
 import { uploadsApi } from '@/services/api';
 import { useStore } from '@/store';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 /** Extrai a mensagem amigável vinda do backend (Nest) de um erro do axios. */
 function friendlyError(err: unknown, fallback: string): string {
@@ -35,6 +36,7 @@ export default function FloorPlanViewer2D({
   const [deleting, setDeleting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const addToast = useStore((s) => s.addToast);
+  const confirm = useConfirm();
 
   const loadPlans = useCallback(async () => {
     if (!floorId) {
@@ -99,9 +101,12 @@ export default function FloorPlanViewer2D({
 
   async function handleDelete() {
     if (!activePlan) return;
-    if (!window.confirm(`Remover a planta "${activePlan.fileName}"? Esta ação não pode ser desfeita.`)) {
-      return;
-    }
+    if (!(await confirm({
+      title: 'Remover planta',
+      message: `Remover a planta "${activePlan.fileName}"? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     setDeleting(true);
     try {
       await uploadsApi.delete(activePlan.id);
