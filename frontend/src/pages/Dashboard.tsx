@@ -26,29 +26,50 @@ import type {
 } from '@/types';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
-const C = {
-  bg1: '#ffffff',
-  bg2: '#F8FAFC',
-  bg3: '#E2E8F0',
-  t1: '#0D1829',
-  t2: '#2D3D52',
-  t3: '#5A6A7E',
-  bd: '#E2E8F0',
-  amber: '#D97706',
-  ambBg: '#FFFBEB',
-  ambT: '#78350F',
-  green: '#16A34A',
-  grnBg: '#F0FDF4',
-  grnT: '#14532D',
-  red: '#DC2626',
-  redBg: '#FEF2F2',
-  redT: '#7F1D1D',
-  blue: '#1D4ED8',
-  bluBg: '#EFF6FF',
-  bluT: '#1E3A8A',
-  chartBlue: '#2563EB',
-  chartRed: '#DC2626',
-};
+// Charts (Recharts) render color as SVG presentation attributes, where CSS
+// `var()` does NOT resolve. So we read the theme's CSS variables into concrete
+// color values and re-read them whenever the theme class on <html> flips.
+function readThemeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
+  return {
+    bg1: g('--s0', '#ffffff'),
+    bg2: g('--s1', '#F8FAFC'),
+    bg3: g('--s3', '#E2E8F0'),
+    t1: g('--t1', '#0D1829'),
+    t2: g('--t2', '#2D3D52'),
+    t3: g('--t3', '#5A6A7E'),
+    bd: g('--bd', '#E2E8F0'),
+    amber: g('--amber', '#D97706'),
+    ambBg: g('--amb-bg', '#FFFBEB'),
+    ambT: g('--amb-t', '#78350F'),
+    green: g('--green', '#16A34A'),
+    grnBg: g('--grn-bg', '#F0FDF4'),
+    grnT: g('--grn-t', '#14532D'),
+    red: g('--red', '#DC2626'),
+    redBg: g('--red-bg', '#FEF2F2'),
+    redT: g('--red-t', '#7F1D1D'),
+    blue: g('--blue', '#1D4ED8'),
+    bluBg: g('--blu-bg', '#EFF6FF'),
+    bluT: g('--blu-t', '#1E3A8A'),
+    chartBlue: g('--blue', '#2563EB'),
+    chartRed: g('--red', '#DC2626'),
+  };
+}
+
+type ThemeColors = ReturnType<typeof readThemeColors>;
+
+function useThemeColors(): ThemeColors {
+  const [colors, setColors] = useState<ThemeColors>(readThemeColors);
+  useEffect(() => {
+    const update = () => setColors(readThemeColors());
+    update(); // resync after AppLayout applies the initial theme class
+    const obs = new MutationObserver(update);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+  return colors;
+}
 
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
@@ -57,7 +78,7 @@ function Skeleton({ w, h, radius = 2 }: { w: string | number; h: string | number
     <div
       style={{
         width: w, height: h, borderRadius: radius,
-        background: C.bg3, animation: 'pulse 1.5s ease-in-out infinite',
+        background: 'var(--s3)', animation: 'pulse 1.5s ease-in-out infinite',
       }}
     />
   );
@@ -117,10 +138,10 @@ function AoMetric({
 }
 
 // ── SPI color helpers ─────────────────────────────────────────────────────────
-function spiColor(spi: number) {
-  if (spi >= 1.0) return C.green;
-  if (spi >= 0.9) return C.amber;
-  return C.chartRed;
+function spiColor(spi: number, c: ThemeColors) {
+  if (spi >= 1.0) return c.green;
+  if (spi >= 0.9) return c.amber;
+  return c.chartRed;
 }
 
 function spiLabel(spi: number) {
@@ -131,18 +152,18 @@ function spiLabel(spi: number) {
 }
 
 // ── PPC bar color ─────────────────────────────────────────────────────────────
-function ppcBarColor(v: number) {
-  if (v >= 80) return C.green;
-  if (v >= 70) return C.amber;
-  return C.chartRed;
+function ppcBarColor(v: number, c: ThemeColors) {
+  if (v >= 80) return c.green;
+  if (v >= 70) return c.amber;
+  return c.chartRed;
 }
 
 // ── Etapa bar color ───────────────────────────────────────────────────────────
-function etapaColor(actual: number, planned: number) {
+function etapaColor(actual: number, planned: number, c: ThemeColors) {
   const diff = planned - actual;
-  if (diff <= 2) return C.green;
-  if (diff <= 10) return C.amber;
-  return C.chartRed;
+  if (diff <= 2) return c.green;
+  if (diff <= 10) return c.amber;
+  return c.chartRed;
 }
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
@@ -150,7 +171,7 @@ function PBar({ value, color, height = 5 }: { value: number; color?: string; hei
   return (
     <div
       style={{
-        background: C.bg3,
+        background: 'var(--s3)',
         borderRadius: 1,
         height,
         overflow: 'hidden',
@@ -161,7 +182,7 @@ function PBar({ value, color, height = 5 }: { value: number; color?: string; hei
         style={{
           height: '100%',
           width: `${Math.min(100, Math.max(0, value))}%`,
-          background: color ?? C.amber,
+          background: color ?? 'var(--amber)',
           borderRadius: 1,
           transition: 'width .4s',
         }}
@@ -200,11 +221,11 @@ function Badge({
 function restrictionBadge(status: WeeklyRestriction['status']) {
   switch (status) {
     case 'RESOLVIDA':
-      return <Badge bg={C.grnBg} color={C.grnT}>Resolvida</Badge>;
+      return <Badge bg="var(--grn-bg)" color="var(--grn-t)">Resolvida</Badge>;
     case 'PENDENTE':
-      return <Badge bg={C.redBg} color={C.redT}>Pendente</Badge>;
+      return <Badge bg="var(--red-bg)" color="var(--red-t)">Pendente</Badge>;
     default:
-      return <Badge bg={C.bg3} color={C.t2}>{status}</Badge>;
+      return <Badge bg="var(--s3)" color="var(--t2)">{status}</Badge>;
   }
 }
 
@@ -214,7 +235,7 @@ function CurvaSLabel(props: any) {
   const { x, y, value, index, color } = props;
   if (value == null || index % 3 !== 0) return null;
   return (
-    <text x={x} y={y - 6} textAnchor="middle" fontSize={9} fill={color ?? C.t2}>
+    <text x={x} y={y - 6} textAnchor="middle" fontSize={9} fill={color ?? 'currentColor'}>
       {`${value}%`}
     </text>
   );
@@ -223,6 +244,7 @@ function CurvaSLabel(props: any) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { currentProject } = useStore();
+  const C = useThemeColors();
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [delays, setDelays] = useState<DelayedActivity[]>([]);
@@ -392,7 +414,7 @@ export default function Dashboard() {
           value={spi.toFixed(2)}
           meta={`${spiLabel(spi)}${delayDays > 0 ? `  ·  −${delayDays} dias` : ''}`}
           barPct={Math.min(100, spi * 100)}
-          color={spiColor(spi)}
+          color={spiColor(spi, C)}
           loading={loadingKpis}
         />
         <AoMetric
@@ -400,7 +422,7 @@ export default function Dashboard() {
           value={`${ppcCurrent.toFixed(0)}%`}
           meta={`Média 8 semanas: ${ppcAvg8}%  ·  meta 80%`}
           barPct={ppcCurrent}
-          color={ppcBarColor(ppcCurrent)}
+          color={ppcBarColor(ppcCurrent, C)}
           loading={loadingKpis}
         />
       </div>
@@ -460,7 +482,7 @@ export default function Dashboard() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {etapas.map((e) => {
-                  const color = etapaColor(e.actual, e.planned);
+                  const color = etapaColor(e.actual, e.planned, C);
                   return (
                     <div key={e.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ width: 112, fontSize: 11, color: C.t1, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -508,7 +530,7 @@ export default function Dashboard() {
                     <Tooltip contentStyle={{ fontSize: 11, border: `1px solid ${C.bd}`, borderRadius: 2 }} formatter={(v: number) => [`${v}%`, 'PPC']} />
                     <Bar dataKey="ppcActual" radius={[1, 1, 0, 0]}>
                       <LabelList dataKey="ppcActual" position="top" style={{ fontSize: 9, fill: C.t2 }} formatter={(v: number) => `${v}%`} />
-                      {ppcHistory.map((entry, index) => <Cell key={index} fill={ppcBarColor(entry.ppcActual)} />)}
+                      {ppcHistory.map((entry, index) => <Cell key={index} fill={ppcBarColor(entry.ppcActual, C)} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
