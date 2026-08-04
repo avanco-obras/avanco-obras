@@ -12,30 +12,34 @@ import { projectsApi } from '@/services/api'
 import type { Project } from '@/types'
 import { useHistoryStore } from '@/store/historyStore'
 import { jsPDF } from 'jspdf'
+import type { LucideIcon } from 'lucide-react'
 
-// ── Nav config ────────────────────────────────────────────────────────────────
-const NAV_MAIN = [
-  { to: '/dashboard',            label: 'Dashboard',       icon: LayoutDashboard },
-  { to: '/cronograma',           label: 'Cronograma',      icon: Calendar        },
-  { to: '/linha-de-balanco',     label: 'Linha de Balanço', icon: TrendingUp     },
-  { to: '/medicao',              label: 'Medição',         icon: Ruler           },
-  { to: '/programacao-semanal',  label: 'Prog. Semanal',   icon: ClipboardList   },
-]
-
-const NAV_CONFIG = [
-  { to: '/cadastro',      label: 'Cadastro',     icon: Building2 },
-  { to: '/configuracoes', label: 'Configurações', icon: Settings  },
-]
-
-const PAGE_META: Record<string, { title: string; crumb: string }> = {
-  '/dashboard':           { title: 'Dashboard',          crumb: 'Visão geral do projeto'        },
-  '/cronograma':          { title: 'Cronograma',          crumb: 'Gantt · Linha de base'         },
-  '/linha-de-balanco':    { title: 'Linha de Balanço',    crumb: 'Planejamento · Reprogramação'  },
-  '/medicao':             { title: 'Medição Física',      crumb: 'Avanço por unidade'            },
-  '/programacao-semanal': { title: 'Prog. Semanal',       crumb: 'PPC · Planejamento LPS'        },
-  '/cadastro':            { title: 'Cadastro',            crumb: 'Dados do projeto e equipe'     },
-  '/configuracoes':       { title: 'Configurações',       crumb: 'Conta · Tipos · Parâmetros'   },
+// ── Route registry — fonte única de nome/ícone/crumb por rota ─────────────────
+// Menu principal, menu de configuração, breadcrumb e command palette derivam
+// daqui, para que os rótulos não divirjam entre si.
+interface RouteMeta {
+  to: string
+  label: string
+  crumb: string
+  icon: LucideIcon
+  section: 'main' | 'config'
 }
+
+const ROUTES: RouteMeta[] = [
+  { to: '/dashboard',           label: 'Dashboard',        crumb: 'Visão geral do projeto',        icon: LayoutDashboard, section: 'main'   },
+  { to: '/cronograma',          label: 'Cronograma',       crumb: 'Gantt · Linha de base',         icon: Calendar,        section: 'main'   },
+  { to: '/linha-de-balanco',    label: 'Linha de Balanço', crumb: 'Planejamento · Reprogramação',  icon: TrendingUp,      section: 'main'   },
+  { to: '/medicao',             label: 'Medição Física',   crumb: 'Avanço por unidade',            icon: Ruler,           section: 'main'   },
+  { to: '/programacao-semanal', label: 'Prog. Semanal',    crumb: 'PPC · Planejamento LPS',         icon: ClipboardList,   section: 'main'   },
+  { to: '/cadastro',            label: 'Cadastro',         crumb: 'Dados do projeto e equipe',      icon: Building2,       section: 'config' },
+  { to: '/configuracoes',       label: 'Configurações',    crumb: 'Conta · Tipos · Parâmetros',     icon: Settings,        section: 'config' },
+]
+
+const NAV_MAIN   = ROUTES.filter((r) => r.section === 'main')
+const NAV_CONFIG = ROUTES.filter((r) => r.section === 'config')
+
+const PAGE_META: Record<string, { title: string; crumb: string }> =
+  Object.fromEntries(ROUTES.map((r) => [r.to, { title: r.label, crumb: r.crumb }]))
 
 // ── Tooltip (shown when sidebar is collapsed) ─────────────────────────────────
 function Tooltip({ label, visible }: { label: string; visible: boolean }) {
@@ -64,15 +68,12 @@ function Tooltip({ label, visible }: { label: string; visible: boolean }) {
 }
 
 // ── Command Palette ───────────────────────────────────────────────────────────
-const CMD_ITEMS = [
-  { group: 'Navegação', label: 'Dashboard',       icon: LayoutDashboard, to: '/dashboard'           },
-  { group: 'Navegação', label: 'Cronograma',       icon: Calendar,        to: '/cronograma'          },
-  { group: 'Navegação', label: 'Linha de Balanço', icon: TrendingUp,      to: '/linha-de-balanco'    },
-  { group: 'Navegação', label: 'Medição Física',   icon: Ruler,           to: '/medicao'             },
-  { group: 'Navegação', label: 'Prog. Semanal',    icon: ClipboardList,   to: '/programacao-semanal' },
-  { group: 'Ações',     label: 'Cadastro',         icon: Building2,       to: '/cadastro'            },
-  { group: 'Ações',     label: 'Configurações',    icon: Settings,        to: '/configuracoes'       },
-]
+const CMD_ITEMS = ROUTES.map((r) => ({
+  group: r.section === 'main' ? 'Navegação' : 'Ações',
+  label: r.label,
+  icon: r.icon,
+  to: r.to,
+}))
 
 function CommandPalette({ open, onClose, onNavigate }: {
   open: boolean; onClose: () => void; onNavigate: (to: string) => void
