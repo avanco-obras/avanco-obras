@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Building2, LayoutDashboard, Calendar, Ruler, ClipboardList,
-  Settings, LogOut, ChevronDown, Loader2, Bell, Download,
+  Settings, LogOut, ChevronDown, Loader2, Download,
   Sun, Moon, Search, User, ChevronRight, PanelLeftClose, PanelLeftOpen,
   TrendingUp,
 } from 'lucide-react'
@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { projectsApi } from '@/services/api'
 import type { Project } from '@/types'
 import { useHistoryStore } from '@/store/historyStore'
+import { jsPDF } from 'jspdf'
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 const NAV_MAIN = [
@@ -168,6 +169,7 @@ export function AppLayout() {
   const [collapsed, setCollapsed]           = useState(false)
   const [cmdOpen, setCmdOpen]               = useState(false)
   const [tooltip, setTooltip]              = useState<string | null>(null)
+  const [exporting, setExporting]           = useState(false)
 
   const { undo, redo } = useHistoryStore()
 
@@ -245,6 +247,37 @@ export function AppLayout() {
   }
 
   function handleLogout() { logout(); navigate('/login', { replace: true }) }
+
+  // Export the current screen as a single-page PDF snapshot.
+  async function handleExport() {
+    if (exporting) return
+    const el = document.querySelector('.ao-content') as HTMLElement | null
+    if (!el) return
+    setExporting(true)
+    try {
+      const { default: html2canvas } = await import('html2canvas')
+      const pageBg = getComputedStyle(document.documentElement).getPropertyValue('--page').trim() || '#ffffff'
+      const canvas = await html2canvas(el, {
+        backgroundColor: pageBg,
+        scale: 2,
+        useCORS: true,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      })
+      const imgData = canvas.toDataURL('image/png')
+      const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
+      const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] })
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height)
+      const safe = (s?: string) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '')
+      const stamp = new Date().toISOString().slice(0, 10)
+      pdf.save(`${safe(pageMeta.title) || 'tela'}_${safe(currentProject?.name) || 'projeto'}_${stamp}.pdf`)
+      addToast({ type: 'success', title: 'Exportado', description: 'PDF da tela atual gerado.' })
+    } catch (e) {
+      addToast({ type: 'error', title: 'Falha ao exportar', description: (e as Error).message })
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const initials = user?.fullName
     ? user.fullName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
@@ -582,16 +615,18 @@ export function AppLayout() {
               {darkMode ? <Sun style={{ width: 14, height: 14 }} /> : <Moon style={{ width: 14, height: 14 }} />}
             </button>
 
-            {/* Notifications */}
-            <div className="ao-icon-btn" style={{ position: 'relative' }}>
-              <Bell style={{ width: 14, height: 14 }} />
-              <span className="ao-icon-btn-badge" />
-            </div>
-
-            {/* Export */}
-            <div className="ao-icon-btn">
-              <Download style={{ width: 14, height: 14 }} />
-            </div>
+            {/* Export current screen as PDF */}
+            <button
+              className="ao-icon-btn"
+              onClick={handleExport}
+              disabled={exporting || !currentProject}
+              title={currentProject ? 'Exportar tela atual (PDF)' : 'Selecione um projeto para exportar'}
+              style={{ opacity: exporting || !currentProject ? 0.5 : 1, cursor: exporting || !currentProject ? 'not-allowed' : 'pointer' }}
+            >
+              {exporting
+                ? <Loader2 style={{ width: 14, height: 14 }} className="ao-spin" />
+                : <Download style={{ width: 14, height: 14 }} />}
+            </button>
           </header>
 
           {/* Page content */}
