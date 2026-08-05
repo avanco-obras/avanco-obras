@@ -16,7 +16,6 @@
       "Bash(git am *)",
       "PowerShell($env:GIT_EDITOR = \"true\"; git rebase --continue)",
       "Bash(rm .git/AUTO_MERGE 2>&1 && git rebase --continue 2>&1)",
-      "Bash(docker compose *)",
       "Bash(cd /c/Users/usuario1/Documents/avanco-obras && docker compose restart backend >/dev/null 2>&1 && until docker compose logs backend 2>&1 | grep -q \"3:.*Found 0 errors\\\\|4:.*Found 0 errors\"; do sleep 3; done; docker compose logs backend 2>&1 | grep \"Found .* errors\" | tail -2)",
       "Read(//c/Users/usuario1/Documents/avanco-obras/**)",
       "Bash(curl -s -X POST http://localhost:3001/api/projects/__TRACKED_VAR__/physical-progress/reports/__TRACKED_VAR__/restore -H 'Authorization: Bearer __CMDSUB_OUTPUT__' -H 'Content-Type: application/json')",
