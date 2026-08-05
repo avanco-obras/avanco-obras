@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, AlertCircle } from 'lucide-react';
+import { AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { useStore } from '@/store';
 import { NoProjectState } from '@/components/NoProjectState';
 import { dashboardApi, scheduleApi, weeklyPlanningApi } from '@/services/api';
@@ -259,12 +259,14 @@ export default function Dashboard() {
   const [loadingPpc, setLoadingPpc] = useState(true);
   const [loadingDelays, setLoadingDelays] = useState(true);
   const [loadingSchedule, setLoadingSchedule] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const projectId = currentProject?.id;
 
   const loadAll = useCallback(() => {
     if (!projectId) return;
 
+    setLastUpdated(new Date());
     setLoadingKpis(true);
     dashboardApi
       .kpis(projectId)
@@ -376,6 +378,24 @@ export default function Dashboard() {
         minHeight: '100%',
       }}
     >
+
+      {/* ── Header: última atualização + refresh ─────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+        {lastUpdated && (
+          <span style={{ fontSize: 11, color: C.t3, fontFamily: 'var(--mono)' }}>
+            Atualizado às {lastUpdated.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
+        <button
+          className="ao-btn ao-btn-sm"
+          onClick={loadAll}
+          disabled={loadingKpis}
+          title="Atualizar indicadores"
+        >
+          <RefreshCw size={12} className={loadingKpis ? 'ao-spin' : undefined} />
+          Atualizar
+        </button>
+      </div>
 
       {/* ── ROW 1: Enterprise Metric Blocks ──────────────────────────── */}
       <div style={g3}>
