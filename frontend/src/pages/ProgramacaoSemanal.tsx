@@ -8,6 +8,7 @@ import {
 import { useStore } from '../store';
 import { NoProjectState } from '../components/NoProjectState';
 import { useConfirm } from '../components/ConfirmDialog';
+import { DataTable } from '../components/DataTable';
 import { contractorsApi, restrictionTypesApi, weeklyPlanningApi } from '../services/api';
 import type {
   Contractor, RestrictionType, WeeklyActivity, WeeklyProgram, WeeklyRestriction, WeeklySnapshotMeta,
@@ -485,81 +486,64 @@ export default function ProgramacaoSemanal() {
               </button>
             )}
           </div>
-          {restrictions.length === 0 ? (
-            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>
-              Nenhuma restrição registrada nesta semana.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="ao-table" style={{ minWidth: 960 }}>
-                <thead>
-                  <tr>
-                    <th>Tipo</th><th>Descrição</th><th>Resp. remoção</th><th>Prevista</th>
-                    <th>Resolvida</th><th>Impacta</th><th>Status</th><th>Atividades vinculadas</th>
-                    <th style={{ width: 36 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {restrictions.map((r) => {
-                    const linkedNames = (r.activityLinks ?? [])
-                      .map((l) => activities.find((a) => a.id === l.activityId)?.activityName)
-                      .filter(Boolean) as string[];
-                    return (
-                      <tr key={r.id} style={{ cursor: readOnly ? 'default' : 'pointer' }}
-                          onClick={() => !readOnly && setRestrictionModal({ restriction: r })}>
-                        <td><span className="ao-badge ao-bb">{r.type?.name ?? '—'}</span></td>
-                        <td style={{ fontWeight: 600 }}>{r.description}</td>
-                        <td className="muted">{r.responsible}</td>
-                        <td className="mono">{fmtDate(r.dueDate)}</td>
-                        <td className="mono">{fmtDate(r.resolvedAt)}</td>
-                        <td>
-                          <span className={`ao-badge ${r.impactsProgram ? 'ao-br' : 'ao-bk'}`}>
-                            {r.impactsProgram ? 'Sim' : 'Não'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`ao-badge ${r.status === 'RESOLVIDA' ? 'ao-bg' : 'ao-ba'}`}>
-                            {r.status === 'RESOLVIDA' ? 'Resolvida' : 'Pendente'}
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {linkedNames.length === 0 && <span className="muted">—</span>}
-                            {linkedNames.map((name) => (
-                              <span key={name} style={{
-                                fontSize: 9.5, fontWeight: 600, padding: '1.5px 7px', borderRadius: 999,
-                                background: 'var(--s2)', color: 'var(--t2)', border: '1px solid var(--bd2)',
-                              }}>
-                                {name}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-                          {!readOnly && (
-                            <button
-                              type="button"
-                              onClick={() => removeRestriction(r)}
-                              title="Remover restrição"
-                              style={{
-                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                width: 22, height: 22, border: 'none', background: 'none',
-                                borderRadius: 'var(--r-md)', color: 'var(--t4)', cursor: 'pointer',
-                              }}
-                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--red)'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--t4)'; }}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable
+            rows={restrictions}
+            getRowKey={(r) => r.id}
+            minWidth={960}
+            emptyMessage="Nenhuma restrição registrada nesta semana."
+            onRowClick={readOnly ? undefined : (r) => setRestrictionModal({ restriction: r })}
+            columns={[
+              { key: 'type', header: 'Tipo', sortable: true, sortValue: (r) => r.type?.name ?? '', render: (r) => <span className="ao-badge ao-bb">{r.type?.name ?? '—'}</span> },
+              { key: 'description', header: 'Descrição', sortable: true, sortValue: (r) => r.description, render: (r) => <span style={{ fontWeight: 600 }}>{r.description}</span> },
+              { key: 'responsible', header: 'Resp. remoção', sortable: true, cellClassName: 'muted', render: (r) => r.responsible },
+              { key: 'dueDate', header: 'Prevista', sortable: true, cellClassName: 'mono', sortValue: (r) => (r.dueDate ? new Date(r.dueDate).getTime() : 0), render: (r) => fmtDate(r.dueDate) },
+              { key: 'resolvedAt', header: 'Resolvida', sortable: true, cellClassName: 'mono', sortValue: (r) => (r.resolvedAt ? new Date(r.resolvedAt).getTime() : 0), render: (r) => fmtDate(r.resolvedAt) },
+              { key: 'impactsProgram', header: 'Impacta', sortable: true, sortValue: (r) => (r.impactsProgram ? 1 : 0), render: (r) => <span className={`ao-badge ${r.impactsProgram ? 'ao-br' : 'ao-bk'}`}>{r.impactsProgram ? 'Sim' : 'Não'}</span> },
+              { key: 'status', header: 'Status', sortable: true, sortValue: (r) => r.status, render: (r) => <span className={`ao-badge ${r.status === 'RESOLVIDA' ? 'ao-bg' : 'ao-ba'}`}>{r.status === 'RESOLVIDA' ? 'Resolvida' : 'Pendente'}</span> },
+              {
+                key: 'links',
+                header: 'Atividades vinculadas',
+                render: (r) => {
+                  const linkedNames = (r.activityLinks ?? [])
+                    .map((l) => activities.find((a) => a.id === l.activityId)?.activityName)
+                    .filter(Boolean) as string[];
+                  return (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {linkedNames.length === 0 && <span className="muted">—</span>}
+                      {linkedNames.map((name) => (
+                        <span key={name} style={{ fontSize: 9.5, fontWeight: 600, padding: '1.5px 7px', borderRadius: 999, background: 'var(--s2)', color: 'var(--t2)', border: '1px solid var(--bd2)' }}>
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                },
+              },
+              {
+                key: 'actions',
+                header: '',
+                width: 36,
+                align: 'center',
+                render: (r) =>
+                  readOnly ? null : (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeRestriction(r); }}
+                      title="Remover restrição"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 22, height: 22, border: 'none', background: 'none',
+                        borderRadius: 'var(--r-md)', color: 'var(--t4)', cursor: 'pointer',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--red)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--t4)'; }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  ),
+              },
+            ]}
+          />
         </div>
       )}
 

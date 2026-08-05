@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '@/store';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { DataTable } from '@/components/DataTable';
 import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
 import {
   FileText,
@@ -956,50 +957,45 @@ export default function Cadastro() {
         </div>
 
         {/* Members table */}
-        {members.length === 0 ? (
-          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>
-            Nenhum membro adicionado. Use o formulário acima para convidar a equipe.
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="ao-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}></th>
-                  <th>Nome</th>
-                  <th>E-mail</th>
-                  <th>Função</th>
-                  <th style={{ width: 44 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((member) => {
-                  const initials = member.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
-                  return (
-                    <tr key={member.id}>
-                      <td>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                          {initials}
-                        </div>
-                      </td>
-                      <td style={{ fontWeight: 500 }}>{member.name || '—'}</td>
-                      <td className="mono">{member.email}</td>
-                      <td><span className="ao-badge ao-bk">{ROLE_LABELS[member.role]}</span></td>
-                      <td>
-                        <button
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
-                          onClick={() => handleRemoveMember(member.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          rows={members}
+          getRowKey={(m) => m.id}
+          searchable
+          searchAccessor={(m) => `${m.name} ${m.email}`}
+          searchPlaceholder="Buscar membro…"
+          emptyMessage="Nenhum membro adicionado. Use o formulário acima para convidar a equipe."
+          columns={[
+            {
+              key: 'avatar',
+              header: '',
+              width: 36,
+              render: (m) => {
+                const initials = m.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
+                return (
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                    {initials}
+                  </div>
+                );
+              },
+            },
+            { key: 'name', header: 'Nome', sortable: true, sortValue: (m) => m.name, render: (m) => <span style={{ fontWeight: 500 }}>{m.name || '—'}</span> },
+            { key: 'email', header: 'E-mail', sortable: true, cellClassName: 'mono', render: (m) => m.email },
+            { key: 'role', header: 'Função', sortable: true, sortValue: (m) => ROLE_LABELS[m.role], render: (m) => <span className="ao-badge ao-bk">{ROLE_LABELS[m.role]}</span> },
+            {
+              key: 'actions',
+              header: '',
+              width: 44,
+              render: (m) => (
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
+                  onClick={() => handleRemoveMember(m.id)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       {/* ── AI Import Modal ──────────────────────────────────────────── */}
