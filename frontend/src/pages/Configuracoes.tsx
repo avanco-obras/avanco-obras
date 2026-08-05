@@ -153,6 +153,7 @@ export default function Configuracoes() {
   const [username, setUsername] = useState(user?.username ?? '');
   const [phone, setPhone] = useState(user?.phone ?? '');
   const [crea, setCrea] = useState(user?.crea ?? '');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [savingConta, setSavingConta] = useState(false);
   const [contaMsg, setContaMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -160,6 +161,20 @@ export default function Configuracoes() {
   const handleSaveConta = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    // Validação da troca de senha (opcional): só ocorre se o usuário digitou uma nova senha.
+    const wantsPasswordChange = newPassword.trim().length > 0;
+    if (wantsPasswordChange) {
+      if (newPassword.trim().length < 6) {
+        setContaMsg({ type: 'err', text: 'A nova senha deve ter ao menos 6 caracteres.' });
+        return;
+      }
+      if (!currentPassword.trim()) {
+        setContaMsg({ type: 'err', text: 'Informe a senha atual para alterar a senha.' });
+        return;
+      }
+    }
+
     setSavingConta(true);
     setContaMsg(null);
     try {
@@ -170,14 +185,20 @@ export default function Configuracoes() {
         crea: crea.trim() || undefined,
       });
       if (token) setAuth(updated, token);
-      if (newPassword.trim().length >= 6) {
-        await usersApi.changePassword(user.id, { currentPassword: '', newPassword: newPassword.trim() });
+      if (wantsPasswordChange) {
+        await usersApi.changePassword(user.id, {
+          currentPassword: currentPassword.trim(),
+          newPassword: newPassword.trim(),
+        });
       }
+      setCurrentPassword('');
       setNewPassword('');
       setContaMsg({ type: 'ok', text: 'Alterações salvas com sucesso!' });
       setTimeout(() => setContaMsg(null), 3000);
-    } catch {
-      setContaMsg({ type: 'err', text: 'Não foi possível salvar as alterações.' });
+    } catch (err) {
+      // Mensagem específica do backend (ex.: "Senha atual incorreta").
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setContaMsg({ type: 'err', text: typeof msg === 'string' ? msg : 'Não foi possível salvar as alterações.' });
     } finally {
       setSavingConta(false);
     }
@@ -370,9 +391,15 @@ export default function Configuracoes() {
                   </div>
                 </div>
 
-                <div style={fgStyle}>
-                  <label style={labelStyle}>Nova senha</label>
-                  <input style={inStyle} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={fgStyle}>
+                    <label style={labelStyle}>Senha atual</label>
+                    <input style={inStyle} type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Necessária para alterar a senha" />
+                  </div>
+                  <div style={fgStyle}>
+                    <label style={labelStyle}>Nova senha</label>
+                    <input style={inStyle} type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
+                  </div>
                 </div>
 
                 {contaMsg && (
