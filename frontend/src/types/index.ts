@@ -11,6 +11,7 @@ export interface User {
   crea?: string;
   avatarUrl?: string;
   isActive: boolean;
+  notificationPreferences?: Record<string, boolean> | null;
   createdAt: string;
   updatedAt: string;
 }

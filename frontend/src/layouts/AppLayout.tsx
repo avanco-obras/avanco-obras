@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Building2, LayoutDashboard, Calendar, Ruler, ClipboardList,
-  Settings, LogOut, ChevronDown, Loader2, Download,
+  Settings, LogOut, ChevronDown, Loader2, Download, Bell,
   Sun, Moon, Search, User, ChevronRight, PanelLeftClose, PanelLeftOpen,
   TrendingUp,
 } from 'lucide-react'
@@ -14,6 +14,7 @@ import { useHistoryStore } from '@/store/historyStore'
 import { jsPDF } from 'jspdf'
 import type { LucideIcon } from 'lucide-react'
 import { NoProjectState } from '@/components/NoProjectState'
+import { useNotifications } from '@/hooks/useNotifications'
 
 // ── Route registry — fonte única de nome/ícone/crumb por rota ─────────────────
 // Menu principal, menu de configuração, breadcrumb e command palette derivam
@@ -172,6 +173,7 @@ export function AppLayout() {
   const [cmdOpen, setCmdOpen]               = useState(false)
   const [tooltip, setTooltip]              = useState<string | null>(null)
   const [exporting, setExporting]           = useState(false)
+  const [notifOpen, setNotifOpen]           = useState(false)
 
   const { undo, redo } = useHistoryStore()
 
@@ -188,6 +190,10 @@ export function AppLayout() {
 
   const projRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
+  const notifRef = useRef<HTMLDivElement>(null)
+
+  const { alerts, unreadCount, readIds, markRead, markAllRead } =
+    useNotifications(currentProject?.id, user?.notificationPreferences)
 
   const pageMeta = PAGE_META[location.pathname] ?? { title: 'AvançoObras', crumb: '' }
 
@@ -212,6 +218,7 @@ export function AppLayout() {
     function h(e: MouseEvent) {
       if (projRef.current && !projRef.current.contains(e.target as Node)) setProjDropOpen(false)
       if (userRef.current && !userRef.current.contains(e.target as Node)) setUserMenuOpen(false)
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
     }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
@@ -619,6 +626,74 @@ export function AppLayout() {
             <button className="ao-icon-btn" onClick={() => setDarkMode(d => !d)} title={darkMode ? 'Modo claro' : 'Modo escuro'}>
               {darkMode ? <Sun style={{ width: 14, height: 14 }} /> : <Moon style={{ width: 14, height: 14 }} />}
             </button>
+
+            {/* Notifications */}
+            <div ref={notifRef} style={{ position: 'relative' }}>
+              <button
+                className="ao-icon-btn"
+                onClick={() => setNotifOpen(o => !o)}
+                title="Notificações"
+                style={{ position: 'relative' }}
+              >
+                <Bell style={{ width: 14, height: 14 }} />
+                {unreadCount > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 0, right: 0, minWidth: 14, height: 14, padding: '0 3px',
+                    borderRadius: 7, background: 'var(--red)', color: '#fff', fontSize: 8.5, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: '1.5px solid var(--s0)', fontFamily: 'var(--mono)', lineHeight: 1,
+                  }}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: 320,
+                  background: 'var(--s0)', border: '1px solid var(--bd2)', borderRadius: 8,
+                  boxShadow: 'var(--shadow-lg)', zIndex: 100, overflow: 'hidden',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: '1px solid var(--bd)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--t1)' }}>Notificações</span>
+                    {alerts.length > 0 && (
+                      <button
+                        onClick={markAllRead}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10.5, color: 'var(--blue)', fontFamily: 'var(--font)' }}
+                      >
+                        Marcar todas como lidas
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                    {alerts.length === 0 ? (
+                      <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 11.5, color: 'var(--t3)' }}>
+                        Nenhum alerta no momento.
+                      </div>
+                    ) : alerts.map((a) => {
+                      const isRead = readIds.has(a.id)
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => { markRead(a.id); setNotifOpen(false); navigate(a.to) }}
+                          style={{
+                            display: 'flex', gap: 8, width: '100%', textAlign: 'left', padding: '9px 12px',
+                            border: 'none', borderBottom: '1px solid var(--bd)',
+                            background: isRead ? 'transparent' : 'var(--blu-bg)', cursor: 'pointer', fontFamily: 'var(--font)',
+                          }}
+                        >
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 4, background: a.kind === 'delay' ? 'var(--red)' : 'var(--amber)' }} />
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
+                            <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 1 }}>{a.detail}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Export current screen as PDF */}
             <button

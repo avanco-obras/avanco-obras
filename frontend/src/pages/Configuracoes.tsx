@@ -158,6 +158,30 @@ export default function Configuracoes() {
   const [savingConta, setSavingConta] = useState(false);
   const [contaMsg, setContaMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
+  // ── Preferências de notificação (in-app) ──────────────────────────────────
+  const [notifPrefs, setNotifPrefs] = useState<{ delayedActivities: boolean; overdueRestrictions: boolean }>(() => ({
+    delayedActivities: user?.notificationPreferences?.delayedActivities ?? true,
+    overdueRestrictions: user?.notificationPreferences?.overdueRestrictions ?? true,
+  }));
+  const [savingNotif, setSavingNotif] = useState(false);
+
+  const toggleNotif = async (key: 'delayedActivities' | 'overdueRestrictions') => {
+    if (!user) return;
+    const prev = notifPrefs;
+    const next = { ...notifPrefs, [key]: !notifPrefs[key] };
+    setNotifPrefs(next);
+    setSavingNotif(true);
+    try {
+      const updated = await usersApi.update(user.id, { notificationPreferences: next });
+      if (token) setAuth(updated, token);
+    } catch {
+      setNotifPrefs(prev); // reverte
+      addToast({ type: 'error', title: 'Erro ao salvar a preferência de notificação.' });
+    } finally {
+      setSavingNotif(false);
+    }
+  };
+
   const handleSaveConta = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -421,19 +445,37 @@ export default function Configuracoes() {
           <div className="ao-card">
             <div className="ao-card-hdr"><span className="ao-card-title">Notificações</span></div>
             <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {/* Toggles reais — controlam o que aparece no sino */}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: savingNotif ? 'wait' : 'pointer', padding: '10px 0', borderBottom: '1px solid var(--bd)' }}>
+                <input type="checkbox" checked={notifPrefs.delayedActivities} disabled={savingNotif} onChange={() => toggleNotif('delayedActivities')} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'inherit', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>Alertas de atividades atrasadas</div>
+                  <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>Mostra no sino as atividades abaixo do previsto</div>
+                </div>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: savingNotif ? 'wait' : 'pointer', padding: '10px 0', borderBottom: '1px solid var(--bd)' }}>
+                <input type="checkbox" checked={notifPrefs.overdueRestrictions} disabled={savingNotif} onChange={() => toggleNotif('overdueRestrictions')} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'inherit', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>Restrições vencidas sem resolução</div>
+                  <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>Mostra no sino as restrições pendentes já vencidas</div>
+                </div>
+              </label>
+
+              {/* Entrega por e-mail — ainda não implementada */}
               {[
-                { label: 'Alertas de atividades atrasadas', sub: 'Notificado quando SPI cair abaixo de 0.90', checked: true },
-                { label: 'Lembrete de lançamento semanal', sub: 'Segunda-feira às 8h', checked: true },
-                { label: 'Relatório PDF automático semanal', sub: 'Enviado todo domingo às 20h', checked: false },
-                { label: 'Restrições vencidas sem resolução', sub: 'Notificado no vencimento', checked: true },
+                { label: 'Lembrete de lançamento semanal', sub: 'Envio por e-mail' },
+                { label: 'Relatório PDF automático semanal', sub: 'Envio por e-mail' },
               ].map((n, i) => (
-                <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 0', borderBottom: i < 3 ? '1px solid var(--bd)' : 'none' }}>
-                  <input type="checkbox" defaultChecked={n.checked} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'pointer', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>{n.label}</div>
+                <div key={n.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: i < 1 ? '1px solid var(--bd)' : 'none', opacity: 0.6 }}>
+                  <input type="checkbox" checked={false} disabled readOnly style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {n.label}
+                      <span className="ao-badge ao-bk">em breve</span>
+                    </div>
                     <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>{n.sub}</div>
                   </div>
-                </label>
+                </div>
               ))}
             </div>
           </div>

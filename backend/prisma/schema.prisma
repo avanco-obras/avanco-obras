@@ -70,6 +70,7 @@ model User {
   crea         String?
   avatarUrl    String?   @map("avatar_url")
   isActive     Boolean   @default(true) @map("is_active")
+  notificationPreferences Json? @map("notification_preferences")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
