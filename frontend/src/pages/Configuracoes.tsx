@@ -348,6 +348,7 @@ export default function Configuracoes() {
                   <div style={fgStyle}>
                     <label style={labelStyle}>E-mail</label>
                     <input style={{ ...inStyle, opacity: 0.55, cursor: 'not-allowed' }} type="email" value={user.email} readOnly disabled />
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>O e-mail não pode ser alterado.</span>
                   </div>
                   <div style={fgStyle}>
                     <label style={labelStyle}>Telefone</label>
@@ -361,6 +362,7 @@ export default function Configuracoes() {
                       <option value="FOREMAN">Mestre de Obras</option>
                       <option value="VIEWER">Visualizador</option>
                     </select>
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>Definido pelo administrador do projeto.</span>
                   </div>
                   <div style={fgStyle}>
                     <label style={labelStyle}>CREA / CAU</label>
