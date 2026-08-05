@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { useStore } from '@/store';
 import { NoProjectState } from '@/components/NoProjectState';
@@ -246,6 +247,7 @@ function CurvaSLabel(props: any) {
 export default function Dashboard() {
   const { currentProject } = useStore();
   const C = useThemeColors();
+  const navigate = useNavigate();
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [delays, setDelays] = useState<DelayedActivity[]>([]);
@@ -560,7 +562,14 @@ export default function Dashboard() {
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 160, overflowY: 'auto' }}>
                   {delays.map((d) => (
-                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div
+                      key={d.id}
+                      onClick={() => navigate('/cronograma')}
+                      title="Ver no cronograma"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '2px 4px', margin: '0 -4px', borderRadius: 4 }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = C.bg2)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
                       <span style={{ fontSize: 11, color: C.t1, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
                         {d.name}
                       </span>
@@ -602,7 +611,14 @@ export default function Dashboard() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9, maxHeight: 180, overflowY: 'auto' }}>
                 {restrictions.map((r) => (
-                  <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div
+                    key={r.id}
+                    onClick={() => navigate('/programacao-semanal')}
+                    title="Ver na programação semanal"
+                    style={{ display: 'flex', flexDirection: 'column', gap: 3, cursor: 'pointer', padding: '2px 4px', margin: '0 -4px', borderRadius: 4 }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = C.bg2)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
                       <span style={{ fontSize: 11, color: C.t1, lineHeight: 1.3, flex: 1, minWidth: 0 }}>{r.description}</span>
                       {restrictionBadge(r.status)}
