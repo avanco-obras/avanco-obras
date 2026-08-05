@@ -317,9 +317,9 @@ export default function LinhaBalanco() {
       addToast({
         type: 'success',
         title: `Report #${restoreTarget.reportNumber} restaurado`,
-        description: result.partial
-          ? `Apenas o cronograma foi restaurado. Estado anterior salvo no Report #${result.safetyReportNumber}.`
-          : `Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+        description: `Avanço físico agora em ${result.physicalProgress.toFixed(2)}%.`
+          + (result.partial ? ' Apenas o cronograma foi restaurado.' : '')
+          + ` Estado anterior salvo no Report #${result.safetyReportNumber}.`,
       });
       setRestoreTarget(null);
       setShowHistory(false);

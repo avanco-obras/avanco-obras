@@ -372,6 +372,38 @@ describe('PhysicalProgressService', () => {
       expect(result.partial).toBe(true);
     });
 
+    /**
+     * O indicador "% Avanço Físico" do topo sempre mostra o ÚLTIMO Report. O
+     * report de segurança é gravado ANTES da sobrescrita, então carrega o
+     * avanço de antes da restauração. Sem um Report de fechamento, o indicador
+     * ficaria exibindo justamente o percentual que acabou de ser descartado.
+     */
+    it('fecha a restauração com um Report novo, para o indicador refletir a versão restaurada', async () => {
+      scenario({ scheduleSnapshot: [item('a', 0)], currentItems: [{ id: 'a', level: 0 }] });
+      mockPrisma.projectReport.create
+        .mockResolvedValueOnce({
+          id: 'safety', projectId, reportNumber: 10, createdAt: new Date(),
+          physicalProgress: 88.5, user: null, baseline: null, description: null,
+        })
+        .mockResolvedValueOnce({
+          id: 'fechamento', projectId, reportNumber: 11, createdAt: new Date(),
+          physicalProgress: 42.75, user: null, baseline: null, description: null,
+        });
+
+      const result = await service.restoreReport(projectId, 'rep-1', userId);
+
+      expect(mockPrisma.projectReport.create).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.projectReport.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ description: 'Restauração do Report #7' }),
+        }),
+      );
+      // O último Report é o de fechamento, não o de segurança.
+      expect(result.restoredReportNumber).toBe(11);
+      expect(result.safetyReportNumber).toBe(10);
+      expect(result.physicalProgress).toBe(42.75);
+    });
+
     it('avisa as telas que o cronograma foi restaurado', async () => {
       scenario({ scheduleSnapshot: [item('a', 0)], currentItems: [{ id: 'a', level: 0 }] });
 

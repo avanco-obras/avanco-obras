@@ -376,12 +376,26 @@ export class PhysicalProgressService {
       }
     });
 
-    await this.recalculateParentTasks(projectId);
+    // Depois de sobrescrever, o estado consolidado do projeto passa a ser o da
+    // versão restaurada — e o indicador "% Avanço Físico" precisa refletir
+    // isso. Como ele sempre mostra o ÚLTIMO Report, e o report de segurança
+    // gravado acima carrega o avanço de antes da restauração, é preciso
+    // fechar a operação com um Report novo. Sem ele o indicador continuaria
+    // exibindo o percentual que acabou de ser descartado.
+    // createReport já recalcula os pais, então não há chamada separada.
+    const restored = await this.createReport(
+      projectId,
+      userId,
+      `Restauração do Report #${report.reportNumber}`,
+    );
+
     this.realtime.emitScheduleChanged({ projectId, action: 'restored', scheduleItemId: null });
 
     return {
       restoredFrom: report.reportNumber,
       safetyReportNumber: safety.reportNumber,
+      restoredReportNumber: restored.reportNumber,
+      physicalProgress: restored.physicalProgress,
       partial: !isFull,
       itemCount: snapshot.length,
     };

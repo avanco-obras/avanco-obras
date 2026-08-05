@@ -475,8 +475,14 @@ export interface ProjectReport {
 }
 
 export interface RestoreReportResult {
+  /** Número do report cujo estado foi restaurado. */
   restoredFrom: number;
+  /** Report gravado com o estado anterior, para desfazer a restauração. */
   safetyReportNumber: number;
+  /** Report de fechamento — é ele que passa a alimentar o indicador do topo. */
+  restoredReportNumber: number;
+  /** % consolidado após a restauração; igual ao da versão restaurada. */
+  physicalProgress: number;
   partial: boolean;
   itemCount: number;
 }
