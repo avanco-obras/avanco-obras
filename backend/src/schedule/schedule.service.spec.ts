@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { PrismaService } from '../common/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { PhysicalProgressService } from './physical-progress.service';
 
 const mockPrismaService = {
   project: {
@@ -13,11 +15,40 @@ const mockPrismaService = {
     findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     delete: jest.fn(),
+    deleteMany: jest.fn(),
   },
   activityType: {
     findUnique: jest.fn(),
   },
+  scheduleRevision: {
+    create: jest.fn(),
+    findMany: jest.fn(),
+  },
+  $transaction: jest.fn(),
+};
+
+/**
+ * `create` e `remove` rodam dentro de `$transaction(cb)`. Executa o callback
+ * com o próprio mock, para que as asserções enxerguem as chamadas.
+ */
+function runTransactionInline() {
+  mockPrismaService.$transaction.mockImplementation(async (arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (tx: unknown) => unknown)(mockPrismaService)
+      : Promise.all(arg as unknown[]),
+  );
+}
+
+const mockRealtimeGateway = {
+  emitScheduleChanged: jest.fn(),
+  emitScheduleUpdated: jest.fn(),
+};
+
+const mockPhysicalProgressService = {
+  recalculateParentTasks: jest.fn().mockResolvedValue(undefined),
+  createReport: jest.fn().mockResolvedValue({ id: 'rep', reportNumber: 42 }),
 };
 
 describe('ScheduleService', () => {
@@ -28,11 +59,14 @@ describe('ScheduleService', () => {
       providers: [
         ScheduleService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: RealtimeGateway, useValue: mockRealtimeGateway },
+        { provide: PhysicalProgressService, useValue: mockPhysicalProgressService },
       ],
     }).compile();
 
     service = module.get<ScheduleService>(ScheduleService);
     jest.clearAllMocks();
+    runTransactionInline();
   });
 
   // ---------------------------------------------------------------------------
@@ -136,6 +170,90 @@ describe('ScheduleService', () => {
         }),
       );
     });
+
+    describe('afterId — inserção abaixo da linha selecionada', () => {
+      const anchor = {
+        id: 'ancora',
+        projectId,
+        parentId: 'pai-1',
+        level: 2,
+        order: 3,
+      };
+
+      beforeEach(() => {
+        mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+        mockPrismaService.scheduleItem.create.mockResolvedValue({ id: 'nova' });
+        mockPrismaService.scheduleItem.updateMany.mockResolvedValue({ count: 0 });
+      });
+
+      it('herda parentId e level da âncora e entra logo abaixo dela', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        // O DTO traz nível divergente de propósito: afterId tem precedência.
+        await service.create(projectId, {
+          ...baseDto,
+          level: 99,
+          afterId: 'ancora',
+        });
+
+        expect(mockPrismaService.scheduleItem.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              parentId: 'pai-1',
+              level: 2,
+              order: 4,
+            }),
+          }),
+        );
+      });
+
+      it('empurra os irmãos posteriores para abrir espaço', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        await service.create(projectId, { ...baseDto, afterId: 'ancora' });
+
+        expect(mockPrismaService.scheduleItem.updateMany).toHaveBeenCalledWith({
+          where: { projectId, parentId: 'pai-1', order: { gte: 4 } },
+          data: { order: { increment: 1 } },
+        });
+      });
+
+      // A raiz representa o Empreendimento e não admite irmãos.
+      it('vira filha da raiz quando a âncora é a própria raiz', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue({
+          id: 'raiz', projectId, parentId: null, level: 0, order: 0,
+        });
+        mockPrismaService.scheduleItem.findFirst.mockResolvedValue({ order: 7 });
+
+        await service.create(projectId, { ...baseDto, afterId: 'raiz' });
+
+        expect(mockPrismaService.scheduleItem.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ parentId: 'raiz', level: 1, order: 8 }),
+          }),
+        );
+        // Filha no fim da lista: nada a empurrar.
+        expect(mockPrismaService.scheduleItem.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('rejeita âncora de outro projeto', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue({
+          ...anchor, projectId: 'outro-projeto',
+        });
+
+        await expect(
+          service.create(projectId, { ...baseDto, afterId: 'ancora' }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('recalcula os pais após criar', async () => {
+        mockPrismaService.scheduleItem.findUnique.mockResolvedValue(anchor);
+
+        await service.create(projectId, { ...baseDto, afterId: 'ancora' });
+
+        expect(mockPhysicalProgressService.recalculateParentTasks).toHaveBeenCalledWith(projectId);
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -178,6 +296,8 @@ describe('ScheduleService', () => {
   // delete (remove)
   // ---------------------------------------------------------------------------
   describe('delete', () => {
+    const projectId = 'project-1';
+
     it('should throw NotFoundException when item not found', async () => {
       mockPrismaService.scheduleItem.findUnique.mockResolvedValue(null);
 
@@ -189,15 +309,52 @@ describe('ScheduleService', () => {
     it('should delete and return success message on success', async () => {
       const id = 'item-1';
 
-      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id });
-      mockPrismaService.scheduleItem.delete.mockResolvedValue({ id });
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id, projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([
+        { id, parentId: null },
+      ]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.remove(id);
 
       expect(result).toEqual({ message: 'Item excluído com sucesso' });
-      expect(mockPrismaService.scheduleItem.delete).toHaveBeenCalledWith({
-        where: { id },
+      expect(mockPrismaService.scheduleItem.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [id] } },
       });
+    });
+
+    // A FK parent_id é SET NULL, não CASCADE: sem remoção explícita da
+    // subárvore os filhos viram raízes órfãs com o level antigo.
+    it('apaga a subárvore inteira, das folhas para a raiz', async () => {
+      const id = 'pai';
+
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id, projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([
+        { id: 'pai', parentId: null },
+        { id: 'filho-a', parentId: 'pai' },
+        { id: 'filho-b', parentId: 'pai' },
+        { id: 'neto', parentId: 'filho-a' },
+        { id: 'outro-ramo', parentId: null },
+      ]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.remove(id);
+
+      const ordem = mockPrismaService.scheduleItem.deleteMany.mock.calls.map(
+        (c: [{ where: { id: { in: string[] } } }]) => c[0].where.id.in,
+      );
+      expect(ordem).toEqual([['neto'], ['filho-a', 'filho-b'], ['pai']]);
+      expect(ordem.flat()).not.toContain('outro-ramo');
+    });
+
+    it('recalcula os pais após excluir', async () => {
+      mockPrismaService.scheduleItem.findUnique.mockResolvedValue({ id: 'x', projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue([{ id: 'x', parentId: 'p' }]);
+      mockPrismaService.scheduleItem.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.remove('x');
+
+      expect(mockPhysicalProgressService.recalculateParentTasks).toHaveBeenCalledWith(projectId);
     });
   });
 
@@ -264,7 +421,14 @@ describe('ScheduleService', () => {
         },
       ];
 
-      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.project.findUnique.mockResolvedValue({
+        id: projectId,
+        name: 'Projeto',
+        startDate: new Date('2025-01-01'),
+        endDate: new Date('2025-06-30'),
+      });
+      // Já existe raiz — pula o retrofit de criação de raiz da EAP
+      mockPrismaService.scheduleItem.findFirst.mockResolvedValue({ id: 'p1' });
       mockPrismaService.scheduleItem.findMany.mockResolvedValue(mockItems);
 
       const result = await service.getGanttData(projectId);
@@ -385,6 +549,207 @@ describe('ScheduleService', () => {
       const result = await service.getCurvaS(projectId);
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // batchUpdate (Linha de Balanço)
+  // ---------------------------------------------------------------------------
+  describe('batchUpdate', () => {
+    const projectId = 'project-1';
+    const userId = 'user-1';
+
+    // Árvore: root → floor(f1) → folhas a1, a2
+    const treeItems = [
+      {
+        id: 'root', parentId: null, code: '1', name: 'Obra',
+        startDate: new Date('2025-01-01T12:00:00Z'), endDate: new Date('2025-01-20T12:00:00Z'),
+        durationDays: 20, _count: { children: 1 },
+      },
+      {
+        id: 'f1', parentId: 'root', code: '1.1', name: '1º Pavimento',
+        startDate: new Date('2025-01-01T12:00:00Z'), endDate: new Date('2025-01-20T12:00:00Z'),
+        durationDays: 20, _count: { children: 2 },
+      },
+      {
+        id: 'a1', parentId: 'f1', code: '1.1.1', name: 'Estrutura',
+        startDate: new Date('2025-01-01T12:00:00Z'), endDate: new Date('2025-01-10T12:00:00Z'),
+        durationDays: 10, _count: { children: 0 },
+      },
+      {
+        id: 'a2', parentId: 'f1', code: '1.1.2', name: 'Alvenaria',
+        startDate: new Date('2025-01-11T12:00:00Z'), endDate: new Date('2025-01-20T12:00:00Z'),
+        durationDays: 10, _count: { children: 0 },
+      },
+    ];
+
+    function mockTransaction() {
+      const tx = {
+        scheduleItem: { update: jest.fn().mockResolvedValue({}) },
+        scheduleRevision: { create: jest.fn().mockResolvedValue({ id: 'rev-1' }) },
+      };
+      mockPrismaService.$transaction.mockImplementation(async (cb: any) => cb(tx));
+      return tx;
+    }
+
+    it('should throw NotFoundException when project not found', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.batchUpdate('bad-project', userId, {
+          changes: [{ id: 'a1', startDate: '2025-01-01', endDate: '2025-01-10', durationDays: 10 }],
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException for item not in project', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue(treeItems);
+
+      await expect(
+        service.batchUpdate(projectId, userId, {
+          changes: [{ id: 'ghost', startDate: '2025-01-01', endDate: '2025-01-10', durationDays: 10 }],
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should reject non-leaf items', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue(treeItems);
+
+      await expect(
+        service.batchUpdate(projectId, userId, {
+          changes: [{ id: 'f1', startDate: '2025-01-01', endDate: '2025-01-10', durationDays: 10 }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject start date after end date', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue(treeItems);
+
+      await expect(
+        service.batchUpdate(projectId, userId, {
+          changes: [{ id: 'a1', startDate: '2025-02-01', endDate: '2025-01-10', durationDays: 10 }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should update leaves, roll up parent dates, create revision and emit event', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue(treeItems);
+      const tx = mockTransaction();
+
+      // a2 empurrada 5 dias: termina depois do fim atual do pavimento e da obra
+      const result = await service.batchUpdate(projectId, userId, {
+        description: 'Reprogramação teste',
+        changes: [{
+          id: 'a2',
+          startDate: '2025-01-16T12:00:00Z',
+          endDate: '2025-01-25T12:00:00Z',
+          durationDays: 10,
+        }],
+      });
+
+      expect(result).toEqual({
+        revisionId: 'rev-1', reportNumber: 42, updated: 1, parentsRecalculated: 2,
+      });
+
+      // Report unificado: a reprogramação entra no mesmo histórico do
+      // Cronograma e da Medição, sem deixar de gravar a revisão com o diff.
+      expect(mockPhysicalProgressService.createReport).toHaveBeenCalledWith(
+        projectId,
+        userId,
+        'Reprogramação — Reprogramação teste',
+      );
+
+      // 1 folha + 2 pais (f1 e root)
+      expect(tx.scheduleItem.update).toHaveBeenCalledTimes(3);
+      expect(tx.scheduleItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'a2' } }),
+      );
+      const parentCalls = tx.scheduleItem.update.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((c: any) => c.where.id === 'f1' || c.where.id === 'root');
+      expect(parentCalls).toHaveLength(2);
+      for (const call of parentCalls) {
+        expect(call.data.endDate).toEqual(new Date('2025-01-25T12:00:00Z'));
+        expect(call.data.startDate).toEqual(new Date('2025-01-01T12:00:00Z'));
+      }
+
+      // Revisão com before/after
+      expect(tx.scheduleRevision.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            projectId,
+            userId,
+            description: 'Reprogramação teste',
+            changes: [
+              expect.objectContaining({
+                itemId: 'a2',
+                code: '1.1.2',
+                name: 'Alvenaria',
+                before: expect.objectContaining({ durationDays: 10 }),
+                after: expect.objectContaining({ durationDays: 10 }),
+              }),
+            ],
+          }),
+        }),
+      );
+
+      expect(mockRealtimeGateway.emitScheduleChanged).toHaveBeenCalledWith({
+        projectId,
+        action: 'batch-update',
+      });
+    });
+
+    it('should not emit event when transaction fails', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleItem.findMany.mockResolvedValue(treeItems);
+      mockPrismaService.$transaction.mockRejectedValue(new Error('db down'));
+
+      await expect(
+        service.batchUpdate(projectId, userId, {
+          changes: [{
+            id: 'a1',
+            startDate: '2025-01-02T12:00:00Z',
+            endDate: '2025-01-11T12:00:00Z',
+            durationDays: 10,
+          }],
+        }),
+      ).rejects.toThrow('db down');
+
+      expect(mockRealtimeGateway.emitScheduleChanged).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // listRevisions
+  // ---------------------------------------------------------------------------
+  describe('listRevisions', () => {
+    it('should throw NotFoundException when project not found', async () => {
+      mockPrismaService.project.findUnique.mockResolvedValue(null);
+
+      await expect(service.listRevisions('bad-project')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should return revisions newest first with user info', async () => {
+      const projectId = 'project-1';
+      const revisions = [
+        { id: 'rev-2', createdAt: new Date(), changes: [], user: { id: 'u1', fullName: 'User', username: 'user' } },
+      ];
+      mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
+      mockPrismaService.scheduleRevision.findMany.mockResolvedValue(revisions);
+
+      const result = await service.listRevisions(projectId);
+
+      expect(result).toEqual(revisions);
+      expect(mockPrismaService.scheduleRevision.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { projectId },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
     });
   });
 });

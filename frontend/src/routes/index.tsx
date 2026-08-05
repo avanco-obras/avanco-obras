@@ -5,6 +5,7 @@ import Login from '../pages/Login';
 import Cadastro from '../pages/Cadastro';
 import Dashboard from '../pages/Dashboard';
 import Cronograma from '../pages/Cronograma';
+import LinhaBalanco from '../pages/LinhaBalanco';
 import Medicao from '../pages/Medicao';
 import ProgramacaoSemanal from '../pages/ProgramacaoSemanal';
 import Configuracoes from '../pages/Configuracoes';
@@ -31,10 +32,13 @@ export function AppRoutes() {
           </PrivateRoute>
         }
       >
-        <Route index element={<Navigate to="/cadastro" replace />} />
+        {/* Entrada padrão: Dashboard. Sem projeto, o AppLayout mostra o
+            estado vazio com CTA para o Cadastro. */}
+        <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="cadastro" element={<Cadastro />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="cronograma" element={<Cronograma />} />
+        <Route path="linha-de-balanco" element={<LinhaBalanco />} />
         <Route path="medicao" element={<Medicao />} />
         <Route path="programacao-semanal" element={<ProgramacaoSemanal />} />
         <Route path="configuracoes" element={<Configuracoes />} />

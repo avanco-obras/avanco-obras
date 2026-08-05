@@ -1,7 +1,16 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Upload } from 'lucide-react';
+import { Upload, Trash2 } from 'lucide-react';
 import { uploadsApi } from '@/services/api';
 import { useStore } from '@/store';
+import { useConfirm } from '@/components/ConfirmDialog';
+
+/** Extrai a mensagem amigável vinda do backend (Nest) de um erro do axios. */
+function friendlyError(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { message?: string | string[] } }; message?: string };
+  const msg = e?.response?.data?.message;
+  if (Array.isArray(msg)) return msg.join(' • ');
+  return msg || e?.message || fallback;
+}
 
 interface FloorPlanViewer2DProps {
   floorId: string | null;
@@ -24,8 +33,10 @@ export default function FloorPlanViewer2D({
   const [activePlan, setActivePlan] = useState<Plan | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const addToast = useStore((s) => s.addToast);
+  const confirm = useConfirm();
 
   const loadPlans = useCallback(async () => {
     if (!floorId) {
@@ -53,6 +64,21 @@ export default function FloorPlanViewer2D({
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !floorId) return;
+
+    // Validação: exclusivamente PDF (por MIME e por extensão, para tolerar
+    // navegadores que não preenchem o type).
+    const isPdf =
+      file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      addToast({
+        type: 'error',
+        title: 'Arquivo inválido',
+        description: 'A planta deve ser um arquivo PDF. Selecione um .pdf e tente novamente.',
+      });
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+
     setUploading(true);
     try {
       const form = new FormData();
@@ -65,11 +91,36 @@ export default function FloorPlanViewer2D({
       addToast({
         type: 'error',
         title: 'Falha no upload',
-        description: (err as Error).message,
+        description: friendlyError(err, 'Não foi possível enviar a planta. Tente novamente.'),
       });
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function handleDelete() {
+    if (!activePlan) return;
+    if (!(await confirm({
+      title: 'Remover planta',
+      message: `Remover a planta "${activePlan.fileName}"? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
+    setDeleting(true);
+    try {
+      await uploadsApi.delete(activePlan.id);
+      addToast({ type: 'success', title: 'Planta removida', description: activePlan.fileName });
+      await loadPlans();
+      onUploaded?.();
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao remover',
+        description: friendlyError(err, 'Não foi possível remover a planta. Tente novamente.'),
+      });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -155,10 +206,33 @@ export default function FloorPlanViewer2D({
             >
               <Upload size={12} /> {uploading ? 'Enviando...' : 'Subir planta'}
             </button>
+            {activePlan && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting || uploading}
+                title="Remover planta"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: '#fff',
+                  color: '#DC2626',
+                  border: '1px solid #FCA5A5',
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  opacity: deleting || uploading ? 0.6 : 1,
+                }}
+              >
+                <Trash2 size={12} /> {deleting ? 'Removendo...' : 'Remover'}
+              </button>
+            )}
             <input
               ref={fileRef}
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp"
+              accept="application/pdf,.pdf"
               onChange={handleUpload}
               style={{ display: 'none' }}
             />
@@ -174,7 +248,7 @@ export default function FloorPlanViewer2D({
       ) : !activePlan ? (
         <EmptyState
           message={`Nenhuma planta carregada para ${floorName ?? 'este pavimento'}.`}
-          subtext="Use o botão acima para enviar PDF, PNG ou JPG."
+          subtext="Use o botão acima para enviar a planta em PDF."
         />
       ) : (
         <PlanCanvas plan={activePlan} />

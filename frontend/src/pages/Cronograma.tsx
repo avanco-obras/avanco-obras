@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Undo2, Redo2 } from 'lucide-react';
+import {
+  Undo2, Redo2, ChevronsUpDown, ChevronsDownUp, Layers, CalendarRange,
+  SlidersHorizontal, Plus, ArrowLeft, ArrowRight, Columns, Download, Upload,
+  Flag, FileText, Save, History, RotateCcw,
+} from 'lucide-react';
+import { Toolbar, ToolbarButton, ToolbarMenu, ToolbarSearch, ToolbarSelect } from '@/components/Toolbar';
+import { RestoreReportModal, RestoreReportButton } from '@/components/RestoreReportModal';
+import {
+  DEP_TYPE_PT_TO_DB, formatDepsAsText, formatSuccessorsText,
+} from '@/lib/schedule-deps';
+import { buildScheduleWorkbook, scheduleExportFilename } from '@/lib/schedule-export';
 import { useStore } from '@/store';
 import { scheduleApi, baselineApi, progressApi } from '@/services/api';
 import { useHistoryStore } from '@/store/historyStore';
@@ -90,10 +100,6 @@ function compareWbs(a: string, b: string): number {
   return 0;
 }
 
-// Dependency type mapping: PT (português) → DB
-const DEP_TYPE_PT_TO_DB: Record<string, string> = { 'TI':'FS', 'II':'SS', 'TT':'FF', 'IT':'SF' };
-const DEP_TYPE_DB_TO_PT: Record<string, string> = { 'FS':'TI', 'SS':'II', 'FF':'TT', 'SF':'IT' };
-
 interface ParsedDep { rowId: number; type: string; lag: number; }
 interface ParseResult { deps: ParsedDep[]; errors: string[]; }
 
@@ -115,25 +121,6 @@ function parsePredecessorText(text: string, tasks: GanttTask[]): ParseResult {
     deps.push({ rowId, type, lag });
   }
   return { deps, errors };
-}
-
-function formatDepsAsText(task: GanttTask, tasks: GanttTask[]): string {
-  if (!task.predecessorDeps?.length) return '';
-  return task.predecessorDeps.map(dep => {
-    const pred = tasks.find(t => t.id === dep.predecessorId);
-    const rowId = pred?.rowId ?? '?';
-    const type = DEP_TYPE_DB_TO_PT[dep.type] ?? dep.type;
-    const lag = dep.lagDays > 0 ? `+${dep.lagDays}` : dep.lagDays < 0 ? `${dep.lagDays}` : '';
-    return type === 'TI' && lag === '' ? `${rowId}` : `${rowId}${type}${lag}`;
-  }).join(';');
-}
-
-function formatSuccessorsText(task: GanttTask, tasks: GanttTask[]): string {
-  if (!task.successorDeps?.length) return '';
-  return task.successorDeps.map(dep => {
-    const succ = tasks.find(t => t.id === dep.successorId);
-    return succ?.rowId ?? '?';
-  }).join(';');
 }
 
 function addWorkDays(date: Date, days: number): Date {
@@ -486,6 +473,17 @@ function barColor(actual: number, planned: number): string {
   if (actual >= planned) return '#15803D';
   if (actual >= planned - 15) return '#D97706';
   return '#B91C1C';
+}
+
+/**
+ * Rótulo do status da barra. A legenda de cores foi removida da tela, então
+ * este texto entra na tooltip da barra — é a única chave para o significado
+ * do verde / âmbar / vermelho.
+ */
+function barStatusLabel(actual: number, planned: number): string {
+  if (actual >= planned) return 'No prazo';
+  if (actual >= planned - 15) return 'Leve atraso';
+  return 'Crítico';
 }
 
 function badgeClass(actual: number, planned: number): string {
@@ -1190,6 +1188,11 @@ interface TaskModalProps {
   open: boolean;
   editingTask: GanttTask | null;
   parentTask: GanttTask | null;
+  /**
+   * Atividade abaixo da qual a nova será inserida, como irmã dela. O backend
+   * resolve pai, nível e ordem a partir dela — tem precedência sobre parentId.
+   */
+  afterTask: GanttTask | null;
   allTasks: GanttTask[];
   projectId: string;
   addToast: (t: { type: string; title: string; description?: string }) => void;
@@ -1197,7 +1200,7 @@ interface TaskModalProps {
   onSaved: () => void;
 }
 
-function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
+function TaskModal({ open, editingTask, parentTask, afterTask, allTasks, projectId, addToast, onClose, onSaved }: TaskModalProps) {
   const { push, triggerDataOnly } = useHistoryStore();
   const [form, setForm] = useState<FormState>(() =>
     editingTask ? formFromTask(editingTask) : defaultForm(parentTask, allTasks)
@@ -1300,7 +1303,12 @@ function TaskModal({ open, editingTask, parentTask, allTasks, projectId, addToas
           },
         });
       } else {
-        const created = await scheduleApi.create(projectId, payload);
+        // afterId só na criação: posiciona a nova atividade logo abaixo da
+        // linha selecionada, herdando o nível dela.
+        const created = await scheduleApi.create(projectId, {
+          ...payload,
+          ...(afterTask ? { afterId: afterTask.id } : {}),
+        });
         addToast({ type: 'success', title: 'Criado', description: `"${form.name}" adicionado.` });
 
         const newId = (created as { id: string }).id;
@@ -1826,9 +1834,6 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
         title: `Importação completa`,
         description: parts.join(' · ') + '.',
       });
-      if (result.errors.length > 0) {
-        console.log('Erros na importação:', result.errors);
-      }
       onImportSuccess();
       onClose();
     } catch (err: unknown) {
@@ -2063,6 +2068,7 @@ export default function Cronograma() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<GanttTask | null>(null);
   const [parentTask, setParentTask] = useState<GanttTask | null>(null);
+  const [afterTask, setAfterTask] = useState<GanttTask | null>(null);
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<GanttTask | null>(null);
@@ -2104,7 +2110,6 @@ export default function Cronograma() {
       return new Set(COL_DEFS.map(c => c.key));
     }
   });
-  const [showColPicker, setShowColPicker] = useState(false);
 
   // Baseline state
   const [baselines, setBaselines] = useState<any[]>([]);
@@ -2114,7 +2119,6 @@ export default function Cronograma() {
   const [selectedBaseline, setSelectedBaseline] = useState<any | null>(null);
   const [baselineComparison, setBaselineComparison] = useState<any | null>(null);
   const [savingBaseline, setSavingBaseline] = useState(false);
-  const [showBaselineMenu, setShowBaselineMenu] = useState(false);
 
   // Physical progress state
   const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
@@ -2124,7 +2128,8 @@ export default function Cronograma() {
   const [savingReport, setSavingReport] = useState(false);
   const [showReportHistory, setShowReportHistory] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
-  const [showReportMenu, setShowReportMenu] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectReport | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   // Inline edit state
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -2159,6 +2164,14 @@ export default function Cronograma() {
     onlyLate: false, onlyCritical: false, onlyDone: false, responsibles: []
   });
   const [showAdvFilters, setShowAdvFilters] = useState(false);
+
+  // Há algum filtro avançado preenchido? Realça o botão na toolbar.
+  const hasActiveAdvFilters = useMemo(
+    () => Object.values(advFilters).some(v =>
+      typeof v === 'string' ? v !== '' : Array.isArray(v) ? v.length > 0 : v === true,
+    ),
+    [advFilters],
+  );
 
   // Column widths state
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
@@ -2228,7 +2241,6 @@ export default function Cronograma() {
     try {
       const data = Array.from(visibleCols);
       localStorage.setItem('cronograma_cols', JSON.stringify(data));
-      console.log('[Cronograma] Saved visible columns:', data);
     } catch (e) {
       console.error('[Cronograma] Failed to save visible columns:', e);
     }
@@ -2239,7 +2251,6 @@ export default function Cronograma() {
     if (typeof window === 'undefined') return;
     try {
       localStorage.setItem('cronograma_col_widths', JSON.stringify(colWidths));
-      console.log('[Cronograma] Saved column widths');
     } catch (e) {
       console.error('[Cronograma] Failed to save column widths:', e);
     }
@@ -3133,6 +3144,36 @@ export default function Cronograma() {
     }
   }
 
+  /** Sobrescreve o estado atual com o do report escolhido. */
+  async function confirmRestore() {
+    if (!projectId || !restoreTarget) return;
+    setRestoring(true);
+    try {
+      const result = await progressApi.restoreReport(projectId, restoreTarget.id);
+      addToast({
+        type: 'success',
+        title: `Report #${restoreTarget.reportNumber} restaurado`,
+        description: `Avanço físico agora em ${result.physicalProgress.toFixed(2)}%.`
+          + (result.partial ? ' Apenas o cronograma foi restaurado.' : '')
+          + ` Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+      });
+      setRestoreTarget(null);
+      setShowReportHistory(false);
+      setSelectedReport(null);
+      await loadReportHistory();
+      loadData();
+      loadMetrics();
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao restaurar',
+        description: 'Nada foi alterado — o cronograma continua como estava.',
+      });
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   async function saveReport() {
     if (!projectId) return;
     setSavingReport(true);
@@ -3167,18 +3208,20 @@ export default function Cronograma() {
   }
 
   function handleExport() {
-    if (tasks.length === 0) return;
-    const header = 'Código,Nome,Nível,Início,Fim,Duração (dias),Prog. Plan (%),Prog. Real (%),Caminho Crítico';
-    const rows = tasks.map((t) =>
-      `"${t.code}","${t.name}",${t.level},"${t.startDate.slice(0, 10)}","${t.endDate.slice(0, 10)}",${t.durationDays ?? ''},${t.plannedProgress},${t.physicalProgress},${t.isCriticalPath ? 'Sim' : 'Não'}`
-    );
-    const csv = [header, ...rows].join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'cronograma.csv'; a.click();
-    URL.revokeObjectURL(url);
-    addToast({ type: 'success', title: 'Exportado', description: 'CSV gerado com sucesso.' });
+    if (tasks.length === 0) {
+      addToast({ type: 'warning', title: 'Nada para exportar', description: 'O cronograma está vazio.' });
+      return;
+    }
+    // Exporta as colunas visíveis, na ordem da tabela.
+    const columns = COL_DEFS
+      .filter(col => visibleCols.has(col.key))
+      .map(col => ({ key: col.key, label: col.label }));
+
+    const wb = buildScheduleWorkbook(tasks, columns);
+    const filename = scheduleExportFilename(currentProject?.name ?? 'projeto');
+    xlsx.writeFile(wb, filename);
+
+    addToast({ type: 'success', title: 'Exportado', description: `${filename} gerado com ${tasks.length} atividade(s).` });
   }
 
   // Column resize handlers
@@ -3210,7 +3253,6 @@ export default function Cronograma() {
 
   // Column toggle handler (ID column always required)
   function toggleCol(key: string) {
-    console.log('[Cronograma] toggleCol called for:', key);
     if (key === 'rowId') return; // ID column cannot be toggled
     const col = COL_DEFS.find(c => c.key === key);
     if (col?.fixed) return;
@@ -3218,13 +3260,10 @@ export default function Cronograma() {
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
-        console.log('[Cronograma] Hiding column:', key);
       } else {
         next.add(key);
-        console.log('[Cronograma] Showing column:', key);
       }
       next.add('rowId'); // Always ensure ID column is in the saved state
-      console.log('[Cronograma] New visible columns:', Array.from(next));
       return next;
     });
   }
@@ -3238,14 +3277,28 @@ export default function Cronograma() {
   );
   const isRootTask = (task: GanttTask) => task.level === 0 && !task.parentId;
 
+  /**
+   * Nova atividade a partir da barra: entra logo abaixo da linha selecionada,
+   * como irmã dela (mesmo nível). Sem seleção, cai no comportamento antigo —
+   * filha da raiz, no fim. Com a raiz selecionada, também vira filha da raiz,
+   * porque a raiz representa o Empreendimento e não admite irmãos.
+   */
   function openNew() {
     setEditingTask(null);
-    // Sem permitir irmãos da raiz: nova atividade vira filha direta da raiz.
-    setParentTask(rootTask);
+    const selected = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) ?? null : null;
+
+    if (!selected || isRootTask(selected)) {
+      setParentTask(rootTask);
+      setAfterTask(selected && isRootTask(selected) ? selected : null);
+    } else {
+      // O pai da selecionada define os defaults de código e nível do formulário.
+      setParentTask(tasks.find(t => t.id === selected.parentId) ?? rootTask);
+      setAfterTask(selected);
+    }
     setModalOpen(true);
   }
-  function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setModalOpen(true); }
-  function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setModalOpen(true); }
+  function openNewChild(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(null); setParentTask(task); setAfterTask(null); setModalOpen(true); }
+  function openEdit(task: GanttTask, e: React.MouseEvent) { e.stopPropagation(); setEditingTask(task); setParentTask(null); setAfterTask(null); setModalOpen(true); }
   function openDelete(task: GanttTask, e: React.MouseEvent) {
     e.stopPropagation();
     if (isRootTask(task)) {
@@ -3356,163 +3409,148 @@ export default function Cronograma() {
 
         {/* Toolbar */}
         <div className="ao-card-hdr" style={{ marginBottom: 4, flexShrink: 0 }}>
-          <span className="ao-card-title">EAP — Cronograma completo</span>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input
-              placeholder="Buscar atividade..."
+          <span className="ao-card-title">Cronograma</span>
+          <Toolbar>
+            {/* 1 — Buscar */}
+            <ToolbarSearch
               value={searchRaw}
-              onChange={(e) => setSearchRaw(e.target.value)}
-              style={{ padding: '5px 9px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', width: 160 }}
+              onChange={setSearchRaw}
+              placeholder="Buscar atividades"
+              ariaLabel="Buscar atividades"
             />
-            <button className="ao-btn ao-btn-sm" onClick={expandAll}>Expandir</button>
-            <button className="ao-btn ao-btn-sm" onClick={collapseAll}>Recolher</button>
-            <select
-              value={timeScale}
-              onChange={(e) => setTimeScale(e.target.value as TimeScale)}
-              style={{
-                padding: '5px 8px',
-                fontSize: 11,
-                border: '1px solid var(--bd)',
-                borderRadius: 6,
-                background: 'var(--s0)',
-                color: 'var(--t1)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              {SCALE_ORDER.map(scale => <option key={scale} value={scale}>{SCALE_LABELS[scale]}</option>)}
-            </select>
-            <button
-              className="ao-btn ao-btn-sm"
-              disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
-              onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
-              title="Remover recuo (subir um nível)"
-            >←</button>
-            <button
-              className="ao-btn ao-btn-sm"
-              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
-              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
-              title="Adicionar recuo (tornar filho da tarefa acima)"
-            >→</button>
-            <select
-              value={outlineLevel}
-              onChange={(e) => handleOutlineLevelChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-              style={{ padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 6, background: 'var(--s0)', color: 'var(--t1)', cursor: 'pointer', fontFamily: 'inherit' }}
-              title="Mostrar até este nível hierárquico"
-            >
-              <option value="all">Todos os níveis</option>
-              {[1,2,3,4,5].map(n => <option key={n} value={n}>Nível {n}</option>)}
-            </select>
-            <div style={{ position: 'relative' }}>
-              <button className="ao-btn ao-btn-sm" onClick={() => setShowColPicker(!showColPicker)}>⚙ Colunas</button>
-              {showColPicker && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--s0)', border: '1px solid var(--bd)', borderRadius: 8, padding: 8, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                  {COL_DEFS.filter(col => col.key !== 'rowId').map(col => (
-                    <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12, opacity: col.fixed ? 0.6 : 1 }}>
-                      <input
-                        type="checkbox"
-                        checked={visibleCols.has(col.key)}
-                        disabled={col.fixed}
-                        onChange={() => toggleCol(col.key)}
-                        style={{ cursor: col.fixed ? 'not-allowed' : 'pointer' }}
-                      />
-                      <span>{col.label}</span>
-                      {col.fixed && <span style={{ fontSize: 9, color: 'var(--t3)', marginLeft: 'auto' }}>obrigatória</span>}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              className="ao-btn ao-btn-sm"
-              onClick={() => setShowAdvFilters(!showAdvFilters)}
-              style={{
-                background: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#1A56A0' : undefined,
-                color: Object.values(advFilters).some((v: any) => v && (typeof v === 'string' ? v !== '' : v.length > 0 || v === true)) ? '#fff' : undefined,
-              }}
-            >
-              🔍 Filtros avançados
-            </button>
-            <div style={{ position: 'relative' }}>
-              <button className="ao-btn ao-btn-sm" style={{ background: '#7c3aed', color: '#fff', border: 'none' }} onClick={() => setShowBaselineMenu(!showBaselineMenu)} title="Opções de baseline">
-                📊 Baseline
-              </button>
-              {showBaselineMenu && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                  <button className="ao-btn ao-btn-sm" onClick={() => { loadBaselineHistory(); setShowBaselineHistory(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Visualizar histórico de linhas de base">
-                    📊 Histórico Baseline
-                  </button>
-                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowBaselineConfirm(true); setShowBaselineMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Gravar uma nova linha de base do cronograma">
-                    💾 Gravar Baseline
-                  </button>
-                </div>
-              )}
-            </div>
-            <div style={{ position: 'relative' }}>
-              <button className="ao-btn ao-btn-sm" style={{ background: '#ec4899', color: '#fff', border: 'none' }} onClick={() => setShowReportMenu(!showReportMenu)} title="Opções de report">
-                📈 Report
-              </button>
-              {showReportMenu && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg1)', border: '0.5px solid var(--bd)', borderRadius: 8, padding: 0, zIndex: 100, minWidth: 180, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                  <button className="ao-btn ao-btn-sm" onClick={() => { setShowSaveReportConfirm(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '8px 8px 0 0', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)' }} title="Gravar relatório de avanço físico">
-                    💾 Gravar Report
-                  </button>
-                  <button className="ao-btn ao-btn-sm" onClick={() => { loadReportHistory(); setShowReportHistory(true); setShowReportMenu(false); }} style={{ width: '100%', textAlign: 'left', borderRadius: '0 0 8px 8px', border: 'none', background: 'transparent', padding: '8px 12px', color: 'var(--t1)', borderTop: '0.5px solid var(--bd)' }} title="Visualizar histórico de relatórios">
-                    📈 Histórico Reports
-                  </button>
-                </div>
-              )}
-            </div>
-            <button className="ao-btn ao-btn-sm" onClick={handleExport}>CSV</button>
-            <button className="ao-btn ao-btn-sm" onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}>↑ Importar</button>
-            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
-            <button
-              className="ao-btn ao-btn-sm"
+
+            {/* 2 — Desfazer / Refazer */}
+            <ToolbarButton
+              icon={<Undo2 />}
+              ariaLabel="Desfazer"
               onClick={undo}
               disabled={past.length === 0 || historyProcessing}
               title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
-              style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
-            >
-              <Undo2 style={{ width: 12, height: 12 }} />
-            </button>
-            <button
-              className="ao-btn ao-btn-sm"
+            />
+            <ToolbarButton
+              icon={<Redo2 />}
+              ariaLabel="Refazer"
               onClick={redo}
               disabled={future.length === 0 || historyProcessing}
               title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
-              style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
-            >
-              <Redo2 style={{ width: 12, height: 12 }} />
-            </button>
-            <div style={{ width: 1, height: 18, background: 'var(--bd)', margin: '0 2px' }} />
-            <button
-              className="ao-btn ao-btn-sm"
-              style={{ background: '#1A56A0', color: '#fff', border: 'none' }}
-              onClick={openNew}
-            >
-              + Nova atividade
-            </button>
-          </div>
-        </div>
+            />
 
-        {/* Legend */}
-        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t2)', marginBottom: 4, flexWrap: 'wrap', flexShrink: 0 }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: 'rgba(55,138,221,.3)', borderRadius: 2, display: 'inline-block' }} />Planejado
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: '#3B6D11', borderRadius: 2, display: 'inline-block' }} />No prazo
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: '#D97706', borderRadius: 2, display: 'inline-block' }} />Leve atraso
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 10, height: 5, background: '#E24B4A', borderRadius: 2, display: 'inline-block' }} />Crítico
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 1, height: 12, background: '#E24B4A', display: 'inline-block' }} />Hoje
-          </span>
-          <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>· Duplo clique ou F2 para editar · Passe o mouse para ver ações</span>
+            {/* 3 — Expandir / Recolher */}
+            <ToolbarButton icon={<ChevronsUpDown />} label="Expandir" onClick={expandAll} title="Expandir todos os níveis" />
+            <ToolbarButton icon={<ChevronsDownUp />} label="Recolher" onClick={collapseAll} title="Recolher todos os níveis" />
+
+            {/* 4 — Todos os níveis */}
+            <ToolbarSelect
+              icon={<Layers size={12} />}
+              value={outlineLevel}
+              onChange={(v) => handleOutlineLevelChange(v === 'all' ? 'all' : Number(v))}
+              options={[
+                { value: 'all' as const, label: 'Todos os níveis' },
+                ...[1, 2, 3, 4, 5].map(n => ({ value: n, label: `Nível ${n}` })),
+              ]}
+              title="Mostrar até este nível hierárquico"
+              ariaLabel="Nível hierárquico exibido"
+            />
+
+            {/* 5 — Escala de tempo */}
+            <ToolbarSelect
+              icon={<CalendarRange size={12} />}
+              value={timeScale}
+              onChange={(v) => setTimeScale(v as TimeScale)}
+              options={SCALE_ORDER.map(scale => ({ value: scale, label: SCALE_LABELS[scale] }))}
+              title="Escala de tempo do Gantt"
+              ariaLabel="Escala de tempo"
+            />
+
+            {/* 6 — Filtros avançados */}
+            <ToolbarButton
+              icon={<SlidersHorizontal />}
+              label="Filtros avançados"
+              onClick={() => setShowAdvFilters(!showAdvFilters)}
+              variant={hasActiveAdvFilters ? 'primary' : 'default'}
+            />
+
+            {/* 7 — Nova atividade */}
+            <ToolbarButton icon={<Plus />} label="Nova atividade" variant="primary" onClick={openNew} />
+
+            {/* 8 — Recuos */}
+            <ToolbarButton
+              icon={<ArrowLeft />}
+              ariaLabel="Remover recuo"
+              title="Remover recuo (subir um nível)"
+              disabled={!selectedTaskId || !tasks.find(t => t.id === selectedTaskId)?.parentId}
+              onClick={() => selectedTaskId && outdentTask(selectedTaskId)}
+            />
+            <ToolbarButton
+              icon={<ArrowRight />}
+              ariaLabel="Adicionar recuo"
+              title="Adicionar recuo (tornar filho da tarefa acima)"
+              disabled={!selectedTaskId || tasks.findIndex(t => t.id === selectedTaskId) <= 0}
+              onClick={() => selectedTaskId && indentTask(selectedTaskId)}
+            />
+
+            {/* 9 — Colunas */}
+            <ToolbarMenu label="Colunas" icon={<Columns />} align="right" minWidth={200}>
+              {COL_DEFS.filter(col => col.key !== 'rowId').map(col => (
+                <label
+                  key={col.key}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '4px 4px',
+                    cursor: col.fixed ? 'not-allowed' : 'pointer', fontSize: 12,
+                    opacity: col.fixed ? 0.6 : 1, color: 'var(--t2)',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={visibleCols.has(col.key)}
+                    disabled={col.fixed}
+                    onChange={() => toggleCol(col.key)}
+                    style={{ cursor: col.fixed ? 'not-allowed' : 'pointer' }}
+                  />
+                  <span>{col.label}</span>
+                  {col.fixed && <span style={{ fontSize: 9, color: 'var(--t3)', marginLeft: 'auto' }}>obrigatória</span>}
+                </label>
+              ))}
+            </ToolbarMenu>
+
+            {/* 10 — Exportar */}
+            <ToolbarButton icon={<Download />} label="Exportar" onClick={handleExport} title="Exportar o cronograma em Excel (.xlsx)" />
+
+            {/* 11 — Importar */}
+            <ToolbarButton
+              icon={<Upload />}
+              label="Importar"
+              onClick={() => { setImportStep(1); setImportFile(null); setImportPreview([]); setImportErrors([]); setShowImport(true); }}
+            />
+
+            {/* 12 — Baseline */}
+            <ToolbarMenu
+              label="Baseline"
+              icon={<Flag />}
+              title="Opções de baseline"
+              items={[
+                { label: 'Gravar Baseline', icon: <Save size={12} />, onClick: () => setShowBaselineConfirm(true) },
+                { label: 'Histórico Baseline', icon: <History size={12} />, onClick: () => { loadBaselineHistory(); setShowBaselineHistory(true); } },
+              ]}
+            />
+
+            {/* 13 — Report */}
+            <ToolbarMenu
+              label="Report"
+              icon={<FileText />}
+              title="Opções de report"
+              items={[
+                { label: 'Gravar Report', icon: <Save size={12} />, onClick: () => setShowSaveReportConfirm(true) },
+                { label: 'Histórico de Reports', icon: <History size={12} />, onClick: () => { loadReportHistory(); setShowReportHistory(true); } },
+                {
+                  label: 'Restaurar versão…',
+                  icon: <RotateCcw size={12} />,
+                  separatorBefore: true,
+                  onClick: () => { loadReportHistory(); setShowReportHistory(true); },
+                },
+              ]}
+            />
+          </Toolbar>
         </div>
 
         {/* % Avanço Físico — consolidado: reflete apenas o último Report gravado.
@@ -3999,7 +4037,7 @@ export default function Cronograma() {
                       {/* Tooltip on bar hover */}
                       <div
                         style={{ position: 'absolute', left, width, height: ROW_H, top: 0, cursor: 'pointer', zIndex: 2 }}
-                        title={`${task.code} — ${task.name}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${Number(task.plannedProgress ?? 0).toFixed(2)}% | % Avanço Físico: ${Number(task.physicalProgress ?? 0).toFixed(2)}%`}
+                        title={`${task.code} — ${task.name}\nStatus: ${barStatusLabel(task.physicalProgress, task.plannedProgress)}\nInício: ${task.startDate.slice(0, 10)}\nFim: ${task.endDate.slice(0, 10)}\nDuração: ${task.durationDays ?? '—'} dias\nPlanejado: ${Number(task.plannedProgress ?? 0).toFixed(2)}% | % Avanço Físico: ${Number(task.physicalProgress ?? 0).toFixed(2)}%`}
                       />
                     </div>
                   );
@@ -4048,6 +4086,7 @@ export default function Cronograma() {
         open={modalOpen}
         editingTask={editingTask}
         parentTask={parentTask}
+        afterTask={afterTask}
         allTasks={tasks}
         projectId={projectId!}
         addToast={addToast as any}
@@ -4273,6 +4312,14 @@ export default function Cronograma() {
       )}
 
       {/* Report History Modal */}
+      <RestoreReportModal
+        open={!!restoreTarget}
+        report={restoreTarget}
+        restoring={restoring}
+        onCancel={() => setRestoreTarget(null)}
+        onConfirm={confirmRestore}
+      />
+
       {showReportHistory && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--bd)', borderRadius: 12, padding: 24, maxWidth: 900, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
@@ -4301,12 +4348,15 @@ export default function Cronograma() {
                         <td style={{ padding: 8, color: 'var(--t1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{r.physicalProgress.toFixed(2)}%</td>
                         <td style={{ padding: 8, color: 'var(--t2)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description || '—'}</td>
                         <td style={{ padding: 8, textAlign: 'center' }}>
-                          <button
-                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
-                            onClick={() => loadReportComparison(r)}
-                          >
-                            Comparar
-                          </button>
+                          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                              style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}
+                              onClick={() => loadReportComparison(r)}
+                            >
+                              Comparar
+                            </button>
+                            <RestoreReportButton onClick={() => setRestoreTarget(r)} disabled={restoring} />
+                          </div>
                         </td>
                       </tr>
                     ))}

@@ -14,7 +14,8 @@ export type UploadCategory = (typeof UPLOAD_CATEGORIES)[number];
 
 const EXT_BY_CATEGORY: Partial<Record<UploadCategory, string[]>> = {
   IFC_MODEL: ['.ifc'],
-  FLOOR_PLAN: ['.pdf', '.png', '.jpg', '.jpeg', '.webp'],
+  // Planta 2D do pavimento: exclusivamente PDF.
+  FLOOR_PLAN: ['.pdf'],
   PHOTO: ['.png', '.jpg', '.jpeg', '.webp', '.heic'],
   REPORT: ['.pdf'],
   PLANT: ['.pdf', '.png', '.jpg', '.jpeg'],
@@ -24,6 +25,8 @@ const EXT_BY_CATEGORY: Partial<Record<UploadCategory, string[]>> = {
 export class UploadsService implements OnModuleInit {
   private readonly logger = new Logger(UploadsService.name);
   private readonly minioClient: MinioClient;
+  /** Cliente usado só para assinar URLs entregues ao navegador (host público). */
+  private readonly minioPublicClient: MinioClient;
   private readonly bucket: string;
 
   constructor(
@@ -32,13 +35,30 @@ export class UploadsService implements OnModuleInit {
   ) {
     this.bucket = this.configService.get<string>('minio.bucket') ?? 'avanco-obras';
 
+    const accessKey = this.configService.get<string>('minio.accessKey') ?? 'minioadmin';
+    const secretKey = this.configService.get<string>('minio.secretKey') ?? 'minioadmin';
+    const region = this.configService.get<string>('minio.region') ?? 'us-east-1';
+
     const minioPort = this.configService.get<number | undefined>('minio.port');
     this.minioClient = new MinioClient({
       endPoint: this.configService.get<string>('minio.endpoint') ?? 'localhost',
       ...(minioPort !== undefined && { port: minioPort }),
       useSSL: this.configService.get<boolean>('minio.useSSL') ?? false,
-      accessKey: this.configService.get<string>('minio.accessKey') ?? 'minioadmin',
-      secretKey: this.configService.get<string>('minio.secretKey') ?? 'minioadmin',
+      accessKey,
+      secretKey,
+      region,
+    });
+
+    // Assinatura precisa usar o host que o navegador realmente alcança, senão a
+    // assinatura SigV4 (que inclui o Host) não confere e o objeto não carrega.
+    const publicPort = this.configService.get<number | undefined>('minio.publicPort');
+    this.minioPublicClient = new MinioClient({
+      endPoint: this.configService.get<string>('minio.publicEndpoint') ?? 'localhost',
+      ...(publicPort !== undefined && { port: publicPort }),
+      useSSL: this.configService.get<boolean>('minio.publicUseSSL') ?? false,
+      accessKey,
+      secretKey,
+      region,
     });
   }
 
@@ -224,6 +244,6 @@ export class UploadsService implements OnModuleInit {
   }
 
   async getPresignedUrl(storageKey: string): Promise<string> {
-    return this.minioClient.presignedGetObject(this.bucket, storageKey, 3600);
+    return this.minioPublicClient.presignedGetObject(this.bucket, storageKey, 3600);
   }
 }

@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '@/store';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { DataTable } from '@/components/DataTable';
 import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
 import {
   FileText,
@@ -131,8 +133,11 @@ function sketchfabEmbedUrl(url: string): string {
 
 export default function Cadastro() {
   const { currentProject, setCurrentProject, addToast } = useStore();
+  const confirm = useConfirm();
 
   const [form, setForm] = useState<ProjectFormData>(DEFAULT_FORM);
+  // Snapshot do último estado salvo/carregado, para detectar alterações não salvas.
+  const [savedSnapshot, setSavedSnapshot] = useState<ProjectFormData>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
 
   // Plantas state
@@ -168,7 +173,7 @@ export default function Cadastro() {
   // Pre-fill from currentProject
   useEffect(() => {
     if (currentProject) {
-      setForm({
+      const filled: ProjectFormData = {
         name: currentProject.name ?? '',
         company: currentProject.company ?? '',
         address: currentProject.address ?? '',
@@ -184,9 +189,11 @@ export default function Cadastro() {
         towers: '',
         floorsPerTower: '',
         unitsPerFloor: '',
-        engineer: '',
-        contact: '',
-      });
+        engineer: currentProject.engineer ?? '',
+        contact: currentProject.contact ?? '',
+      };
+      setForm(filled);
+      setSavedSnapshot(filled);
 
       if (currentProject.members) {
         setMembers(
@@ -200,6 +207,19 @@ export default function Cadastro() {
       }
     }
   }, [currentProject]);
+
+  // Alterações não salvas: botão só ativo quando há mudança + aviso ao sair/recarregar.
+  const isDirty = useMemo(
+    () => JSON.stringify(form) !== JSON.stringify(savedSnapshot),
+    [form, savedSnapshot],
+  );
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   // Load uploads on mount when project exists
   useEffect(() => {
@@ -231,6 +251,8 @@ export default function Cadastro() {
       name: form.name.trim(),
       company: form.company.trim(),
       address: form.address.trim(),
+      engineer: form.engineer.trim(),
+      contact: form.contact.trim(),
       status: form.status,
       startDate: form.startDate || undefined,
       endDate: form.endDate || undefined,
@@ -322,7 +344,12 @@ export default function Cadastro() {
 
   async function handleRemoveIfc() {
     if (!ifcUpload) return;
-    if (!window.confirm('Remover o modelo IFC atual?')) return;
+    if (!(await confirm({
+      title: 'Remover modelo IFC',
+      message: 'Remover o modelo IFC atual?',
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
     try {
       await uploadsApi.delete(ifcUpload.id);
       setIfcUpload(null);
@@ -590,10 +617,15 @@ export default function Cadastro() {
       <div className="ao-card">
         <div className="ao-card-hdr">
           <span className="ao-card-title">Empreendimento</span>
-          <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving}>
-            {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
-            {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {isDirty && !saving && (
+              <span style={{ fontSize: 10.5, color: 'var(--amber)', fontWeight: 600 }}>Alterações não salvas</span>
+            )}
+            <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving || !isDirty}>
+              {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
+              {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
+            </button>
+          </div>
         </div>
 
         <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -655,6 +687,9 @@ export default function Cadastro() {
                 <input style={inputStyle} type="number" min="0" step="0.01" value={form.totalArea} onChange={(e) => handleFormChange('totalArea', e.target.value)} placeholder="0,00" />
               </div>
             </div>
+            <p style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 8, lineHeight: 1.5 }}>
+              Torres, pavimentos e unidades servem para <strong>pré-preencher a importação por IA</strong> — não são salvos como dados do projeto. A área total é salva.
+            </p>
           </div>
 
           {/* ── Prazo e custo ── */}
@@ -922,50 +957,45 @@ export default function Cadastro() {
         </div>
 
         {/* Members table */}
-        {members.length === 0 ? (
-          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>
-            Nenhum membro adicionado. Use o formulário acima para convidar a equipe.
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="ao-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}></th>
-                  <th>Nome</th>
-                  <th>E-mail</th>
-                  <th>Função</th>
-                  <th style={{ width: 44 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((member) => {
-                  const initials = member.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
-                  return (
-                    <tr key={member.id}>
-                      <td>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                          {initials}
-                        </div>
-                      </td>
-                      <td style={{ fontWeight: 500 }}>{member.name || '—'}</td>
-                      <td className="mono">{member.email}</td>
-                      <td><span className="ao-badge ao-bk">{ROLE_LABELS[member.role]}</span></td>
-                      <td>
-                        <button
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
-                          onClick={() => handleRemoveMember(member.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          rows={members}
+          getRowKey={(m) => m.id}
+          searchable
+          searchAccessor={(m) => `${m.name} ${m.email}`}
+          searchPlaceholder="Buscar membro…"
+          emptyMessage="Nenhum membro adicionado. Use o formulário acima para convidar a equipe."
+          columns={[
+            {
+              key: 'avatar',
+              header: '',
+              width: 36,
+              render: (m) => {
+                const initials = m.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
+                return (
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                    {initials}
+                  </div>
+                );
+              },
+            },
+            { key: 'name', header: 'Nome', sortable: true, sortValue: (m) => m.name, render: (m) => <span style={{ fontWeight: 500 }}>{m.name || '—'}</span> },
+            { key: 'email', header: 'E-mail', sortable: true, cellClassName: 'mono', render: (m) => m.email },
+            { key: 'role', header: 'Função', sortable: true, sortValue: (m) => ROLE_LABELS[m.role], render: (m) => <span className="ao-badge ao-bk">{ROLE_LABELS[m.role]}</span> },
+            {
+              key: 'actions',
+              header: '',
+              width: 44,
+              render: (m) => (
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
+                  onClick={() => handleRemoveMember(m.id)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       {/* ── AI Import Modal ──────────────────────────────────────────── */}

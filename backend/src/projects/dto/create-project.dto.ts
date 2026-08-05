@@ -29,6 +29,16 @@ export class CreateProjectDto {
   @MinLength(5)
   address: string;
 
+  @ApiPropertyOptional({ description: 'Responsible engineer name' })
+  @IsOptional()
+  @IsString()
+  engineer?: string;
+
+  @ApiPropertyOptional({ description: 'Contact / phone' })
+  @IsOptional()
+  @IsString()
+  contact?: string;
+
   @ApiPropertyOptional({ enum: ProjectStatus, default: ProjectStatus.PLANNING })
   @IsOptional()
   @IsEnum(ProjectStatus)
@@ -72,6 +82,13 @@ export class CreateProjectDto {
   @Min(1)
   @Max(24)
   hoursPerDay?: number;
+
+  @ApiPropertyOptional({ description: 'Dia de início da semana da programação (0=Domingo … 6=Sábado)', default: 1, minimum: 0, maximum: 6 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  weekStartDay?: number;
 
   @ApiPropertyOptional({ description: 'IANA timezone', default: 'America/Sao_Paulo', example: 'America/Sao_Paulo' })
   @IsOptional()

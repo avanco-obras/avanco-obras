@@ -1,4 +1,8 @@
-import { PrismaClient, UserRole, ProjectStatus, MeasurementMethod, TaskStatus, RestrictionStatus } from '@prisma/client';
+import {
+  PrismaClient, UserRole, ProjectStatus, MeasurementMethod,
+  WeeklyProgramStatus, WeeklyActivityStatus, WeeklyActivityOrigin,
+  WeeklyRestrictionStatus, WeeklySnapshotKind,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -14,6 +18,9 @@ async function main() {
       `Seed skipped — ${existingProjectCount} project(s) already exist. ` +
       'Set FORCE_SEED=1 to wipe and reseed.',
     );
+    // Módulo de Programação Semanal (v2): tabelas novas podem estar vazias
+    // após o db push — semeia só esse módulo, sem tocar no resto.
+    await backfillWeeklyModule();
     return;
   }
 
@@ -22,9 +29,13 @@ async function main() {
   // ---------------------------------------------------------------------------
   // Clean existing data in dependency order
   // ---------------------------------------------------------------------------
-  await prisma.restriction.deleteMany();
-  await prisma.weeklyTask.deleteMany();
-  await prisma.weeklyPlan.deleteMany();
+  await prisma.weeklySnapshot.deleteMany();
+  await prisma.weeklyRestrictionActivity.deleteMany();
+  await prisma.weeklyRestriction.deleteMany();
+  await prisma.weeklyActivity.deleteMany();
+  await prisma.weeklyProgram.deleteMany();
+  await prisma.restrictionType.deleteMany();
+  await prisma.contractor.deleteMany();
   await prisma.measurement.deleteMany();
   await prisma.scheduleDependency.deleteMany();
   await prisma.scheduleItem.deleteMany();
@@ -143,6 +154,8 @@ async function main() {
   // ---------------------------------------------------------------------------
   const towerNames = ['Torre A', 'Torre B'];
   const floorDefinitions = [
+    { name: 'Subsolo 2', level: -2, order: -2 },
+    { name: 'Subsolo 1', level: -1, order: -1 },
     { name: 'Térreo', level: 0, order: 0 },
     { name: '1º Andar', level: 1, order: 1 },
     { name: '2º Andar', level: 2, order: 2 },
@@ -173,7 +186,16 @@ async function main() {
 
       // Térreo has 2 units (lojas/salão), Cobertura has 2 units (coberturas), other floors have 4 apts
       let unitDefs: { name: string; area: number }[];
-      if (floorDef.level === 0) {
+      if (floorDef.level < 0) {
+        // Subsolos — garagem / vagas e áreas técnicas
+        const ss = Math.abs(floorDef.level);
+        unitDefs = [
+          { name: `Vagas SS${ss} - Bloco A`, area: 240.00 },
+          { name: `Vagas SS${ss} - Bloco B`, area: 240.00 },
+          { name: `Depósitos SS${ss}`, area: 60.00 },
+          { name: `Área Técnica SS${ss}`, area: 40.00 },
+        ];
+      } else if (floorDef.level === 0) {
         // Térreo
         unitDefs = [
           { name: `Loja 01`, area: 120.00 },
@@ -819,234 +841,7 @@ async function main() {
 
   console.log(`Created ${measurementCount} measurements.`);
 
-  // ---------------------------------------------------------------------------
-  // Weekly Plans - Weeks 16, 17, 18 of 2025
-  // ---------------------------------------------------------------------------
-  // Week 16 of 2025: April 14-18
-  const week16 = await prisma.weeklyPlan.create({
-    data: {
-      projectId: project.id,
-      weekNumber: 16,
-      year: 2025,
-      startDate: new Date('2025-04-14'),
-      endDate: new Date('2025-04-18'),
-      ppcTarget: 80.00,
-      ppcActual: 83.33,
-      ppcForecast: 82.00,
-      notes: 'Semana produtiva. Alvenaria do 2º andar da Torre A concluída. Instalações do Térreo em fase final.',
-    },
-  });
-
-  // Week 16 Tasks
-  await prisma.weeklyTask.createMany({
-    data: [
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: adminUser.id,
-        description: 'Concluir alvenaria do 2º andar Torre A - Apts 201 a 204',
-        location: 'Torre A - 2º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: adminUser.id,
-        description: 'Executar contrapiso Térreo Torre A - Loja 01 e 02',
-        location: 'Torre A - Térreo',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: adminUser.id,
-        description: 'Instalação de tubulação hidráulica - 1º andar Torre A',
-        location: 'Torre A - 1º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: viewerUser.id,
-        description: 'Levantamento topográfico para início fundações Torre B',
-        location: 'Torre B - Área externa',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: adminUser.id,
-        description: 'Concretagem laje 3º andar Torre A',
-        location: 'Torre A - 3º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week16.id,
-        assignedToId: adminUser.id,
-        description: 'Instalação rede elétrica subsolos',
-        location: 'Subsolo / Infraestrutura',
-        status: TaskStatus.NOT_COMPLETED,
-        nonCompletionCause: 'Aguardando entrega de materiais pelo fornecedor - atraso de 5 dias',
-      },
-    ],
-  });
-
-  // Week 17 of 2025: April 22-25 (Semana Santa - 4 dias)
-  const week17 = await prisma.weeklyPlan.create({
-    data: {
-      projectId: project.id,
-      weekNumber: 17,
-      year: 2025,
-      startDate: new Date('2025-04-22'),
-      endDate: new Date('2025-04-25'),
-      ppcTarget: 80.00,
-      ppcActual: 71.43,
-      ppcForecast: 75.00,
-      notes: 'Semana curta (Semana Santa). Produção reduzida conforme planejado. PPC abaixo da meta devido ao feriado.',
-    },
-  });
-
-  await prisma.weeklyTask.createMany({
-    data: [
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Alvenaria 3º andar Torre A - Apts 301 e 302',
-        location: 'Torre A - 3º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Reboco interno Térreo Torre A - finalizar',
-        location: 'Torre A - Térreo',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Instalação elétrica quadros distribuição 1º andar Torre A',
-        location: 'Torre A - 1º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Alvenaria 3º andar Torre A - Apts 303 e 304',
-        location: 'Torre A - 3º Andar',
-        status: TaskStatus.PARTIALLY,
-        nonCompletionCause: 'Chuvas intensas na quinta e sexta-feira interromperam os serviços externos',
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: viewerUser.id,
-        description: 'Escavação bloco coroamento B1 a B4 - Torre B',
-        location: 'Torre B - Fundações',
-        status: TaskStatus.COMPLETED,
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Revestimento cerâmico banheiros Térreo Torre A',
-        location: 'Torre A - Térreo',
-        status: TaskStatus.NOT_COMPLETED,
-        nonCompletionCause: 'Material não entregue a tempo - cerâmica em trânsito',
-      },
-      {
-        weeklyPlanId: week17.id,
-        assignedToId: adminUser.id,
-        description: 'Instalação hidráulica 2º andar Torre A - shafts',
-        location: 'Torre A - 2º Andar',
-        status: TaskStatus.COMPLETED,
-      },
-    ],
-  });
-
-  // Week 18 of 2025: April 28 - May 2
-  const week18 = await prisma.weeklyPlan.create({
-    data: {
-      projectId: project.id,
-      weekNumber: 18,
-      year: 2025,
-      startDate: new Date('2025-04-28'),
-      endDate: new Date('2025-05-02'),
-      ppcTarget: 80.00,
-      ppcActual: null,
-      ppcForecast: 82.00,
-      notes: 'Semana em execução. Foco em recuperar atraso nas instalações elétricas e finalizar alvenaria do 3º andar.',
-    },
-  });
-
-  await prisma.weeklyTask.createMany({
-    data: [
-      {
-        weeklyPlanId: week18.id,
-        assignedToId: adminUser.id,
-        description: 'Finalizar alvenaria 3º andar Torre A - todos os apartamentos',
-        location: 'Torre A - 3º Andar',
-        status: TaskStatus.NOT_COMPLETED,
-      },
-      {
-        weeklyPlanId: week18.id,
-        assignedToId: adminUser.id,
-        description: 'Concretagem laje 4º andar Torre A',
-        location: 'Torre A - 4º Andar',
-        status: TaskStatus.NOT_COMPLETED,
-      },
-      {
-        weeklyPlanId: week18.id,
-        assignedToId: adminUser.id,
-        description: 'Instalação elétrica subsolos - retomada após entrega materiais',
-        location: 'Subsolo / Infraestrutura',
-        status: TaskStatus.NOT_COMPLETED,
-      },
-      {
-        weeklyPlanId: week18.id,
-        assignedToId: adminUser.id,
-        description: 'Revestimento cerâmico banheiros Térreo Torre A',
-        location: 'Torre A - Térreo',
-        status: TaskStatus.NOT_COMPLETED,
-      },
-      {
-        weeklyPlanId: week18.id,
-        assignedToId: viewerUser.id,
-        description: 'Armação e concretagem blocos coroamento Torre B',
-        location: 'Torre B - Fundações',
-        status: TaskStatus.NOT_COMPLETED,
-      },
-    ],
-  });
-
-  console.log('Created 3 weekly plans with tasks.');
-
-  // ---------------------------------------------------------------------------
-  // Restrictions
-  // ---------------------------------------------------------------------------
-  await prisma.restriction.createMany({
-    data: [
-      {
-        weeklyPlanId: week16.id,
-        description: 'Entrega de materiais elétricos (cabos, eletrodutos, quadros de distribuição) pelo fornecedor Eletroforte',
-        responsible: 'João Martins - Compras',
-        dueDate: new Date('2025-04-18'),
-        status: RestrictionStatus.RELEASED,
-        resolvedAt: new Date('2025-04-22'),
-      },
-      {
-        weeklyPlanId: week17.id,
-        description: 'Aprovação de projeto complementar de SPDA (pára-raios) pela concessionária para liberação da cobertura',
-        responsible: 'Engenheiro Carlos Eduardo',
-        dueDate: new Date('2025-04-30'),
-        status: RestrictionStatus.IN_ANALYSIS,
-        resolvedAt: null,
-      },
-      {
-        weeklyPlanId: week18.id,
-        description: 'Entrega de cerâmica modelo Cotto D\'Este 60x60 (cor Grigio) - 480m² - pedido atrasado no fornecedor',
-        responsible: 'Ana Lima - Suprimentos',
-        dueDate: new Date('2025-05-05'),
-        status: RestrictionStatus.PENDING,
-        resolvedAt: null,
-      },
-    ],
-  });
-
-  console.log('Created 3 restrictions.');
+  await seedWeeklyModule(project.id, project.weekStartDay ?? 1, adminUser.id);
 
   // ---------------------------------------------------------------------------
   // Summary
@@ -1060,9 +855,10 @@ async function main() {
     activityTypes: await prisma.activityType.count(),
     scheduleItems: await prisma.scheduleItem.count(),
     measurements: await prisma.measurement.count(),
-    weeklyPlans: await prisma.weeklyPlan.count(),
-    weeklyTasks: await prisma.weeklyTask.count(),
-    restrictions: await prisma.restriction.count(),
+    weeklyPrograms: await prisma.weeklyProgram.count(),
+    weeklyActivities: await prisma.weeklyActivity.count(),
+    weeklyRestrictions: await prisma.weeklyRestriction.count(),
+    contractors: await prisma.contractor.count(),
   };
 
   console.log('\n=== Seed Summary ===');
@@ -1074,13 +870,278 @@ async function main() {
   console.log(`Activity Types: ${counts.activityTypes}`);
   console.log(`Schedule Items: ${counts.scheduleItems}`);
   console.log(`Measurements:   ${counts.measurements}`);
-  console.log(`Weekly Plans:   ${counts.weeklyPlans}`);
-  console.log(`Weekly Tasks:   ${counts.weeklyTasks}`);
-  console.log(`Restrictions:   ${counts.restrictions}`);
+  console.log(`Weekly Programs:     ${counts.weeklyPrograms}`);
+  console.log(`Weekly Activities:   ${counts.weeklyActivities}`);
+  console.log(`Weekly Restrictions: ${counts.weeklyRestrictions}`);
+  console.log(`Contractors:         ${counts.contractors}`);
   console.log('\nDatabase seeded successfully!');
   console.log('\nCredentials:');
   console.log('  Admin:  carlos@horizonte.com.br / admin123');
   console.log('  Viewer: viewer@horizonte.com.br / viewer123');
+}
+
+// ---------------------------------------------------------------------------
+// Programação Semanal (v2) — empreiteiras, tipos de restrição, semanas exemplo
+// ---------------------------------------------------------------------------
+
+const DEFAULT_RESTRICTION_TYPES = [
+  'Material', 'Projeto', 'Mão de Obra', 'Equipamento', 'Clima',
+  'Dependência de outra atividade', 'Cliente', 'Financeiro',
+];
+
+function startOfWeekUtc(date: Date, weekStartDay: number): Date {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const diff = (d.getUTCDay() - weekStartDay + 7) % 7;
+  d.setUTCDate(d.getUTCDate() - diff);
+  return d;
+}
+
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+function isoWeek(date: Date): { week: number; year: number } {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return { week, year: d.getUTCFullYear() };
+}
+
+/** Indicadores no formato gravado em WeeklyProgram.indicators no fechamento. */
+function computeSeedIndicators(
+  activities: Array<{ status: WeeklyActivityStatus; contractorName?: string | null; responsible?: string | null }>,
+  restrictions: Array<{ typeName?: string | null; status: WeeklyRestrictionStatus }>,
+) {
+  const valid = activities.filter((a) => a.status !== WeeklyActivityStatus.CANCELADA);
+  const completed = valid.filter((a) => a.status === WeeklyActivityStatus.CONCLUIDA);
+  const carried = valid.filter((a) => a.status !== WeeklyActivityStatus.CONCLUIDA);
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
+
+  const groupBy = <T,>(arr: T[], key: (t: T) => string) => {
+    const m = new Map<string, T[]>();
+    arr.forEach((x) => {
+      const k = key(x);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(x);
+    });
+    return m;
+  };
+
+  const byContractor = Array.from(groupBy(valid, (a) => a.contractorName ?? 'Sem empresa')).map(([name, list]) => ({
+    name,
+    total: list.length,
+    completed: list.filter((a) => a.status === WeeklyActivityStatus.CONCLUIDA).length,
+    ppc: pct(list.filter((a) => a.status === WeeklyActivityStatus.CONCLUIDA).length, list.length),
+    reprogrammedPct: pct(list.filter((a) => a.status !== WeeklyActivityStatus.CONCLUIDA).length, list.length),
+  }));
+
+  const byResponsible = Array.from(groupBy(valid, (a) => a.responsible ?? 'Sem responsável')).map(([name, list]) => ({
+    responsible: name,
+    planned: list.length,
+    delivered: list.filter((a) => a.status === WeeklyActivityStatus.CONCLUIDA).length,
+    ppc: pct(list.filter((a) => a.status === WeeklyActivityStatus.CONCLUIDA).length, list.length),
+  }));
+
+  const causes = groupBy(restrictions, (r) => r.typeName ?? 'Sem tipo');
+  const topCauses = Array.from(causes)
+    .map(([type, list]) => ({ type, count: list.length }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
+    ppc: pct(completed.length, valid.length),
+    totalActivities: activities.length,
+    validActivities: valid.length,
+    completed: completed.length,
+    cancelled: activities.length - valid.length,
+    carriedOver: carried.length,
+    reprogrammedPct: pct(carried.length, valid.length),
+    restrictionsCount: restrictions.length,
+    restrictionsPending: restrictions.filter((r) => r.status === WeeklyRestrictionStatus.PENDENTE).length,
+    topCauses,
+    byContractor,
+    byResponsible,
+  };
+}
+
+async function seedWeeklyModule(projectId: string, weekStartDay: number, adminUserId: string) {
+  const [alfa, beta, hidro] = await Promise.all([
+    prisma.contractor.create({ data: { projectId, name: 'Construtora Alfa' } }),
+    prisma.contractor.create({ data: { projectId, name: 'Beta Acabamentos' } }),
+    prisma.contractor.create({ data: { projectId, name: 'Hidro Instalações' } }),
+  ]);
+
+  await prisma.restrictionType.createMany({
+    data: DEFAULT_RESTRICTION_TYPES.map((name, i) => ({ projectId, name, order: i })),
+  });
+  const types = await prisma.restrictionType.findMany({ where: { projectId } });
+  const typeId = (name: string) => types.find((t) => t.name === name)!.id;
+
+  const currentStart = startOfWeekUtc(new Date(), weekStartDay);
+  const prevStart = addDays(currentStart, -7);
+
+  // ── Semana anterior (FECHADA) ────────────────────────────────────────────
+  const prevIso = isoWeek(prevStart);
+  const prevProgram = await prisma.weeklyProgram.create({
+    data: {
+      projectId,
+      weekNumber: prevIso.week,
+      year: prevIso.year,
+      startDate: prevStart,
+      endDate: addDays(prevStart, 6),
+      meetingDate: addDays(prevStart, 7),
+      status: WeeklyProgramStatus.FECHADA,
+      publishedAt: prevStart,
+      closedAt: addDays(prevStart, 7),
+    },
+  });
+
+  const A = WeeklyActivityStatus;
+  const O = WeeklyActivityOrigin;
+  const prevActs = [] as Array<Awaited<ReturnType<typeof prisma.weeklyActivity.create>>>;
+  const prevActData = [
+    { local: 'Obra', torre: 'Torre A', pavimento: '5º Andar', activityName: 'Alvenaria — eixo 1 a 4', contractorId: alfa.id, responsible: 'João Pereira', status: A.CONCLUIDA, percentExecuted: 100, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '4º Andar', activityName: 'Contrapiso — aptos 401 a 404', contractorId: alfa.id, responsible: 'Maria Souza', status: A.CONCLUIDA, percentExecuted: 100, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '5º Andar', activityName: 'Reboco interno — aptos 501 e 502', contractorId: beta.id, responsible: 'João Pereira', status: A.EM_ANDAMENTO, percentExecuted: 60, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '3º Andar', activityName: 'Revestimento de piso — apto 501', contractorId: beta.id, responsible: 'Maria Souza', status: A.NAO_INICIADA, percentExecuted: 0, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '3º Andar', activityName: 'Revestimento de piso — apto 502', contractorId: beta.id, responsible: 'Maria Souza', status: A.NAO_INICIADA, percentExecuted: 0, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '2º Andar', activityName: 'Pintura de teto — aptos 201 a 204', contractorId: beta.id, responsible: 'João Pereira', status: A.CANCELADA, percentExecuted: 0, origin: O.CRONOGRAMA },
+    { local: 'Área comum', torre: '', pavimento: 'Térreo', activityName: 'Regularização do hall de entrada', contractorId: hidro.id, responsible: 'Carlos Eduardo', status: A.CONCLUIDA, percentExecuted: 100, origin: O.MANUAL },
+  ];
+  for (let i = 0; i < prevActData.length; i++) {
+    prevActs.push(await prisma.weeklyActivity.create({ data: { ...prevActData[i], programId: prevProgram.id, order: i } }));
+  }
+
+  const prevRestriction = await prisma.weeklyRestriction.create({
+    data: {
+      programId: prevProgram.id,
+      typeId: typeId('Projeto'),
+      description: 'Revisão do projeto elétrico — rev. 3',
+      responsible: 'Projetista — eng. eletricista',
+      dueDate: addDays(prevStart, 2),
+      resolvedAt: addDays(prevStart, 3),
+      status: WeeklyRestrictionStatus.RESOLVIDA,
+      impactsProgram: false,
+      activityLinks: { create: [{ activityId: prevActs[2].id }] },
+    },
+  });
+
+  const contractorName = (id: string | null) =>
+    id === alfa.id ? alfa.name : id === beta.id ? beta.name : id === hidro.id ? hidro.name : null;
+  const prevIndicators = computeSeedIndicators(
+    prevActData.map((a) => ({ status: a.status, contractorName: contractorName(a.contractorId), responsible: a.responsible })),
+    [{ typeName: 'Projeto', status: WeeklyRestrictionStatus.RESOLVIDA }],
+  );
+  await prisma.weeklyProgram.update({ where: { id: prevProgram.id }, data: { indicators: prevIndicators } });
+
+  const prevPayload = JSON.parse(JSON.stringify({
+    program: { ...prevProgram, indicators: prevIndicators },
+    activities: prevActs,
+    restrictions: [prevRestriction],
+  }));
+  await prisma.weeklySnapshot.createMany({
+    data: [
+      { programId: prevProgram.id, kind: WeeklySnapshotKind.PUBLICACAO, payload: prevPayload, createdById: adminUserId, createdAt: prevStart },
+      { programId: prevProgram.id, kind: WeeklySnapshotKind.FECHAMENTO, payload: prevPayload, createdById: adminUserId, createdAt: addDays(prevStart, 7) },
+    ],
+  });
+
+  // ── Semana corrente (PUBLICADA) ──────────────────────────────────────────
+  const curIso = isoWeek(currentStart);
+  const curProgram = await prisma.weeklyProgram.create({
+    data: {
+      projectId,
+      weekNumber: curIso.week,
+      year: curIso.year,
+      startDate: currentStart,
+      endDate: addDays(currentStart, 6),
+      meetingDate: addDays(currentStart, 7),
+      status: WeeklyProgramStatus.PUBLICADA,
+      publishedAt: currentStart,
+    },
+  });
+
+  // Reprogramadas automáticas (vindas da semana fechada, não concluídas)
+  const carryovers = [prevActs[2], prevActs[3], prevActs[4]];
+  const curCarryActs = [] as Array<Awaited<ReturnType<typeof prisma.weeklyActivity.create>>>;
+  for (let i = 0; i < carryovers.length; i++) {
+    const src = carryovers[i];
+    curCarryActs.push(await prisma.weeklyActivity.create({
+      data: {
+        programId: curProgram.id,
+        origin: O.REPROGRAMADA,
+        status: A.REPROGRAMADA,
+        percentExecuted: 0,
+        local: src.local, torre: src.torre, pavimento: src.pavimento,
+        activityName: src.activityName,
+        contractorId: src.contractorId, responsible: src.responsible,
+        carryoverFromId: src.id,
+        order: i,
+      },
+    }));
+  }
+
+  const curNewData = [
+    { local: 'Obra', torre: 'Torre A', pavimento: '6º Andar', activityName: 'Alvenaria — eixo 1 a 4', contractorId: alfa.id, responsible: 'João Pereira', status: A.PROGRAMADA, percentExecuted: 0, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '5º Andar', activityName: 'Contrapiso — aptos 501 a 504', contractorId: alfa.id, responsible: 'Maria Souza', status: A.EM_ANDAMENTO, percentExecuted: 40, origin: O.CRONOGRAMA },
+    { local: 'Obra', torre: 'Torre A', pavimento: '3º Andar', activityName: 'Instalação hidráulica — shafts', contractorId: hidro.id, responsible: 'Carlos Eduardo', status: A.PROGRAMADA, percentExecuted: 0, origin: O.CRONOGRAMA },
+    { local: 'Área comum', torre: '', pavimento: 'Térreo', activityName: 'Limpeza de fachada', contractorId: hidro.id, responsible: 'Carlos Eduardo', status: A.CONCLUIDA, percentExecuted: 100, origin: O.MANUAL },
+  ];
+  const curNewActs = [] as Array<Awaited<ReturnType<typeof prisma.weeklyActivity.create>>>;
+  for (let i = 0; i < curNewData.length; i++) {
+    curNewActs.push(await prisma.weeklyActivity.create({
+      data: { ...curNewData[i], programId: curProgram.id, order: carryovers.length + i },
+    }));
+  }
+
+  await prisma.weeklyRestriction.create({
+    data: {
+      programId: curProgram.id,
+      typeId: typeId('Material'),
+      description: 'Falta de porcelanato 60×60',
+      responsible: 'Suprimentos — R. Teixeira',
+      dueDate: addDays(currentStart, 5),
+      status: WeeklyRestrictionStatus.PENDENTE,
+      impactsProgram: true,
+      activityLinks: { create: [{ activityId: curCarryActs[1].id }, { activityId: curCarryActs[2].id }] },
+    },
+  });
+  await prisma.weeklyRestriction.create({
+    data: {
+      programId: curProgram.id,
+      typeId: typeId('Mão de Obra'),
+      description: 'Equipe de reboco incompleta (2 oficiais)',
+      responsible: 'Beta Acabamentos — encarregado',
+      dueDate: addDays(currentStart, 3),
+      status: WeeklyRestrictionStatus.PENDENTE,
+      impactsProgram: false,
+      activityLinks: { create: [{ activityId: curCarryActs[0].id }] },
+    },
+  });
+
+  const curPayload = JSON.parse(JSON.stringify({
+    program: curProgram,
+    activities: [...curCarryActs, ...curNewActs],
+    restrictions: [],
+  }));
+  await prisma.weeklySnapshot.create({
+    data: { programId: curProgram.id, kind: WeeklySnapshotKind.PUBLICACAO, payload: curPayload, createdById: adminUserId, createdAt: currentStart },
+  });
+
+  console.log('Created weekly module: 3 contractors, 8 restriction types, 2 programs (1 fechada + 1 publicada).');
+}
+
+async function backfillWeeklyModule() {
+  const programCount = await prisma.weeklyProgram.count();
+  if (programCount > 0) return;
+  const project = await prisma.project.findFirst();
+  const admin = await prisma.user.findFirst({ where: { role: UserRole.ADMIN } });
+  if (!project || !admin) return;
+  console.log('Weekly module empty — backfilling contractors, restriction types and sample programs...');
+  await seedWeeklyModule(project.id, project.weekStartDay ?? 1, admin.id);
 }
 
 main()

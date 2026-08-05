@@ -41,4 +41,17 @@ export class PhysicalProgressController {
   ) {
     return this.progressService.getReportWithComparison(projectId, reportId);
   }
+
+  /**
+   * Restaura o projeto para o estado deste Report, sobrescrevendo os dados
+   * atuais. Grava um Report de segurança antes, para que dê para voltar.
+   */
+  @Post('reports/:reportId/restore')
+  async restoreReport(
+    @Param('projectId') projectId: string,
+    @Param('reportId') reportId: string,
+    @Request() req: any,
+  ) {
+    return this.progressService.restoreReport(projectId, reportId, req.user.id);
+  }
 }

@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, ContactShadows, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Tower, Floor, Unit } from '@/types';
-import ProceduralBuilding from './ProceduralBuilding';
+import ProceduralBuilding, { type SiteworkInfo, FLOOR_HEIGHT, TOWER_SPACING, stackExtentAll } from './ProceduralBuilding';
 import ViewerLegend from './ViewerLegend';
 
 const IfcModel = lazy(() => import('./IfcModel'));
@@ -22,11 +22,14 @@ export interface BuildingViewer3DProps {
     floorId: string | null;
     unitId: string | null;
   };
+  /** Pavimento sob hover no painel direito — realçado no 3D (sync). */
+  hoveredFloorId?: string | null;
   filterPredicate?: (unit: Unit) => boolean;
   onSelectTower: (id: string) => void;
   onSelectFloor: (id: string) => void;
   onSelectUnit: (id: string) => void;
   height?: number | string;
+  sitework?: SiteworkInfo | null;
 }
 
 export default function BuildingViewer3D(props: BuildingViewer3DProps) {
@@ -40,18 +43,47 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
     floorProgress,
     towerProgress,
     selection,
+    hoveredFloorId,
     filterPredicate,
     onSelectTower,
     onSelectFloor,
     onSelectUnit,
-    height = 460,
+    height = '100%',
+    sitework,
   } = props;
 
-  const [explode, setExplode] = useState(0);
-  const [transparency, setTransparency] = useState(false);
+  // Enquadramento: alvo no centro do edifício e distância p/ preencher ~80% do viewport.
+  const { cameraTarget, cameraPosition, minDistance, maxDistance, fogNear, fogFar } = useMemo(() => {
+    // Extensão vertical pela pilha CONTÍGUA (espelha o render) — imune a saltos de "level".
+    const { minStack, maxStack } = stackExtentAll(floors);
+    const buildingH = Math.max((maxStack - minStack + 1) * FLOOR_HEIGHT, FLOOR_HEIGHT);
+    const buildingW = Math.max(towers.length, 1) * TOWER_SPACING + (sitework ? 12 : 0);
+    const midY = ((minStack + maxStack) / 2) * FLOOR_HEIGHT + FLOOR_HEIGHT / 2;
+    const maxDim = Math.max(buildingW, buildingH, 12);
 
-  // Camera target — frame the towers
-  const cameraTarget = useMemo<[number, number, number]>(() => [0, 8, 0], []);
+    // Distância que enquadra tanto a altura quanto a largura, com margem (~82% de preenchimento).
+    const fovRad = (42 * Math.PI) / 180;
+    const t = Math.tan(fovRad / 2);
+    const aspect = 1.4; // coluna do viewer é mais larga que alta
+    const vFit = buildingH / 2 / t;
+    const hFit = buildingW / 2 / (t * aspect);
+    const dist = Math.max(vFit, hFit, 14) * 1.12;
+
+    // Câmera orbita o centro do edifício (target + direção * distância).
+    const dir = new THREE.Vector3(0.85, 0.55, 1).normalize();
+    return {
+      cameraTarget: [0, midY, 0] as [number, number, number],
+      cameraPosition: [
+        dir.x * dist + (sitework ? 3 : 0),
+        midY + dir.y * dist,
+        dir.z * dist,
+      ] as [number, number, number],
+      minDistance: Math.max(dist * 0.35, 8),
+      maxDistance: dist * 3,
+      fogNear: dist + maxDim * 0.4,
+      fogFar: dist + maxDim * 2.4,
+    };
+  }, [floors, towers.length, sitework]);
 
   return (
     <div
@@ -59,6 +91,7 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
         position: 'relative',
         width: '100%',
         height,
+        minHeight: 460,
         background: 'linear-gradient(180deg, #EFF6FF 0%, #F8FAFC 100%)',
         borderRadius: 12,
         overflow: 'hidden',
@@ -67,14 +100,14 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
     >
       <Canvas shadows dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: false }}>
         <color attach="background" args={['transparent']} />
-        <fog attach="fog" args={['#EFF6FF', 30, 90]} />
-        <PerspectiveCamera makeDefault position={[30, 22, 30]} fov={42} near={0.1} far={500} />
+        <fog attach="fog" args={['#EFF6FF', fogNear, fogFar]} />
+        <PerspectiveCamera makeDefault position={cameraPosition} fov={42} near={0.1} far={2000} />
         <OrbitControls
           target={cameraTarget}
           enableDamping
           dampingFactor={0.08}
-          minDistance={8}
-          maxDistance={120}
+          minDistance={minDistance}
+          maxDistance={maxDistance}
           maxPolarAngle={Math.PI / 2.1}
         />
         <hemisphereLight args={[new THREE.Color('#ffffff'), new THREE.Color('#cbd5e1'), 0.55]} />
@@ -95,7 +128,7 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
           cellColor="#cbd5e1"
           sectionSize={10}
           sectionColor="#94a3b8"
-          fadeDistance={70}
+          fadeDistance={90}
           fadeStrength={1}
           infiniteGrid
         />
@@ -108,7 +141,6 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
               unitProgress={unitProgress}
               onSelectUnit={onSelectUnit}
               selectedUnitId={selection.unitId}
-              transparency={transparency}
             />
           </Suspense>
         ) : (
@@ -118,60 +150,16 @@ export default function BuildingViewer3D(props: BuildingViewer3DProps) {
             unitsByFloor={unitsByFloor}
             progress={{ unitProgress, floorProgress, towerProgress }}
             selection={selection}
+            hoveredFloorId={hoveredFloorId}
             filterPredicate={filterPredicate}
-            explodeFactor={explode}
-            transparency={transparency}
             onSelectTower={onSelectTower}
             onSelectFloor={onSelectFloor}
             onSelectUnit={onSelectUnit}
+            sitework={sitework}
           />
         )}
       </Canvas>
 
-      {/* Floating controls */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          background: 'rgba(255,255,255,0.92)',
-          backdropFilter: 'blur(8px)',
-          padding: '10px 12px',
-          borderRadius: 10,
-          boxShadow: '0 2px 12px rgba(15,23,42,0.12)',
-          fontSize: 11,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          minWidth: 180,
-          border: '1px solid rgba(15,23,42,0.06)',
-          zIndex: 5,
-        }}
-      >
-        <div style={{ fontWeight: 600, fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Visualização
-        </div>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 10, color: '#475569' }}>Explosão (pavtos)</span>
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.1}
-            value={explode}
-            onChange={(e) => setExplode(parseFloat(e.target.value))}
-            disabled={mode === 'ifc'}
-          />
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-          <input
-            type="checkbox"
-            checked={transparency}
-            onChange={(e) => setTransparency(e.target.checked)}
-          />
-          Transparência
-        </label>
-      </div>
       <ViewerLegend />
       <ModeBadge mode={mode} hasIfc={!!ifcUrl} />
     </div>

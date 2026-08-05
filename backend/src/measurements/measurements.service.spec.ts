@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { MeasurementsService } from './measurements.service';
 import { PrismaService } from '../common/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 describe('MeasurementsService', () => {
   let service: MeasurementsService;
@@ -39,6 +40,10 @@ describe('MeasurementsService', () => {
       providers: [
         MeasurementsService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: RealtimeGateway,
+          useValue: { emitMeasurementUpdated: jest.fn(), emitScheduleUpdated: jest.fn(), emitScheduleChanged: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -63,7 +68,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should return measurements array ordered desc when unit exists', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       const measurements = [
         { id: 'm2', date: new Date('2024-02-01'), percentComplete: 80 },
         { id: 'm1', date: new Date('2024-01-01'), percentComplete: 40 },
@@ -104,7 +109,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should throw NotFoundException when activityType not found', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(null);
 
       await expect(
@@ -120,7 +125,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should use dto.percentComplete directly for PERCENT method', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(percentActivityType);
       const createdMeasurement = { id: MEASUREMENT_ID, percentComplete: 75 };
       prisma.measurement.create.mockResolvedValue(createdMeasurement);
@@ -134,7 +139,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should call prisma.measurement.create with correct percentComplete', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(percentActivityType);
       prisma.measurement.create.mockResolvedValue({});
 
@@ -167,7 +172,7 @@ describe('MeasurementsService', () => {
     };
 
     it('should calculate percentComplete = (executedQty / totalQty) * 100', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(metricActivityType);
       prisma.measurement.create.mockResolvedValue({});
 
@@ -185,7 +190,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should cap percentComplete at 100 when executedQty > totalQty', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(metricActivityType);
       prisma.measurement.create.mockResolvedValue({});
 
@@ -213,7 +218,7 @@ describe('MeasurementsService', () => {
         measurementMethod: 'METRIC',
         defaultQuantity: 100,
       };
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
       prisma.activityType.findUnique.mockResolvedValue(activityTypeWithDefault);
       prisma.measurement.create.mockResolvedValue({});
 
@@ -252,6 +257,9 @@ describe('MeasurementsService', () => {
         id: MEASUREMENT_ID,
         executedQty: 30,
         totalQty: 100,
+        unitId: UNIT_ID,
+        measuredById: USER_ID,
+        unit: { floor: { tower: { projectId: 'project-uuid' } } },
         activityType: {
           measurementMethod: 'METRIC',
           defaultQuantity: null,
@@ -261,6 +269,8 @@ describe('MeasurementsService', () => {
       prisma.measurement.update.mockResolvedValue({
         id: MEASUREMENT_ID,
         percentComplete: 60,
+        unitId: UNIT_ID,
+        unit: { floor: { tower: { projectId: 'project-uuid' } } },
       });
 
       await service.update(MEASUREMENT_ID, { executedQty: 60 });
@@ -279,13 +289,21 @@ describe('MeasurementsService', () => {
         id: MEASUREMENT_ID,
         executedQty: null,
         totalQty: null,
+        unitId: UNIT_ID,
+        measuredById: USER_ID,
+        unit: { floor: { tower: { projectId: 'project-uuid' } } },
         activityType: {
           measurementMethod: 'PERCENT',
           defaultQuantity: null,
         },
       };
       prisma.measurement.findUnique.mockResolvedValue(existingMeasurement);
-      prisma.measurement.update.mockResolvedValue({});
+      prisma.measurement.update.mockResolvedValue({
+        id: MEASUREMENT_ID,
+        percentComplete: 90,
+        unitId: UNIT_ID,
+        unit: { floor: { tower: { projectId: 'project-uuid' } } },
+      });
 
       await service.update(MEASUREMENT_ID, { percentComplete: 90 });
 
@@ -315,7 +333,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should call prisma.$transaction with array of creates', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
 
       const activityTypes = [
         { id: ACTIVITY_TYPE_ID, measurementMethod: 'PERCENT', defaultQuantity: null },
@@ -338,7 +356,7 @@ describe('MeasurementsService', () => {
     });
 
     it('should calculate percentComplete for METRIC items in batch', async () => {
-      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID });
+      prisma.unit.findUnique.mockResolvedValue({ id: UNIT_ID, floor: { tower: { projectId: "project-uuid" } } });
 
       const activityTypes = [
         { id: ACTIVITY_TYPE_ID, measurementMethod: 'METRIC', defaultQuantity: null },
