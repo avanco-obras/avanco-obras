@@ -317,7 +317,6 @@ export default function Configuracoes() {
     if (!currentProject) return;
     setDeletingEmpreendimento(true);
     try {
-      console.log(`Deletando empreendimento: ${currentProject.id}`);
       await projectsApi.delete(currentProject.id);
       setCurrentProject(null);
       setShowDeleteConfirm(false);
@@ -327,7 +326,6 @@ export default function Configuracoes() {
         description: 'Todos os dados (torres, pavimentos, medições, cronograma e restrições) foram removidos permanentemente.',
       });
     } catch (error: unknown) {
-      console.error('Erro ao deletar empreendimento:', error);
       const errorMsg =
         error instanceof Error
           ? error.message

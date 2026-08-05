@@ -1834,9 +1834,6 @@ function ImportModal({ open, step, file, preview, importing, projectId, onClose,
         title: `Importação completa`,
         description: parts.join(' · ') + '.',
       });
-      if (result.errors.length > 0) {
-        console.log('Erros na importação:', result.errors);
-      }
       onImportSuccess();
       onClose();
     } catch (err: unknown) {
@@ -2244,7 +2241,6 @@ export default function Cronograma() {
     try {
       const data = Array.from(visibleCols);
       localStorage.setItem('cronograma_cols', JSON.stringify(data));
-      console.log('[Cronograma] Saved visible columns:', data);
     } catch (e) {
       console.error('[Cronograma] Failed to save visible columns:', e);
     }
@@ -2255,7 +2251,6 @@ export default function Cronograma() {
     if (typeof window === 'undefined') return;
     try {
       localStorage.setItem('cronograma_col_widths', JSON.stringify(colWidths));
-      console.log('[Cronograma] Saved column widths');
     } catch (e) {
       console.error('[Cronograma] Failed to save column widths:', e);
     }
@@ -3258,7 +3253,6 @@ export default function Cronograma() {
 
   // Column toggle handler (ID column always required)
   function toggleCol(key: string) {
-    console.log('[Cronograma] toggleCol called for:', key);
     if (key === 'rowId') return; // ID column cannot be toggled
     const col = COL_DEFS.find(c => c.key === key);
     if (col?.fixed) return;
@@ -3266,13 +3260,10 @@ export default function Cronograma() {
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
-        console.log('[Cronograma] Hiding column:', key);
       } else {
         next.add(key);
-        console.log('[Cronograma] Showing column:', key);
       }
       next.add('rowId'); // Always ensure ID column is in the saved state
-      console.log('[Cronograma] New visible columns:', Array.from(next));
       return next;
     });
   }
