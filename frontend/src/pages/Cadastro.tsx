@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '@/store';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
@@ -135,6 +135,8 @@ export default function Cadastro() {
   const confirm = useConfirm();
 
   const [form, setForm] = useState<ProjectFormData>(DEFAULT_FORM);
+  // Snapshot do último estado salvo/carregado, para detectar alterações não salvas.
+  const [savedSnapshot, setSavedSnapshot] = useState<ProjectFormData>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
 
   // Plantas state
@@ -170,7 +172,7 @@ export default function Cadastro() {
   // Pre-fill from currentProject
   useEffect(() => {
     if (currentProject) {
-      setForm({
+      const filled: ProjectFormData = {
         name: currentProject.name ?? '',
         company: currentProject.company ?? '',
         address: currentProject.address ?? '',
@@ -188,7 +190,9 @@ export default function Cadastro() {
         unitsPerFloor: '',
         engineer: currentProject.engineer ?? '',
         contact: currentProject.contact ?? '',
-      });
+      };
+      setForm(filled);
+      setSavedSnapshot(filled);
 
       if (currentProject.members) {
         setMembers(
@@ -202,6 +206,19 @@ export default function Cadastro() {
       }
     }
   }, [currentProject]);
+
+  // Alterações não salvas: botão só ativo quando há mudança + aviso ao sair/recarregar.
+  const isDirty = useMemo(
+    () => JSON.stringify(form) !== JSON.stringify(savedSnapshot),
+    [form, savedSnapshot],
+  );
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   // Load uploads on mount when project exists
   useEffect(() => {
@@ -599,10 +616,15 @@ export default function Cadastro() {
       <div className="ao-card">
         <div className="ao-card-hdr">
           <span className="ao-card-title">Empreendimento</span>
-          <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving}>
-            {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
-            {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {isDirty && !saving && (
+              <span style={{ fontSize: 10.5, color: 'var(--amber)', fontWeight: 600 }}>Alterações não salvas</span>
+            )}
+            <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving || !isDirty}>
+              {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
+              {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
+            </button>
+          </div>
         </div>
 
         <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
