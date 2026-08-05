@@ -88,6 +88,8 @@ model Project {
   name             String
   company          String
   address          String
+  engineer         String?
+  contact          String?
   status           ProjectStatus @default(PLANNING)
   startDate        DateTime      @map("start_date")
   endDate          DateTime      @map("end_date")

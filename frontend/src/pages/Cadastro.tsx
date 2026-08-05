@@ -186,8 +186,8 @@ export default function Cadastro() {
         towers: '',
         floorsPerTower: '',
         unitsPerFloor: '',
-        engineer: '',
-        contact: '',
+        engineer: currentProject.engineer ?? '',
+        contact: currentProject.contact ?? '',
       });
 
       if (currentProject.members) {
@@ -233,6 +233,8 @@ export default function Cadastro() {
       name: form.name.trim(),
       company: form.company.trim(),
       address: form.address.trim(),
+      engineer: form.engineer.trim(),
+      contact: form.contact.trim(),
       status: form.status,
       startDate: form.startDate || undefined,
       endDate: form.endDate || undefined,
@@ -662,6 +664,9 @@ export default function Cadastro() {
                 <input style={inputStyle} type="number" min="0" step="0.01" value={form.totalArea} onChange={(e) => handleFormChange('totalArea', e.target.value)} placeholder="0,00" />
               </div>
             </div>
+            <p style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 8, lineHeight: 1.5 }}>
+              Torres, pavimentos e unidades servem para <strong>pré-preencher a importação por IA</strong> — não são salvos como dados do projeto. A área total é salva.
+            </p>
           </div>
 
           {/* ── Prazo e custo ── */}

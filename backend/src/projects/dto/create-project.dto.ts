@@ -29,6 +29,16 @@ export class CreateProjectDto {
   @MinLength(5)
   address: string;
 
+  @ApiPropertyOptional({ description: 'Responsible engineer name' })
+  @IsOptional()
+  @IsString()
+  engineer?: string;
+
+  @ApiPropertyOptional({ description: 'Contact / phone' })
+  @IsOptional()
+  @IsString()
+  contact?: string;
+
   @ApiPropertyOptional({ enum: ProjectStatus, default: ProjectStatus.PLANNING })
   @IsOptional()
   @IsEnum(ProjectStatus)

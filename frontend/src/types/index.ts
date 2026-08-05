@@ -34,6 +34,8 @@ export interface Project {
   name: string;
   company: string;
   address: string;
+  engineer?: string;
+  contact?: string;
   status: ProjectStatus;
   startDate: string;
   endDate: string;
