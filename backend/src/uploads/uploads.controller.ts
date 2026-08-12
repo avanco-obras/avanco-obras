@@ -39,7 +39,8 @@ export class UploadsController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a file to a project' })
   @ApiParam({ name: 'projectId', description: 'Project ID' })
-  @ApiQuery({ name: 'category', description: 'File category (e.g. report, photo, document)', required: true })
+  @ApiQuery({ name: 'category', description: 'IFC_MODEL | FLOOR_PLAN | PHOTO | REPORT | PLANT | general', required: true })
+  @ApiQuery({ name: 'floorId', description: 'Required when category=FLOOR_PLAN', required: false })
   @ApiBody({
     schema: {
       type: 'object',
@@ -58,20 +59,39 @@ export class UploadsController {
     @Param('projectId') projectId: string,
     @UploadedFile() file: Express.Multer.File,
     @Query('category') category: string,
+    @Query('floorId') floorId?: string,
   ) {
     if (!file) {
       throw new BadRequestException('Nenhum arquivo enviado');
     }
-    const cat = category ?? 'general';
-    return this.uploadsService.upload(projectId, file, cat);
+    return this.uploadsService.upload(projectId, file, category ?? 'general', floorId);
   }
 
   @Get('projects/:projectId/uploads')
-  @ApiOperation({ summary: 'List all uploads for a project' })
+  @ApiOperation({ summary: 'List uploads for a project (filterable by category/floorId)' })
   @ApiParam({ name: 'projectId', description: 'Project ID' })
-  @ApiResponse({ status: 200, description: 'Returns all uploads for the project' })
-  findAll(@Param('projectId') projectId: string) {
-    return this.uploadsService.findAll(projectId);
+  @ApiQuery({ name: 'category', required: false })
+  @ApiQuery({ name: 'floorId', required: false })
+  findAll(
+    @Param('projectId') projectId: string,
+    @Query('category') category?: string,
+    @Query('floorId') floorId?: string,
+  ) {
+    return this.uploadsService.findAll(projectId, { category, floorId });
+  }
+
+  @Get('projects/:projectId/uploads/ifc-model')
+  @ApiOperation({ summary: 'Get the active IFC model for a project with a presigned URL' })
+  @ApiParam({ name: 'projectId', description: 'Project ID' })
+  getIfcModel(@Param('projectId') projectId: string) {
+    return this.uploadsService.getIfcModel(projectId);
+  }
+
+  @Get('floors/:floorId/plans')
+  @ApiOperation({ summary: 'List 2D plans (PDF/image) for a floor with presigned URLs' })
+  @ApiParam({ name: 'floorId', description: 'Floor ID' })
+  listFloorPlans(@Param('floorId') floorId: string) {
+    return this.uploadsService.listFloorPlans(floorId);
   }
 
   @Delete('uploads/:id')

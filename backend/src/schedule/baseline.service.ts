@@ -160,7 +160,7 @@ export class BaselineService {
             startDate: current.startDate,
             endDate: current.endDate,
             durationDays: current.durationDays,
-            actualProgress: Number(current.actualProgress),
+            physicalProgress: Number(current.physicalProgress),
           },
         });
         comparison.summary.itemsChanged++;
@@ -187,10 +187,10 @@ export class BaselineService {
         comparison.summary.durationChanged++;
       }
       if (
-        Number(baselineItem.actualProgress) !==
-        Number(current.actualProgress)
+        Number(baselineItem.physicalProgress) !==
+        Number(current.physicalProgress)
       ) {
-        changes.push('actualProgress');
+        changes.push('physicalProgress');
         comparison.summary.progressChanged++;
       }
 
@@ -205,13 +205,13 @@ export class BaselineService {
             startDate: baselineItem.startDate,
             endDate: baselineItem.endDate,
             durationDays: baselineItem.durationDays,
-            actualProgress: Number(baselineItem.actualProgress),
+            physicalProgress: Number(baselineItem.physicalProgress),
           },
           current: {
             startDate: current.startDate,
             endDate: current.endDate,
             durationDays: current.durationDays,
-            actualProgress: Number(current.actualProgress),
+            physicalProgress: Number(current.physicalProgress),
           },
         });
         comparison.summary.itemsChanged++;
@@ -231,7 +231,7 @@ export class BaselineService {
             startDate: baselineItem.startDate,
             endDate: baselineItem.endDate,
             durationDays: baselineItem.durationDays,
-            actualProgress: Number(baselineItem.actualProgress),
+            physicalProgress: Number(baselineItem.physicalProgress),
           },
           current: null,
         });

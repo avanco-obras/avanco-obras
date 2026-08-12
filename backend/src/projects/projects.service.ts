@@ -53,6 +53,8 @@ export class ProjectsService {
         name: dto.name,
         company: dto.company,
         address: dto.address,
+        engineer: dto.engineer ?? null,
+        contact: dto.contact ?? null,
         status: dto.status ?? 'PLANNING',
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
@@ -62,11 +64,28 @@ export class ProjectsService {
         workdaysPerWeek: dto.workdaysPerWeek ?? 5,
         hoursPerDay: dto.hoursPerDay ?? 8,
         timezone: dto.timezone ?? 'America/Sao_Paulo',
-        progressCriteria: dto.progressCriteria ?? 'COST',
         members: {
           create: {
             userId,
             role: UserRole.ADMIN,
+          },
+        },
+        scheduleItems: {
+          create: {
+            code: '1',
+            name: dto.name,
+            level: 0,
+            startDate: new Date(dto.startDate),
+            endDate: new Date(dto.endDate),
+            durationDays: Math.max(
+              1,
+              Math.ceil(
+                (new Date(dto.endDate).getTime() -
+                  new Date(dto.startDate).getTime()) /
+                  86_400_000,
+              ),
+            ),
+            order: 0,
           },
         },
       },
@@ -89,6 +108,41 @@ export class ProjectsService {
     });
 
     return project;
+  }
+
+  /**
+   * Garante que o projeto tenha uma raiz de EAP (level 0, code "1"). Idempotente.
+   * Usado para retrofit de projetos existentes que ainda não têm raiz.
+   */
+  async ensureRoot(projectId: string): Promise<void> {
+    const root = await this.prisma.scheduleItem.findFirst({
+      where: { projectId, parentId: null, level: 0 },
+      select: { id: true },
+    });
+    if (root) return;
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { name: true, startDate: true, endDate: true },
+    });
+    if (!project) return;
+    await this.prisma.scheduleItem.create({
+      data: {
+        projectId,
+        code: '1',
+        name: project.name,
+        level: 0,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        durationDays: Math.max(
+          1,
+          Math.ceil(
+            (project.endDate.getTime() - project.startDate.getTime()) /
+              86_400_000,
+          ),
+        ),
+        order: 0,
+      },
+    });
   }
 
   async findOne(id: string, userId: string) {
@@ -124,7 +178,7 @@ export class ProjectsService {
             code: true,
             name: true,
             plannedProgress: true,
-            actualProgress: true,
+            physicalProgress: true,
             startDate: true,
             endDate: true,
             isCriticalPath: true,
@@ -176,12 +230,14 @@ export class ProjectsService {
       );
     }
 
-    return this.prisma.project.update({
+    const updated = await this.prisma.project.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.company !== undefined && { company: dto.company }),
         ...(dto.address !== undefined && { address: dto.address }),
+        ...(dto.engineer !== undefined && { engineer: dto.engineer }),
+        ...(dto.contact !== undefined && { contact: dto.contact }),
         ...(dto.status !== undefined && { status: dto.status }),
         ...(dto.startDate !== undefined && { startDate: new Date(dto.startDate) }),
         ...(dto.endDate !== undefined && { endDate: new Date(dto.endDate) }),
@@ -190,8 +246,8 @@ export class ProjectsService {
         ...(dto.totalArea !== undefined && { totalArea: dto.totalArea }),
         ...(dto.workdaysPerWeek !== undefined && { workdaysPerWeek: dto.workdaysPerWeek }),
         ...(dto.hoursPerDay !== undefined && { hoursPerDay: dto.hoursPerDay }),
+        ...(dto.weekStartDay !== undefined && { weekStartDay: dto.weekStartDay }),
         ...(dto.timezone !== undefined && { timezone: dto.timezone }),
-        ...(dto.progressCriteria !== undefined && { progressCriteria: dto.progressCriteria }),
       },
       include: {
         _count: { select: { towers: true, members: true } },
@@ -210,6 +266,16 @@ export class ProjectsService {
         },
       },
     });
+
+    // Sincroniza nome da raiz da EAP com o nome do projeto.
+    if (dto.name !== undefined) {
+      await this.prisma.scheduleItem.updateMany({
+        where: { projectId: id, parentId: null, level: 0 },
+        data: { name: dto.name },
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: string, userId: string) {

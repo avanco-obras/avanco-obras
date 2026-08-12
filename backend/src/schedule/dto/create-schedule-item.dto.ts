@@ -50,10 +50,10 @@ export class CreateScheduleItemDto {
   @IsNumber()
   plannedProgress?: number;
 
-  @ApiPropertyOptional({ description: 'Actual progress percentage (0-100)' })
+  @ApiPropertyOptional({ description: 'Physical progress percentage (0-100)' })
   @IsOptional()
   @IsNumber()
-  actualProgress?: number;
+  physicalProgress?: number;
 
   @ApiPropertyOptional({ description: 'Relative weight for progress calculation' })
   @IsOptional()
@@ -75,4 +75,14 @@ export class CreateScheduleItemDto {
   @IsOptional()
   @IsString()
   responsible?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Insere a nova atividade logo abaixo deste item, como irmã dele — herdando parentId e level. ' +
+      'Tem precedência sobre parentId/level/order informados. Se o item indicado for a raiz da EAP, ' +
+      'que não admite irmãos, a atividade vira filha da raiz.',
+  })
+  @IsOptional()
+  @IsUUID()
+  afterId?: string;
 }

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store';
-import { usersApi, projectsApi, activityTypesApi } from '../services/api';
-import type { ActivityType, ProgressCriteria, MeasurementMethod } from '../types';
+import { usersApi, projectsApi } from '../services/api';
+import { ContractorsCard, RestrictionTypesCard } from '../components/weekly/ConfigCards';
+import { WEEK_DAYS } from '../components/weekly/weekly-logic';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,15 +25,6 @@ function roleLabel(role: string): string {
   }
 }
 
-function measurementMethodLabel(method: MeasurementMethod): string {
-  switch (method) {
-    case 'PERCENT': return 'Percentual';
-    case 'METRIC': return 'Métrico';
-    case 'COUNT': return 'Contagem';
-    default: return method;
-  }
-}
-
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TIMEZONES = [
@@ -50,97 +42,6 @@ const CURRENCIES = [
   { value: 'EUR', label: 'EUR — Euro' },
 ];
 
-// ── Activity Type Row ─────────────────────────────────────────────────────────
-
-interface ActivityTypeRowProps {
-  actType: ActivityType;
-  onSave: (id: string, data: Partial<ActivityType>) => Promise<void>;
-}
-
-function ActivityTypeRow({ actType, onSave }: ActivityTypeRowProps) {
-  const [measurementMethod, setMeasurementMethod] = useState<MeasurementMethod>(actType.measurementMethod);
-  const [unit, setUnit] = useState(actType.unit);
-  const [defaultQuantity, setDefaultQuantity] = useState(actType.defaultQuantity.toString());
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const isDirty =
-    measurementMethod !== actType.measurementMethod ||
-    unit !== actType.unit ||
-    defaultQuantity !== actType.defaultQuantity.toString();
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await onSave(actType.id, {
-        measurementMethod,
-        unit: unit.trim(),
-        defaultQuantity: parseFloat(defaultQuantity) || 0,
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputStyle: React.CSSProperties = {
-    padding: '5px 7px',
-    fontSize: 11,
-    borderRadius: 'var(--r-md)',
-    border: '1px solid var(--bd)',
-    background: 'var(--s0)',
-    color: 'var(--t1)',
-    fontFamily: 'var(--font)',
-    width: '100%',
-    outline: 'none',
-  };
-
-  return (
-    <tr>
-      <td>{actType.name}</td>
-      <td>
-        <select
-          value={measurementMethod}
-          onChange={(e) => setMeasurementMethod(e.target.value as MeasurementMethod)}
-          style={inputStyle}
-        >
-          <option value="PERCENT">Percentual</option>
-          <option value="METRIC">Métrico</option>
-          <option value="COUNT">Contagem</option>
-        </select>
-      </td>
-      <td>
-        <input
-          style={inputStyle}
-          placeholder="Unidade"
-          value={unit}
-          onChange={(e) => setUnit(e.target.value)}
-        />
-      </td>
-      <td>
-        <input
-          style={inputStyle}
-          type="number"
-          min={0}
-          placeholder="Qtd."
-          value={defaultQuantity}
-          onChange={(e) => setDefaultQuantity(e.target.value)}
-        />
-      </td>
-      <td>
-        <button
-          className={`ao-btn ao-btn-sm${saved ? ' ao-btn-ok' : ''}`}
-          onClick={handleSave}
-          disabled={saving || !isDirty}
-        >
-          {saving ? 'Salvando...' : saved ? '✓' : 'Salvar'}
-        </button>
-      </td>
-    </tr>
-  );
-}
-
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Configuracoes() {
@@ -151,13 +52,52 @@ export default function Configuracoes() {
   const [username, setUsername] = useState(user?.username ?? '');
   const [phone, setPhone] = useState(user?.phone ?? '');
   const [crea, setCrea] = useState(user?.crea ?? '');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [savingConta, setSavingConta] = useState(false);
   const [contaMsg, setContaMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
+  // ── Preferências de notificação (in-app) ──────────────────────────────────
+  const [notifPrefs, setNotifPrefs] = useState<{ delayedActivities: boolean; overdueRestrictions: boolean }>(() => ({
+    delayedActivities: user?.notificationPreferences?.delayedActivities ?? true,
+    overdueRestrictions: user?.notificationPreferences?.overdueRestrictions ?? true,
+  }));
+  const [savingNotif, setSavingNotif] = useState(false);
+
+  const toggleNotif = async (key: 'delayedActivities' | 'overdueRestrictions') => {
+    if (!user) return;
+    const prev = notifPrefs;
+    const next = { ...notifPrefs, [key]: !notifPrefs[key] };
+    setNotifPrefs(next);
+    setSavingNotif(true);
+    try {
+      const updated = await usersApi.update(user.id, { notificationPreferences: next });
+      if (token) setAuth(updated, token);
+    } catch {
+      setNotifPrefs(prev); // reverte
+      addToast({ type: 'error', title: 'Erro ao salvar a preferência de notificação.' });
+    } finally {
+      setSavingNotif(false);
+    }
+  };
+
   const handleSaveConta = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    // Validação da troca de senha (opcional): só ocorre se o usuário digitou uma nova senha.
+    const wantsPasswordChange = newPassword.trim().length > 0;
+    if (wantsPasswordChange) {
+      if (newPassword.trim().length < 6) {
+        setContaMsg({ type: 'err', text: 'A nova senha deve ter ao menos 6 caracteres.' });
+        return;
+      }
+      if (!currentPassword.trim()) {
+        setContaMsg({ type: 'err', text: 'Informe a senha atual para alterar a senha.' });
+        return;
+      }
+    }
+
     setSavingConta(true);
     setContaMsg(null);
     try {
@@ -168,63 +108,23 @@ export default function Configuracoes() {
         crea: crea.trim() || undefined,
       });
       if (token) setAuth(updated, token);
-      if (newPassword.trim().length >= 6) {
-        await usersApi.changePassword(user.id, { currentPassword: '', newPassword: newPassword.trim() });
+      if (wantsPasswordChange) {
+        await usersApi.changePassword(user.id, {
+          currentPassword: currentPassword.trim(),
+          newPassword: newPassword.trim(),
+        });
       }
+      setCurrentPassword('');
       setNewPassword('');
       setContaMsg({ type: 'ok', text: 'Alterações salvas com sucesso!' });
       setTimeout(() => setContaMsg(null), 3000);
-    } catch {
-      setContaMsg({ type: 'err', text: 'Não foi possível salvar as alterações.' });
+    } catch (err) {
+      // Mensagem específica do backend (ex.: "Senha atual incorreta").
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      setContaMsg({ type: 'err', text: typeof msg === 'string' ? msg : 'Não foi possível salvar as alterações.' });
     } finally {
       setSavingConta(false);
     }
-  };
-
-  // ── Critério state ────────────────────────────────────────────────────────
-  const [criteria, setCriteria] = useState<ProgressCriteria>(
-    currentProject?.progressCriteria ?? 'QUANTITY'
-  );
-  const [savingCriteria, setSavingCriteria] = useState(false);
-
-  const handleSaveCriteria = async () => {
-    if (!currentProject) return;
-    setSavingCriteria(true);
-    try {
-      const updated = await projectsApi.update(currentProject.id, { progressCriteria: criteria });
-      setCurrentProject(updated);
-      addToast({ type: 'success', title: 'Critério salvo com sucesso!' });
-    } catch {
-      addToast({ type: 'error', title: 'Não foi possível salvar o critério.' });
-    } finally {
-      setSavingCriteria(false);
-    }
-  };
-
-  // ── Activity types state ──────────────────────────────────────────────────
-  const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
-  const [loadingTypes, setLoadingTypes] = useState(false);
-
-  const loadActivityTypes = useCallback(async () => {
-    if (!currentProject) return;
-    setLoadingTypes(true);
-    try {
-      const data = await activityTypesApi.list(currentProject.id);
-      setActivityTypes(data);
-    } catch {
-      // silently fail
-    } finally {
-      setLoadingTypes(false);
-    }
-  }, [currentProject]);
-
-  useEffect(() => {
-    loadActivityTypes();
-  }, [loadActivityTypes]);
-
-  const handleSaveActivityType = async (id: string, data: Partial<ActivityType>) => {
-    await activityTypesApi.update(id, data);
-    setActivityTypes((prev) => prev.map((t) => (t.id === id ? { ...t, ...data } : t)));
   };
 
   // ── Projeto state ─────────────────────────────────────────────────────────
@@ -236,6 +136,9 @@ export default function Configuracoes() {
   );
   const [timezone, setTimezone] = useState(currentProject?.timezone ?? 'America/Sao_Paulo');
   const [currency, setCurrency] = useState(currentProject?.currency ?? 'BRL');
+  const [weekStartDay, setWeekStartDay] = useState(
+    currentProject?.weekStartDay?.toString() ?? '1'
+  );
   const [savingProjeto, setSavingProjeto] = useState(false);
 
   // ── Delete empreendimento state ────────────────────────────────────────
@@ -250,6 +153,7 @@ export default function Configuracoes() {
       const updated = await projectsApi.update(currentProject.id, {
         workdaysPerWeek: parseInt(workdaysPerWeek, 10),
         hoursPerDay: parseInt(hoursPerDay, 10),
+        weekStartDay: parseInt(weekStartDay, 10),
         timezone,
         currency,
       });
@@ -266,7 +170,6 @@ export default function Configuracoes() {
     if (!currentProject) return;
     setDeletingEmpreendimento(true);
     try {
-      console.log(`Deletando empreendimento: ${currentProject.id}`);
       await projectsApi.delete(currentProject.id);
       setCurrentProject(null);
       setShowDeleteConfirm(false);
@@ -276,7 +179,6 @@ export default function Configuracoes() {
         description: 'Todos os dados (torres, pavimentos, medições, cronograma e restrições) foram removidos permanentemente.',
       });
     } catch (error: unknown) {
-      console.error('Erro ao deletar empreendimento:', error);
       const errorMsg =
         error instanceof Error
           ? error.message
@@ -342,6 +244,7 @@ export default function Configuracoes() {
                   <div style={fgStyle}>
                     <label style={labelStyle}>E-mail</label>
                     <input style={{ ...inStyle, opacity: 0.55, cursor: 'not-allowed' }} type="email" value={user.email} readOnly disabled />
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>O e-mail não pode ser alterado.</span>
                   </div>
                   <div style={fgStyle}>
                     <label style={labelStyle}>Telefone</label>
@@ -355,6 +258,7 @@ export default function Configuracoes() {
                       <option value="FOREMAN">Mestre de Obras</option>
                       <option value="VIEWER">Visualizador</option>
                     </select>
+                    <span style={{ fontSize: 10, color: 'var(--t3)' }}>Definido pelo administrador do projeto.</span>
                   </div>
                   <div style={fgStyle}>
                     <label style={labelStyle}>CREA / CAU</label>
@@ -362,9 +266,15 @@ export default function Configuracoes() {
                   </div>
                 </div>
 
-                <div style={fgStyle}>
-                  <label style={labelStyle}>Nova senha</label>
-                  <input style={inStyle} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={fgStyle}>
+                    <label style={labelStyle}>Senha atual</label>
+                    <input style={inStyle} type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Necessária para alterar a senha" />
+                  </div>
+                  <div style={fgStyle}>
+                    <label style={labelStyle}>Nova senha</label>
+                    <input style={inStyle} type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Deixe em branco para não alterar" />
+                  </div>
                 </div>
 
                 {contaMsg && (
@@ -386,19 +296,37 @@ export default function Configuracoes() {
           <div className="ao-card">
             <div className="ao-card-hdr"><span className="ao-card-title">Notificações</span></div>
             <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {/* Toggles reais — controlam o que aparece no sino */}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: savingNotif ? 'wait' : 'pointer', padding: '10px 0', borderBottom: '1px solid var(--bd)' }}>
+                <input type="checkbox" checked={notifPrefs.delayedActivities} disabled={savingNotif} onChange={() => toggleNotif('delayedActivities')} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'inherit', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>Alertas de atividades atrasadas</div>
+                  <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>Mostra no sino as atividades abaixo do previsto</div>
+                </div>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: savingNotif ? 'wait' : 'pointer', padding: '10px 0', borderBottom: '1px solid var(--bd)' }}>
+                <input type="checkbox" checked={notifPrefs.overdueRestrictions} disabled={savingNotif} onChange={() => toggleNotif('overdueRestrictions')} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'inherit', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>Restrições vencidas sem resolução</div>
+                  <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>Mostra no sino as restrições pendentes já vencidas</div>
+                </div>
+              </label>
+
+              {/* Entrega por e-mail — ainda não implementada */}
               {[
-                { label: 'Alertas de atividades atrasadas', sub: 'Notificado quando SPI cair abaixo de 0.90', checked: true },
-                { label: 'Lembrete de lançamento semanal', sub: 'Segunda-feira às 8h', checked: true },
-                { label: 'Relatório PDF automático semanal', sub: 'Enviado todo domingo às 20h', checked: false },
-                { label: 'Restrições vencidas sem resolução', sub: 'Notificado no vencimento', checked: true },
+                { label: 'Lembrete de lançamento semanal', sub: 'Envio por e-mail' },
+                { label: 'Relatório PDF automático semanal', sub: 'Envio por e-mail' },
               ].map((n, i) => (
-                <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 0', borderBottom: i < 3 ? '1px solid var(--bd)' : 'none' }}>
-                  <input type="checkbox" defaultChecked={n.checked} style={{ marginTop: 2, accentColor: 'var(--blue)', cursor: 'pointer', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>{n.label}</div>
+                <div key={n.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: i < 1 ? '1px solid var(--bd)' : 'none', opacity: 0.6 }}>
+                  <input type="checkbox" checked={false} disabled readOnly style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {n.label}
+                      <span className="ao-badge ao-bk">em breve</span>
+                    </div>
                     <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>{n.sub}</div>
                   </div>
-                </label>
+                </div>
               ))}
             </div>
           </div>
@@ -407,71 +335,6 @@ export default function Configuracoes() {
 
         {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-
-          {/* Card: Critério de avanço */}
-          <div className="ao-card">
-            <div className="ao-card-hdr"><span className="ao-card-title">Critério de avanço físico</span></div>
-            <div className="ao-card-body">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginBottom: 14 }}>
-                {[
-                  { value: 'COST', label: 'Peso por custo', sub: 'Ponderado pelo valor orçado (R$)' },
-                  { value: 'QUANTITY', label: 'Peso por quantidade', sub: 'Ponderado por m², m³ ou unidades' },
-                  { value: 'HYBRID', label: 'Híbrido', sub: 'Combinação de custo + quantidade' },
-                ].map((opt, i) => (
-                  <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 0', borderBottom: i < 2 ? '1px solid var(--bd)' : 'none' }}>
-                    <input type="radio" name="crit" checked={criteria === opt.value as ProgressCriteria} onChange={() => setCriteria(opt.value as ProgressCriteria)} style={{ marginTop: 3, accentColor: 'var(--blue)', cursor: 'pointer', flexShrink: 0 }} />
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>{opt.label}</div>
-                      <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>{opt.sub}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-
-              <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: '10px 12px', marginBottom: 14 }}>
-                <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 4 }}>Fórmula</div>
-                <div style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--t2)' }}>Avanço (%) = Σ(Peso × % exec.) / Σ(Pesos)</div>
-              </div>
-
-              {currentProject && (
-                <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveCriteria} disabled={savingCriteria || criteria === currentProject.progressCriteria}>
-                  {savingCriteria ? 'Salvando…' : 'Salvar critério'}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Card: Tipos de atividade */}
-          <div className="ao-card">
-            <div className="ao-card-hdr">
-              <span className="ao-card-title">Tipos de atividade</span>
-              {activityTypes.length > 0 && <span className="ao-badge ao-bk">{activityTypes.length} tipos</span>}
-            </div>
-            {loadingTypes ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>Carregando…</div>
-            ) : activityTypes.length === 0 ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>Nenhum tipo de atividade cadastrado.</div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="ao-table">
-                  <thead>
-                    <tr>
-                      <th>Atividade</th>
-                      <th>Método</th>
-                      <th>Unidade</th>
-                      <th>Qtd. padrão</th>
-                      <th style={{ width: 70 }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activityTypes.map((at) => (
-                      <ActivityTypeRow key={at.id} actType={at} onSave={handleSaveActivityType} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
 
           {/* Card: Parâmetros do projeto */}
           <div className="ao-card">
@@ -504,6 +367,16 @@ export default function Configuracoes() {
                         {CURRENCIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </select>
                     </div>
+                    <div style={{ ...fgStyle, gridColumn: '1 / -1' }}>
+                      <label style={labelStyle}>Dia de início da semana (Prog. Semanal)</label>
+                      <select style={inStyle} value={weekStartDay} onChange={(e) => setWeekStartDay(e.target.value)}>
+                        {WEEK_DAYS.map((day, i) => <option key={day} value={i}>{day}</option>)}
+                      </select>
+                      <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>
+                        Semana de 7 dias: {WEEK_DAYS[parseInt(weekStartDay, 10)]} → {WEEK_DAYS[(parseInt(weekStartDay, 10) + 6) % 7]}.
+                        Reunião semanal: {WEEK_DAYS[parseInt(weekStartDay, 10)]} seguinte.
+                      </span>
+                    </div>
                   </div>
                   <button type="submit" className="ao-btn ao-btn-primary ao-btn-sm" disabled={savingProjeto}>
                     {savingProjeto ? 'Salvando…' : 'Salvar parâmetros'}
@@ -512,6 +385,10 @@ export default function Configuracoes() {
               )}
             </div>
           </div>
+
+          {/* Cards: Programação Semanal */}
+          <ContractorsCard />
+          <RestrictionTypesCard />
 
           {/* Card: Zona de perigo */}
           <div className="ao-card" style={{ borderTop: '3px solid var(--red)' }}>

@@ -2,9 +2,12 @@ import axios from 'axios';
 import type {
   AuthResponse, User, Project, ProjectMember, Tower, Floor, Unit,
   ActivityType, ScheduleItem, GanttTask, CurvaSPoint, Measurement,
-  WeeklyPlan, WeeklyTask, Restriction, DashboardKPIs, DelayedActivity,
+  WeeklyProgram, WeeklyActivity, WeeklyRestriction, WeeklyIndicators,
+  WeeklySnapshot, WeeklySnapshotMeta, Contractor, RestrictionType,
+  DashboardKPIs, DelayedActivity,
   PPCHistoryPoint, BuildingData, Upload, ScheduleDependencyItem,
-  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison,
+  ProjectBaseline, BaselineComparison, ProjectReport, ProjectMetrics, ReportComparison, RestoreReportResult,
+  ScheduleRevision,
 } from '../types';
 import { useStore } from '../store';
 
@@ -97,12 +100,8 @@ export const towersApi = {
 
 // ── Activity Types ────────────────────────────────────────────────
 export const activityTypesApi = {
-  list: (projectId: string) =>
-    api.get<ActivityType[]>(`/projects/${projectId}/activity-types`).then((r) => r.data),
   create: (projectId: string, data: Partial<ActivityType>) =>
     api.post<ActivityType>(`/projects/${projectId}/activity-types`, data).then((r) => r.data),
-  update: (id: string, data: Partial<ActivityType>) =>
-    api.patch<ActivityType>(`/activity-types/${id}`, data).then((r) => r.data),
   delete: (id: string) =>
     api.delete(`/activity-types/${id}`).then((r) => r.data),
 };
@@ -129,12 +128,23 @@ export const scheduleApi = {
   import: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post<{ imported: number; skipped: number; errors: string[] }>(
+    return api.post<{ imported: number; skipped: number; dependencies: number; errors: string[] }>(
       `/projects/${projectId}/schedule/import`,
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } },
     ).then((r) => r.data);
   },
+  /** Linha de Balanço: aplica alterações de datas/durações atomicamente. */
+  batchUpdate: (projectId: string, data: {
+    description?: string;
+    changes: { id: string; startDate: string; endDate: string; durationDays: number }[];
+  }) =>
+    api.patch<{ revisionId: string; updated: number; parentsRecalculated: number }>(
+      `/projects/${projectId}/schedule/batch`, data,
+    ).then((r) => r.data),
+  /** Linha de Balanço: histórico de reprogramações. */
+  listRevisions: (projectId: string) =>
+    api.get<ScheduleRevision[]>(`/projects/${projectId}/schedule/revisions`).then((r) => r.data),
 };
 
 // ── Measurements ──────────────────────────────────────────────────
@@ -156,23 +166,64 @@ export const measurementsApi = {
 // ── Weekly Planning ───────────────────────────────────────────────
 export const weeklyPlanningApi = {
   list: (projectId: string) =>
-    api.get<WeeklyPlan[]>(`/projects/${projectId}/weekly-plans`).then((r) => r.data),
-  create: (projectId: string, data: Partial<WeeklyPlan>) =>
-    api.post<WeeklyPlan>(`/projects/${projectId}/weekly-plans`, data).then((r) => r.data),
+    api.get<WeeklyProgram[]>(`/projects/${projectId}/weekly-programs`).then((r) => r.data),
+  create: (projectId: string, referenceDate?: string) =>
+    api.post<WeeklyProgram>(`/projects/${projectId}/weekly-programs`, referenceDate ? { referenceDate } : {}).then((r) => r.data),
   get: (id: string) =>
-    api.get<WeeklyPlan>(`/weekly-plans/${id}`).then((r) => r.data),
-  addTask: (id: string, data: Partial<WeeklyTask>) =>
-    api.post<WeeklyTask>(`/weekly-plans/${id}/tasks`, data).then((r) => r.data),
-  updateTask: (taskId: string, data: Partial<WeeklyTask>) =>
-    api.patch<WeeklyTask>(`/weekly-tasks/${taskId}`, data).then((r) => r.data),
-  addRestriction: (id: string, data: Partial<Restriction>) =>
-    api.post<Restriction>(`/weekly-plans/${id}/restrictions`, data).then((r) => r.data),
-  updateRestriction: (id: string, data: Partial<Restriction>) =>
-    api.patch<Restriction>(`/restrictions/${id}`, data).then((r) => r.data),
+    api.get<WeeklyProgram>(`/weekly-programs/${id}`).then((r) => r.data),
+  refresh: (id: string) =>
+    api.post<{ imported: number; carried: number; program: WeeklyProgram }>(`/weekly-programs/${id}/refresh`).then((r) => r.data),
+  publish: (id: string) =>
+    api.post<WeeklyProgram>(`/weekly-programs/${id}/publish`).then((r) => r.data),
+  close: (id: string) =>
+    api.post<{ closed: { id: string; indicators: WeeklyIndicators }; nextProgramId: string }>(`/weekly-programs/${id}/close`).then((r) => r.data),
+  report: (id: string) =>
+    api.post<WeeklySnapshotMeta>(`/weekly-programs/${id}/report`).then((r) => r.data),
+  snapshots: (id: string) =>
+    api.get<WeeklySnapshotMeta[]>(`/weekly-programs/${id}/snapshots`).then((r) => r.data),
+  snapshot: (id: string) =>
+    api.get<WeeklySnapshot>(`/weekly-snapshots/${id}`).then((r) => r.data),
+  indicators: (id: string) =>
+    api.get<WeeklyIndicators>(`/weekly-programs/${id}/indicators`).then((r) => r.data),
   ppcHistory: (projectId: string) =>
-    api.get<PPCHistoryPoint[]>(`/projects/${projectId}/weekly-plans/ppc-history`).then((r) => r.data),
-  generate: (id: string) =>
-    api.post(`/weekly-plans/${id}/generate`).then((r) => r.data),
+    api.get<PPCHistoryPoint[]>(`/projects/${projectId}/weekly-programs/ppc-history`).then((r) => r.data),
+
+  addActivity: (programId: string, data: Partial<WeeklyActivity>) =>
+    api.post<WeeklyActivity>(`/weekly-programs/${programId}/activities`, data).then((r) => r.data),
+  updateActivity: (activityId: string, data: Partial<WeeklyActivity>) =>
+    api.patch<WeeklyActivity>(`/weekly-activities/${activityId}`, data).then((r) => r.data),
+  removeActivity: (activityId: string) =>
+    api.delete(`/weekly-activities/${activityId}`).then((r) => r.data),
+
+  addRestriction: (programId: string, data: Partial<WeeklyRestriction> & { activityIds?: string[] }) =>
+    api.post<WeeklyRestriction>(`/weekly-programs/${programId}/restrictions`, data).then((r) => r.data),
+  updateRestriction: (id: string, data: Partial<WeeklyRestriction> & { activityIds?: string[] }) =>
+    api.patch<WeeklyRestriction>(`/weekly-restrictions/${id}`, data).then((r) => r.data),
+  removeRestriction: (id: string) =>
+    api.delete(`/weekly-restrictions/${id}`).then((r) => r.data),
+};
+
+// ── Empreiteiras e Tipos de Restrição ─────────────────────────────
+export const contractorsApi = {
+  list: (projectId: string) =>
+    api.get<Contractor[]>(`/projects/${projectId}/contractors`).then((r) => r.data),
+  create: (projectId: string, name: string) =>
+    api.post<Contractor>(`/projects/${projectId}/contractors`, { name }).then((r) => r.data),
+  update: (id: string, data: Partial<Contractor>) =>
+    api.patch<Contractor>(`/contractors/${id}`, data).then((r) => r.data),
+  remove: (id: string) =>
+    api.delete(`/contractors/${id}`).then((r) => r.data),
+};
+
+export const restrictionTypesApi = {
+  list: (projectId: string) =>
+    api.get<RestrictionType[]>(`/projects/${projectId}/restriction-types`).then((r) => r.data),
+  create: (projectId: string, name: string, order?: number) =>
+    api.post<RestrictionType>(`/projects/${projectId}/restriction-types`, { name, order }).then((r) => r.data),
+  update: (id: string, data: Partial<RestrictionType>) =>
+    api.patch<RestrictionType>(`/restriction-types/${id}`, data).then((r) => r.data),
+  remove: (id: string) =>
+    api.delete(`/restriction-types/${id}`).then((r) => r.data),
 };
 
 // ── Dashboard ─────────────────────────────────────────────────────
@@ -182,19 +233,36 @@ export const dashboardApi = {
   delays: (projectId: string) =>
     api.get<DelayedActivity[]>(`/projects/${projectId}/dashboard/delays`).then((r) => r.data),
   restrictions: (projectId: string) =>
-    api.get<Restriction[]>(`/projects/${projectId}/dashboard/restrictions`).then((r) => r.data),
+    api.get<WeeklyRestriction[]>(`/projects/${projectId}/dashboard/restrictions`).then((r) => r.data),
   spiHistory: (projectId: string) =>
     api.get(`/projects/${projectId}/dashboard/spi`).then((r) => r.data),
 };
 
 // ── Uploads ───────────────────────────────────────────────────────
 export const uploadsApi = {
-  list: (projectId: string) =>
-    api.get<Upload[]>(`/projects/${projectId}/uploads`).then((r) => r.data),
-  upload: (projectId: string, formData: FormData) =>
-    api.post<Upload>(`/projects/${projectId}/uploads`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then((r) => r.data),
+  list: (projectId: string, params?: { category?: string; floorId?: string }) =>
+    api
+      .get<Upload[]>(`/projects/${projectId}/uploads`, { params })
+      .then((r) => r.data),
+  upload: (
+    projectId: string,
+    formData: FormData,
+    params?: { category?: string; floorId?: string },
+  ) =>
+    api
+      .post<Upload>(`/projects/${projectId}/uploads`, formData, {
+        params,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data),
+  getIfcModel: (projectId: string) =>
+    api
+      .get<(Upload & { url: string }) | null>(`/projects/${projectId}/uploads/ifc-model`)
+      .then((r) => r.data),
+  listFloorPlans: (floorId: string) =>
+    api
+      .get<Array<Upload & { url: string }>>(`/floors/${floorId}/plans`)
+      .then((r) => r.data),
   delete: (id: string) => api.delete(`/uploads/${id}`).then((r) => r.data),
 };
 
@@ -222,6 +290,9 @@ export const progressApi = {
     api.get<ProjectReport[]>(`/projects/${projectId}/physical-progress/reports`).then((r) => r.data),
   getReport: (projectId: string, reportId: string) =>
     api.get<ReportComparison>(`/projects/${projectId}/physical-progress/reports/${reportId}`).then((r) => r.data),
+  /** Sobrescreve os dados atuais com o estado do report. Irreversível sem o report de segurança. */
+  restoreReport: (projectId: string, reportId: string) =>
+    api.post<RestoreReportResult>(`/projects/${projectId}/physical-progress/reports/${reportId}/restore`).then((r) => r.data),
 };
 
 // ── AI Import ─────────────────────────────────────────────────────

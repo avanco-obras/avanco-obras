@@ -23,10 +23,12 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ScheduleService } from './schedule.service';
 import { CreateScheduleItemDto } from './dto/create-schedule-item.dto';
 import { UpdateScheduleItemDto } from './dto/update-schedule-item.dto';
 import { CreateDependencyDto } from './dto/create-dependency.dto';
+import { BatchUpdateDto } from './dto/batch-update.dto';
 
 @ApiTags('Schedule')
 @ApiBearerAuth()
@@ -102,6 +104,30 @@ export class ScheduleController {
     return this.scheduleService.remove(id);
   }
 
+  @Patch('projects/:id/schedule/batch')
+  @ApiOperation({
+    summary:
+      'Apply a batch of date/duration changes atomically (Linha de Balanço). ' +
+      'Leaf items only; parent dates are recalculated by rollup. Records a ScheduleRevision.',
+  })
+  @ApiParam({ name: 'id', description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Changes applied; returns revision summary' })
+  batchUpdate(
+    @Param('id', ParseUUIDPipe) projectId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: BatchUpdateDto,
+  ) {
+    return this.scheduleService.batchUpdate(projectId, userId, dto);
+  }
+
+  @Get('projects/:id/schedule/revisions')
+  @ApiOperation({ summary: 'List reprogramming revisions (Linha de Balanço history)' })
+  @ApiParam({ name: 'id', description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Returns revisions ordered by newest first' })
+  listRevisions(@Param('id', ParseUUIDPipe) projectId: string) {
+    return this.scheduleService.listRevisions(projectId);
+  }
+
   @Get('projects/:id/schedule/gantt-data')
   @ApiOperation({ summary: 'Get Gantt chart formatted data for a project' })
   @ApiParam({ name: 'id', description: 'Project ID' })
@@ -132,5 +158,18 @@ export class ScheduleController {
       throw new BadRequestException('Nenhum arquivo fornecido');
     }
     return this.scheduleService.importBatch(projectId, file.buffer, file.mimetype);
+  }
+
+  @Post('projects/:id/schedule/derive-structure')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Derive Tower/Floor/Unit/ActivityType from current ScheduleItems (idempotent). ' +
+      'Call after manual schedule changes if Medição is missing locations or activities.',
+  })
+  @ApiParam({ name: 'id', description: 'Project ID' })
+  async deriveStructure(@Param('id', ParseUUIDPipe) projectId: string) {
+    const result = await this.scheduleService.deriveStructureFromSchedule(projectId);
+    return { message: 'Estrutura derivada do cronograma', ...result };
   }
 }

@@ -2,36 +2,46 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Building2, LayoutDashboard, Calendar, Ruler, ClipboardList,
-  Settings, LogOut, ChevronDown, Loader2, Bell, Download,
+  Settings, LogOut, ChevronDown, Loader2, Download, Bell,
   Sun, Moon, Search, User, ChevronRight, PanelLeftClose, PanelLeftOpen,
+  TrendingUp,
 } from 'lucide-react'
 import { useStore } from '@/store'
 import { useAuth } from '@/hooks/useAuth'
 import { projectsApi } from '@/services/api'
 import type { Project } from '@/types'
 import { useHistoryStore } from '@/store/historyStore'
+import { jsPDF } from 'jspdf'
+import type { LucideIcon } from 'lucide-react'
+import { NoProjectState } from '@/components/NoProjectState'
+import { useNotifications } from '@/hooks/useNotifications'
 
-// ── Nav config ────────────────────────────────────────────────────────────────
-const NAV_MAIN = [
-  { to: '/dashboard',            label: 'Dashboard',       icon: LayoutDashboard },
-  { to: '/cronograma',           label: 'Cronograma',      icon: Calendar        },
-  { to: '/medicao',              label: 'Medição',         icon: Ruler           },
-  { to: '/programacao-semanal',  label: 'Prog. Semanal',   icon: ClipboardList   },
-]
-
-const NAV_CONFIG = [
-  { to: '/cadastro',      label: 'Cadastro',     icon: Building2 },
-  { to: '/configuracoes', label: 'Configurações', icon: Settings  },
-]
-
-const PAGE_META: Record<string, { title: string; crumb: string }> = {
-  '/dashboard':           { title: 'Dashboard',          crumb: 'Visão geral do projeto'        },
-  '/cronograma':          { title: 'Cronograma',          crumb: 'Gantt · Linha de base'         },
-  '/medicao':             { title: 'Medição Física',      crumb: 'Avanço por unidade'            },
-  '/programacao-semanal': { title: 'Prog. Semanal',       crumb: 'PPC · Planejamento LPS'        },
-  '/cadastro':            { title: 'Cadastro',            crumb: 'Dados do projeto e equipe'     },
-  '/configuracoes':       { title: 'Configurações',       crumb: 'Conta · Tipos · Parâmetros'   },
+// ── Route registry — fonte única de nome/ícone/crumb por rota ─────────────────
+// Menu principal, menu de configuração, breadcrumb e command palette derivam
+// daqui, para que os rótulos não divirjam entre si.
+interface RouteMeta {
+  to: string
+  label: string
+  crumb: string
+  icon: LucideIcon
+  section: 'main' | 'config'
 }
+
+const ROUTES: RouteMeta[] = [
+  { to: '/dashboard',           label: 'Dashboard',        crumb: 'Visão geral do projeto',        icon: LayoutDashboard, section: 'main'   },
+  { to: '/cronograma',          label: 'Cronograma',       crumb: 'Gantt · Linha de base',         icon: Calendar,        section: 'main'   },
+  { to: '/linha-de-balanco',    label: 'Linha de Balanço', crumb: 'Planejamento · Reprogramação',  icon: TrendingUp,      section: 'main'   },
+  { to: '/medicao',             label: 'Medição Física',   crumb: 'Avanço por unidade',            icon: Ruler,           section: 'main'   },
+  { to: '/programacao-semanal', label: 'Prog. Semanal',    crumb: 'PPC · Planejamento LPS',         icon: ClipboardList,   section: 'main'   },
+  { to: '/cadastro',            label: 'Cadastro',         crumb: 'Dados do projeto e equipe',      icon: Building2,       section: 'config' },
+  { to: '/configuracoes',       label: 'Configurações',    crumb: 'Conta · Tipos · Parâmetros',     icon: Settings,        section: 'config' },
+]
+
+const NAV_MAIN   = ROUTES.filter((r) => r.section === 'main')
+const NAV_CONFIG = ROUTES.filter((r) => r.section === 'config')
+
+const PAGE_META: Record<string, { title: string; crumb: string }> =
+  Object.fromEntries(ROUTES.map((r) => [r.to, { title: r.label, crumb: r.crumb }]))
 
 // ── Tooltip (shown when sidebar is collapsed) ─────────────────────────────────
 function Tooltip({ label, visible }: { label: string; visible: boolean }) {
@@ -60,14 +70,12 @@ function Tooltip({ label, visible }: { label: string; visible: boolean }) {
 }
 
 // ── Command Palette ───────────────────────────────────────────────────────────
-const CMD_ITEMS = [
-  { group: 'Navegação', label: 'Dashboard',       icon: LayoutDashboard, to: '/dashboard'           },
-  { group: 'Navegação', label: 'Cronograma',       icon: Calendar,        to: '/cronograma'          },
-  { group: 'Navegação', label: 'Medição Física',   icon: Ruler,           to: '/medicao'             },
-  { group: 'Navegação', label: 'Prog. Semanal',    icon: ClipboardList,   to: '/programacao-semanal' },
-  { group: 'Ações',     label: 'Cadastro',         icon: Building2,       to: '/cadastro'            },
-  { group: 'Ações',     label: 'Configurações',    icon: Settings,        to: '/configuracoes'       },
-]
+const CMD_ITEMS = ROUTES.map((r) => ({
+  group: r.section === 'main' ? 'Navegação' : 'Ações',
+  label: r.label,
+  icon: r.icon,
+  to: r.to,
+}))
 
 function CommandPalette({ open, onClose, onNavigate }: {
   open: boolean; onClose: () => void; onNavigate: (to: string) => void
@@ -164,6 +172,8 @@ export function AppLayout() {
   const [collapsed, setCollapsed]           = useState(false)
   const [cmdOpen, setCmdOpen]               = useState(false)
   const [tooltip, setTooltip]              = useState<string | null>(null)
+  const [exporting, setExporting]           = useState(false)
+  const [notifOpen, setNotifOpen]           = useState(false)
 
   const { undo, redo } = useHistoryStore()
 
@@ -180,6 +190,10 @@ export function AppLayout() {
 
   const projRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
+  const notifRef = useRef<HTMLDivElement>(null)
+
+  const { alerts, unreadCount, readIds, markRead, markAllRead } =
+    useNotifications(currentProject?.id, user?.notificationPreferences)
 
   const pageMeta = PAGE_META[location.pathname] ?? { title: 'AvançoObras', crumb: '' }
 
@@ -204,6 +218,7 @@ export function AppLayout() {
     function h(e: MouseEvent) {
       if (projRef.current && !projRef.current.contains(e.target as Node)) setProjDropOpen(false)
       if (userRef.current && !userRef.current.contains(e.target as Node)) setUserMenuOpen(false)
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
     }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
@@ -224,11 +239,14 @@ export function AppLayout() {
       }
 
       if (isInput) return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o) }
-      if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); navigate('/dashboard') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); navigate('/cronograma') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); navigate('/medicao') }
-      if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); navigate('/programacao-semanal') }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdOpen(o => !o); return }
+      // ⌘/Ctrl + 1..N → itens do menu principal, na mesma ordem em que aparecem.
+      if (e.metaKey || e.ctrlKey) {
+        const n = Number(e.key)
+        if (Number.isInteger(n) && n >= 1 && n <= NAV_MAIN.length) {
+          e.preventDefault(); navigate(NAV_MAIN[n - 1].to)
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -241,6 +259,37 @@ export function AppLayout() {
   }
 
   function handleLogout() { logout(); navigate('/login', { replace: true }) }
+
+  // Export the current screen as a single-page PDF snapshot.
+  async function handleExport() {
+    if (exporting) return
+    const el = document.querySelector('.ao-content') as HTMLElement | null
+    if (!el) return
+    setExporting(true)
+    try {
+      const { default: html2canvas } = await import('html2canvas')
+      const pageBg = getComputedStyle(document.documentElement).getPropertyValue('--page').trim() || '#ffffff'
+      const canvas = await html2canvas(el, {
+        backgroundColor: pageBg,
+        scale: 2,
+        useCORS: true,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      })
+      const imgData = canvas.toDataURL('image/png')
+      const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait'
+      const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] })
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height)
+      const safe = (s?: string) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '')
+      const stamp = new Date().toISOString().slice(0, 10)
+      pdf.save(`${safe(pageMeta.title) || 'tela'}_${safe(currentProject?.name) || 'projeto'}_${stamp}.pdf`)
+      addToast({ type: 'success', title: 'Exportado', description: 'PDF da tela atual gerado.' })
+    } catch (e) {
+      addToast({ type: 'error', title: 'Falha ao exportar', description: (e as Error).message })
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const initials = user?.fullName
     ? user.fullName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
@@ -579,34 +628,91 @@ export function AppLayout() {
             </button>
 
             {/* Notifications */}
-            <div className="ao-icon-btn" style={{ position: 'relative' }}>
-              <Bell style={{ width: 14, height: 14 }} />
-              <span className="ao-icon-btn-badge" />
+            <div ref={notifRef} style={{ position: 'relative' }}>
+              <button
+                className="ao-icon-btn"
+                onClick={() => setNotifOpen(o => !o)}
+                title="Notificações"
+                style={{ position: 'relative' }}
+              >
+                <Bell style={{ width: 14, height: 14 }} />
+                {unreadCount > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 0, right: 0, minWidth: 14, height: 14, padding: '0 3px',
+                    borderRadius: 7, background: 'var(--red)', color: '#fff', fontSize: 8.5, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: '1.5px solid var(--s0)', fontFamily: 'var(--mono)', lineHeight: 1,
+                  }}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: 320,
+                  background: 'var(--s0)', border: '1px solid var(--bd2)', borderRadius: 8,
+                  boxShadow: 'var(--shadow-lg)', zIndex: 100, overflow: 'hidden',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: '1px solid var(--bd)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--t1)' }}>Notificações</span>
+                    {alerts.length > 0 && (
+                      <button
+                        onClick={markAllRead}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10.5, color: 'var(--blue)', fontFamily: 'var(--font)' }}
+                      >
+                        Marcar todas como lidas
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                    {alerts.length === 0 ? (
+                      <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 11.5, color: 'var(--t3)' }}>
+                        Nenhum alerta no momento.
+                      </div>
+                    ) : alerts.map((a) => {
+                      const isRead = readIds.has(a.id)
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => { markRead(a.id); setNotifOpen(false); navigate(a.to) }}
+                          style={{
+                            display: 'flex', gap: 8, width: '100%', textAlign: 'left', padding: '9px 12px',
+                            border: 'none', borderBottom: '1px solid var(--bd)',
+                            background: isRead ? 'transparent' : 'var(--blu-bg)', cursor: 'pointer', fontFamily: 'var(--font)',
+                          }}
+                        >
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 4, background: a.kind === 'delay' ? 'var(--red)' : 'var(--amber)' }} />
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--t1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</div>
+                            <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 1 }}>{a.detail}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Export */}
-            <div className="ao-icon-btn">
-              <Download style={{ width: 14, height: 14 }} />
-            </div>
+            {/* Export current screen as PDF */}
+            <button
+              className="ao-icon-btn"
+              onClick={handleExport}
+              disabled={exporting || !currentProject}
+              title={currentProject ? 'Exportar tela atual (PDF)' : 'Selecione um projeto para exportar'}
+              style={{ opacity: exporting || !currentProject ? 0.5 : 1, cursor: exporting || !currentProject ? 'not-allowed' : 'pointer' }}
+            >
+              {exporting
+                ? <Loader2 style={{ width: 14, height: 14 }} className="ao-spin" />
+                : <Download style={{ width: 14, height: 14 }} />}
+            </button>
           </header>
 
           {/* Page content */}
           <div className="ao-content ao-fade-in">
             {!currentProject && location.pathname !== '/cadastro' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: 16, textAlign: 'center' }}>
-                <div style={{ width: 48, height: 48, background: 'var(--s2)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Building2 style={{ width: 24, height: 24, color: 'var(--t3)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--t1)', marginBottom: 6 }}>Nenhum projeto selecionado</div>
-                  <div style={{ fontSize: 12, color: 'var(--t3)', maxWidth: 280, lineHeight: 1.5 }}>
-                    Selecione um projeto no menu lateral ou cadastre um novo empreendimento.
-                  </div>
-                </div>
-                <button className="ao-btn ao-btn-primary" onClick={() => navigate('/cadastro')}>
-                  <Building2 style={{ width: 13, height: 13 }} /> Cadastrar projeto
-                </button>
-              </div>
+              <NoProjectState action={{ label: 'Cadastrar projeto', onClick: () => navigate('/cadastro') }} />
             ) : (
               <Outlet />
             )}

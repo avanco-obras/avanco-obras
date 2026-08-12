@@ -652,6 +652,11 @@ body {
   gap: 12px;
 }
 
+/* Cards de nível de página não devem ser comprimidos pelo flex-column:
+   como .ao-card tem overflow:hidden, seu min-size automático é 0 e o flex
+   os encolheria (cortando o conteúdo) em vez de deixar o container rolar. */
+.ao-content > .ao-card { flex-shrink: 0; }
+
 .ao-content::-webkit-scrollbar { width: 5px; }
 .ao-content::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
 .ao-content::-webkit-scrollbar-track { background: transparent; }

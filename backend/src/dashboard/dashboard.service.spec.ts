@@ -10,10 +10,10 @@ const mockPrismaService = {
   scheduleItem: {
     findMany: jest.fn(),
   },
-  weeklyPlan: {
+  weeklyProgram: {
     findFirst: jest.fn(),
   },
-  restriction: {
+  weeklyRestriction: {
     count: jest.fn(),
     findMany: jest.fn(),
   },
@@ -59,15 +59,15 @@ describe('DashboardService', () => {
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([
         {
           plannedProgress: 50,
-          actualProgress: 30,
+          physicalProgress: 30,
           weight: 1,
           endDate: new Date('2025-06-30'),
           _count: { children: 2 },
         },
       ]);
 
-      mockPrismaService.restriction.count.mockResolvedValue(0);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -92,14 +92,14 @@ describe('DashboardService', () => {
       // expected spi = 50 / 70 ≈ 0.714
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([
         {
-          actualProgress: 60,
+          physicalProgress: 60,
           plannedProgress: 80,
           weight: 1,
           endDate: new Date('2024-12-31'), // past date → counts as delayed
           _count: { children: 0 },
         },
         {
-          actualProgress: 40,
+          physicalProgress: 40,
           plannedProgress: 60,
           weight: 1,
           endDate: new Date('2025-12-31'), // future date
@@ -107,8 +107,8 @@ describe('DashboardService', () => {
         },
       ]);
 
-      mockPrismaService.restriction.count.mockResolvedValue(3);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(3);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -119,7 +119,7 @@ describe('DashboardService', () => {
       expect(result.totalActivities).toBe(2);
     });
 
-    it('should return ppcCurrent from most recent WeeklyPlan', async () => {
+    it('should return ppcCurrent from most recent closed WeeklyProgram indicators', async () => {
       const projectId = 'project-1';
 
       mockPrismaService.project.findUnique.mockResolvedValue({
@@ -129,20 +129,23 @@ describe('DashboardService', () => {
       });
 
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([]);
-      mockPrismaService.restriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
 
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue({
-        ppcActual: 85,
-        ppcForecast: 90,
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue({
+        indicators: { ppc: 85 },
       });
 
       const result = await service.getKPIs(projectId);
 
       expect(result.ppcCurrent).toBe(85);
-      expect(result.ppcForecast).toBe(90);
+      expect(mockPrismaService.weeklyProgram.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'FECHADA' }),
+        }),
+      );
     });
 
-    it('should return ppcCurrent=null when no WeeklyPlan exists', async () => {
+    it('should return ppcCurrent=null when no closed WeeklyProgram exists', async () => {
       const projectId = 'project-1';
 
       mockPrismaService.project.findUnique.mockResolvedValue({
@@ -152,8 +155,8 @@ describe('DashboardService', () => {
       });
 
       mockPrismaService.scheduleItem.findMany.mockResolvedValue([]);
-      mockPrismaService.restriction.count.mockResolvedValue(0);
-      mockPrismaService.weeklyPlan.findFirst.mockResolvedValue(null);
+      mockPrismaService.weeklyRestriction.count.mockResolvedValue(0);
+      mockPrismaService.weeklyProgram.findFirst.mockResolvedValue(null);
 
       const result = await service.getKPIs(projectId);
 
@@ -174,7 +177,7 @@ describe('DashboardService', () => {
       );
     });
 
-    it('should return items where actualProgress < plannedProgress, sorted by gap DESC', async () => {
+    it('should return items where physicalProgress < plannedProgress, sorted by gap DESC', async () => {
       const projectId = 'project-1';
       const pastDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
       const futureDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
@@ -186,7 +189,7 @@ describe('DashboardService', () => {
           code: '1.1',
           name: 'Delayed Small',
           plannedProgress: 50,
-          actualProgress: 40, // gap = 10
+          physicalProgress: 40, // gap = 10
           endDate: pastDate,
         },
         {
@@ -194,7 +197,7 @@ describe('DashboardService', () => {
           code: '1.2',
           name: 'On Track',
           plannedProgress: 30,
-          actualProgress: 30, // gap = 0 → not delayed
+          physicalProgress: 30, // gap = 0 → not delayed
           endDate: futureDate,
         },
         {
@@ -202,7 +205,7 @@ describe('DashboardService', () => {
           code: '1.3',
           name: 'Delayed Large',
           plannedProgress: 80,
-          actualProgress: 50, // gap = 30
+          physicalProgress: 50, // gap = 30
           endDate: pastDate,
         },
       ]);
@@ -234,7 +237,7 @@ describe('DashboardService', () => {
         code: `1.${i}`,
         name: `Task ${i}`,
         plannedProgress: 100,
-        actualProgress: i, // gap = 100 - i, all > 0
+        physicalProgress: i, // gap = 100 - i, all > 0
         endDate: pastDate,
       }));
 
@@ -259,36 +262,38 @@ describe('DashboardService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should return only PENDING and IN_ANALYSIS restrictions', async () => {
+    it('should return only PENDENTE restrictions', async () => {
       const projectId = 'project-1';
 
       const mockRestrictions = [
         {
           id: 'r1',
-          status: 'PENDING',
+          status: 'PENDENTE',
           description: 'Missing materials',
           dueDate: new Date('2025-02-01'),
-          weeklyPlan: { id: 'wp1', projectId },
+          program: { id: 'wp1', projectId },
+          type: { id: 't1', name: 'Material' },
         },
         {
           id: 'r2',
-          status: 'IN_ANALYSIS',
+          status: 'PENDENTE',
           description: 'Pending approval',
           dueDate: new Date('2025-02-15'),
-          weeklyPlan: { id: 'wp1', projectId },
+          program: { id: 'wp1', projectId },
+          type: { id: 't2', name: 'Projeto' },
         },
       ];
 
       mockPrismaService.project.findUnique.mockResolvedValue({ id: projectId });
-      mockPrismaService.restriction.findMany.mockResolvedValue(mockRestrictions);
+      mockPrismaService.weeklyRestriction.findMany.mockResolvedValue(mockRestrictions);
 
       const result = await service.getPendingRestrictions(projectId);
 
       expect(result).toEqual(mockRestrictions);
-      expect(mockPrismaService.restriction.findMany).toHaveBeenCalledWith(
+      expect(mockPrismaService.weeklyRestriction.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: ['PENDING', 'IN_ANALYSIS'] },
+            status: 'PENDENTE',
           }),
         }),
       );
@@ -322,7 +327,7 @@ describe('DashboardService', () => {
           startDate: new Date('2025-01-01'),
           endDate: new Date('2025-06-30'),
           plannedProgress: 50,
-          actualProgress: 30,
+          physicalProgress: 30,
           weight: 1,
           _count: { children: 2 },
         },
@@ -351,7 +356,7 @@ describe('DashboardService', () => {
           startDate: new Date('2025-01-15T12:00:00Z'),
           endDate: new Date('2025-03-15T12:00:00Z'),
           plannedProgress: 100,
-          actualProgress: 80,
+          physicalProgress: 80,
           weight: 1,
           _count: { children: 0 },
         },
@@ -405,7 +410,7 @@ describe('DashboardService', () => {
           startDate: new Date('2025-03-15T12:00:00Z'),
           endDate: new Date('2025-03-28T12:00:00Z'),
           plannedProgress: 100,
-          actualProgress: 100,
+          physicalProgress: 100,
           weight: 1,
           _count: { children: 0 },
         },

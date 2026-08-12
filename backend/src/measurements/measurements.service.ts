@@ -5,6 +5,7 @@ import {
 import { PrismaService } from '../common/prisma.service';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
 import { BatchMeasurementDto } from './dto/batch-measurement.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 export interface FloorSummary {
   towerId: string;
@@ -41,7 +42,13 @@ export interface BuildingDataResponse {
 
 @Injectable()
 export class MeasurementsService {
-  constructor(private readonly prisma: PrismaService) {}
+  // Debounce map: key = `${projectId}:${activityTypeId}`, value = pending timer
+  private recomputeTimers = new Map<string, NodeJS.Timeout>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async findByUnit(unitId: string) {
     const unit = await this.prisma.unit.findUnique({
@@ -67,7 +74,7 @@ export class MeasurementsService {
   async create(unitId: string, measuredById: string, dto: CreateMeasurementDto) {
     const unit = await this.prisma.unit.findUnique({
       where: { id: unitId },
-      select: { id: true },
+      select: { id: true, floor: { select: { tower: { select: { projectId: true } } } } },
     });
     if (!unit) {
       throw new NotFoundException(`Unidade com ID "${unitId}" não encontrada`);
@@ -75,7 +82,7 @@ export class MeasurementsService {
 
     const activityType = await this.prisma.activityType.findUnique({
       where: { id: dto.activityTypeId },
-      select: { id: true, measurementMethod: true, defaultQuantity: true },
+      select: { id: true, measurementMethod: true, defaultQuantity: true, projectId: true },
     });
     if (!activityType) {
       throw new NotFoundException(`Tipo de atividade com ID "${dto.activityTypeId}" não encontrado`);
@@ -96,7 +103,7 @@ export class MeasurementsService {
       }
     }
 
-    return this.prisma.measurement.create({
+    const created = await this.prisma.measurement.create({
       data: {
         unitId,
         measuredById,
@@ -114,13 +121,28 @@ export class MeasurementsService {
         },
       },
     });
+
+    const projectId = unit.floor.tower.projectId;
+    this.realtime.emitMeasurementUpdated({
+      projectId,
+      unitId,
+      activityTypeId: dto.activityTypeId,
+      percentComplete: Number(created.percentComplete),
+      measuredById,
+      measuredByName: created.measuredBy?.fullName,
+    });
+
+    this.scheduleRecompute(projectId, dto.activityTypeId);
+
+    return created;
   }
 
   async update(id: string, dto: Partial<CreateMeasurementDto>) {
     const measurement = await this.prisma.measurement.findUnique({
       where: { id },
       include: {
-        activityType: { select: { measurementMethod: true, defaultQuantity: true } },
+        activityType: { select: { id: true, measurementMethod: true, defaultQuantity: true, projectId: true } },
+        unit: { select: { id: true, floor: { select: { tower: { select: { projectId: true } } } } } },
       },
     });
     if (!measurement) {
@@ -143,7 +165,7 @@ export class MeasurementsService {
       }
     }
 
-    return this.prisma.measurement.update({
+    const updated = await this.prisma.measurement.update({
       where: { id },
       data: {
         ...(dto.activityTypeId !== undefined && { activityTypeId: dto.activityTypeId }),
@@ -160,12 +182,26 @@ export class MeasurementsService {
         },
       },
     });
+
+    const projectId = measurement.unit.floor.tower.projectId;
+    this.realtime.emitMeasurementUpdated({
+      projectId,
+      unitId: measurement.unitId,
+      activityTypeId: updated.activityTypeId,
+      percentComplete: Number(updated.percentComplete),
+      measuredById: measurement.measuredById,
+      measuredByName: updated.measuredBy?.fullName,
+    });
+
+    this.scheduleRecompute(projectId, updated.activityTypeId);
+
+    return updated;
   }
 
   async batchCreate(unitId: string, measuredById: string, dto: BatchMeasurementDto) {
     const unit = await this.prisma.unit.findUnique({
       where: { id: unitId },
-      select: { id: true },
+      select: { id: true, floor: { select: { tower: { select: { projectId: true } } } } },
     });
     if (!unit) {
       throw new NotFoundException(`Unidade com ID "${unitId}" não encontrada`);
@@ -217,7 +253,85 @@ export class MeasurementsService {
       }),
     );
 
+    const projectId = unit.floor.tower.projectId;
+    for (const m of results) {
+      this.realtime.emitMeasurementUpdated({
+        projectId,
+        unitId,
+        activityTypeId: m.activityTypeId,
+        percentComplete: Number(m.percentComplete),
+        measuredById,
+      });
+    }
+    for (const atId of activityTypeIds) {
+      this.scheduleRecompute(projectId, atId);
+    }
+
     return results;
+  }
+
+  /**
+   * Debounced recompute: collapses bursts of measurements (e.g. user salvando
+   * 8 atividades de uma vez) em uma única passada agregada por (project, activity).
+   */
+  private scheduleRecompute(projectId: string, activityTypeId: string) {
+    const key = `${projectId}:${activityTypeId}`;
+    const existing = this.recomputeTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.recomputeTimers.delete(key);
+      this.recomputeActivityProgress(projectId, activityTypeId).catch(() => undefined);
+    }, 500);
+    this.recomputeTimers.set(key, timer);
+  }
+
+  /**
+   * Agrega a última medição por unit×activity para o projeto e atualiza
+   * o physicalProgress de todos os ScheduleItem que apontam para essa activity.
+   */
+  async recomputeActivityProgress(projectId: string, activityTypeId: string) {
+    const units = await this.prisma.unit.findMany({
+      where: { floor: { tower: { projectId } } },
+      select: {
+        id: true,
+        area: true,
+        measurements: {
+          where: { activityTypeId },
+          orderBy: { date: 'desc' },
+          take: 1,
+          select: { percentComplete: true },
+        },
+      },
+    });
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const u of units) {
+      const m = u.measurements[0];
+      if (!m) continue;
+      const w = u.area ? Number(u.area) : 1;
+      weightedSum += Number(m.percentComplete) * w;
+      totalWeight += w;
+    }
+    const newProgress = totalWeight > 0 ? Math.round((weightedSum / totalWeight) * 100) / 100 : 0;
+
+    const items = await this.prisma.scheduleItem.findMany({
+      where: { projectId, activityTypeId },
+      select: { id: true, physicalProgress: true },
+    });
+
+    for (const item of items) {
+      if (Math.abs(Number(item.physicalProgress) - newProgress) < 0.01) continue;
+      await this.prisma.scheduleItem.update({
+        where: { id: item.id },
+        data: { physicalProgress: newProgress },
+      });
+      this.realtime.emitScheduleUpdated({
+        projectId,
+        scheduleItemId: item.id,
+        physicalProgress: newProgress,
+      });
+    }
   }
 
   async getSummary(projectId: string): Promise<FloorSummary[]> {

@@ -1,1187 +1,687 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Undo2, Redo2 } from 'lucide-react';
+import { Box, FileImage, LayoutGrid } from 'lucide-react';
 import { useStore } from '@/store';
-import { towersApi, measurementsApi, activityTypesApi } from '@/services/api';
-import type { Tower, Floor, Unit, ActivityType, Measurement } from '@/types';
-import { useHistoryStore } from '@/store/historyStore';
+import { NoProjectState } from '@/components/NoProjectState';
+import { towersApi, measurementsApi, scheduleApi, uploadsApi, progressApi } from '@/services/api';
+import type { Tower, Floor, Unit, GanttTask, ProjectReport, ProjectMetrics, ReportComparison, CurvaSPoint } from '@/types';
+import {
+  buildForest, indexNodes, recalcParents, subtreeProgress, FLOOR_PATTERN, normKey,
+} from '@/lib/wbs-tree';
+import BuildingViewer3D from '@/components/viewer/BuildingViewer3D';
+import FloorPlanViewer2D from '@/components/viewer/FloorPlanViewer2D';
+import ScheduleBlocksPanel from '@/components/medicao/ScheduleBlocksPanel';
+import HeatmapMatrix, { type HeatRow, type HeatCell } from '@/components/medicao/HeatmapMatrix';
+import { SaveReportModal, ReportHistoryModal } from '@/components/medicao/ReportDialogs';
+import {
+  Toolbar, ToolbarLabeledSelect, ToolbarSeparator, ToolbarToggleGroup,
+} from '@/components/Toolbar';
+import { RestoreReportModal } from '@/components/RestoreReportModal';
+import { useRealtime, useScheduleUpdates, useScheduleChanges } from '@/hooks/useRealtime';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+type ViewerMode = '3d' | '2d' | 'heatmap';
 
-interface ActivityEntry {
-  activityTypeId: string;
-  name: string;
-  measurementMethod: 'PERCENT' | 'METRIC' | 'COUNT';
-  unit: string;
-  defaultQuantity: number;
-  mode: 'PERCENT' | 'METRIC';
-  percentValue: number;
-  executedQty: number;
-  totalQty: number;
-  computed: number;
-  isDirty: boolean;
-}
+// Altura DEFINIDA do viewer (evita canvas R3F crescendo sem limite / sobreposição).
+const VIEWER_H = 'clamp(460px, 66vh, 760px)';
 
-type StatusFilter = 'todos' | 'ni' | 'ea' | 'co';
 
-interface TowerProgress {
-  [towerId: string]: number;
-}
+// ── KpiBar ────────────────────────────────────────────────────────────────────
 
-interface FloorProgress {
-  [floorId: string]: number;
-}
+export interface LeafStatusCounts { done: number; inProgress: number; delayed: number; total: number; }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Cores dos 3 status usados na barra segmentada (espelham a legenda do viewer).
+const ST_DONE = '#16A34A';
+const ST_PROGRESS = '#D97706';
+const ST_DELAYED = '#DC2626';
 
-function calcFromMetric(executed: number, total: number): number {
-  if (total <= 0) return 0;
-  return Math.min(100, Math.round((executed / total) * 10000) / 100);
-}
+function KpiBar({ realized, planned, counts, curva }: {
+  realized: number; planned: number | null;
+  counts: LeafStatusCounts; curva: CurvaSPoint[];
+}) {
+  const deviation = planned == null ? null : Math.round((realized - planned) * 10) / 10;
+  const devPositive = deviation != null && deviation >= 0;
 
-function calcOverallProgress(entries: ActivityEntry[]): number {
-  if (entries.length === 0) return 0;
-  const sum = entries.reduce((acc, e) => acc + e.computed, 0);
-  return Math.round(sum / entries.length);
-}
-
-function methodLabel(method: 'PERCENT' | 'METRIC' | 'COUNT'): string {
-  if (method === 'PERCENT') return '%';
-  if (method === 'METRIC') return 'm²';
-  return 'un';
-}
-
-function heatmapColor(pct: number): string {
-  if (pct === 0) return '#EBF0F6';
-  if (pct <= 30) return '#FEF3C7';
-  if (pct <= 60) return '#FCD34D';
-  if (pct < 100) return '#86EFAC';
-  return '#4ADE80';
-}
-
-function unitState(p: number): 'ni' | 'ea' | 'co' {
-  if (p === 0) return 'ni';
-  if (p >= 100) return 'co';
-  return 'ea';
-}
-
-function statusBadgeClass(p: number): string {
-  if (p === 0) return 'ao-badge ao-bk';
-  if (p >= 100) return 'ao-badge ao-bg';
-  return 'ao-badge ao-ba';
-}
-
-function statusLabel(p: number): string {
-  if (p === 0) return 'Não iniciado';
-  if (p >= 100) return 'Concluído';
-  return 'Em andamento';
-}
-
-// ── KpiBar Component ──────────────────────────────────────────────────────────
-
-interface KpiBarProps {
-  overallProgress: number;
-  towerProgresses: TowerProgress;
-  towers: Tower[];
-  unitsTotal: number;
-  unitsDone: number;
-}
-
-function KpiBar({ overallProgress, towerProgresses, towers, unitsTotal, unitsDone }: KpiBarProps) {
   return (
     <div style={{
-      background: 'var(--s0)',
-      padding: '12px 16px',
-      borderBottom: '1px solid var(--bd)',
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-      gap: '16px',
-      marginBottom: '12px',
+      background: 'var(--s0)', padding: '12px 16px', borderBottom: '1px solid var(--bd)',
+      borderRadius: 12, border: '1px solid var(--bd)', marginBottom: 12,
     }}>
-      {/* Progresso Geral */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
-          Avanço Geral da Obra
+      {/* Header com badge de desvio do baseline */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+          Medição Física
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px' }}>
-            {overallProgress}%
-          </div>
-          <div className="ao-pbar" style={{ flex: 1, minHeight: 6 }}>
-            <div
-              className="ao-pfill"
-              style={{
-                width: `${overallProgress}%`,
-                background: heatmapColor(overallProgress),
-                borderRadius: 3,
-              }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Unidades */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
-          Unidades
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
-          {unitsDone} <span style={{ fontSize: 12, color: 'var(--t3)' }}>/ {unitsTotal}</span>
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>concluídas</div>
-      </div>
-
-      {/* Torres */}
-      {towers.length > 1 && towers.map((tower) => (
-        <div key={tower.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 }}>
-            {tower.name}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)' }}>
-              {Math.round(towerProgresses[tower.id] ?? 0)}%
-            </div>
-            <div className="ao-pbar" style={{ flex: 1, minHeight: 4 }}>
-              <div
-                className="ao-pfill"
-                style={{
-                  width: `${towerProgresses[tower.id] ?? 0}%`,
-                  background: heatmapColor(towerProgresses[tower.id] ?? 0),
-                  borderRadius: 2,
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Building Model 3D (SVG Isométrico + Heatmap) ──────────────────────────────
-
-interface BuildingModel3DProps {
-  floors: Floor[];
-  unitsCache: Record<string, Unit[]>;
-  selectedFloorId: string | null;
-  onSelectFloor: (floorId: string) => void;
-  floorProgresses: FloorProgress;
-}
-
-function BuildingModel3D({
-  floors,
-  unitsCache,
-  selectedFloorId,
-  onSelectFloor,
-  floorProgresses,
-}: BuildingModel3DProps) {
-  const sorted = [...floors].sort((a, b) => b.level - a.level);
-  const displayFloors = sorted.slice(0, 12);
-
-  const FLOOR_H = 36;
-  const TOP_Y = 16;
-
-  return (
-    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-      {/* SVG */}
-      <svg viewBox="0 0 220 340" width="180" height="290" style={{ display: 'block', flexShrink: 0 }}>
-        {/* Shadow */}
-        <ellipse cx="130" cy="334" rx="65" ry="6" fill="rgba(0,0,0,.06)" />
-        {/* Side face */}
-        <polygon points="178,22 218,8 218,314 178,328" fill="var(--s3)" stroke="var(--bd2)" strokeWidth=".5" />
-        {/* Roof */}
-        <polygon points="22,22 62,8 218,8 178,22" fill="var(--s2)" stroke="var(--bd2)" strokeWidth=".5" />
-        {/* Main facade */}
-        <rect x="22" y="22" width="156" height="274" fill="var(--s1)" stroke="var(--bd2)" strokeWidth=".5" />
-
-        {/* Floor labels + windows */}
-        {displayFloors.map((floor, idx) => {
-          const y = TOP_Y + idx * FLOOR_H;
-          const avg = floorProgresses[floor.id] ?? 0;
-          const isSelected = floor.id === selectedFloorId;
-
-          const winW = 20;
-          const winH = 12;
-          const winY = y + 7;
-          const winXs = [32, 62, 92, 122];
-
-          return (
-            <g key={floor.id} onClick={() => onSelectFloor(floor.id)} style={{ cursor: 'pointer' }}>
-              {/* Floor outline */}
-              <rect
-                x="22"
-                y={y}
-                width="156"
-                height={FLOOR_H - 1}
-                fill="transparent"
-                stroke={isSelected ? 'var(--blue)' : 'var(--bd)'}
-                strokeWidth={isSelected ? 2 : 0.5}
-              />
-              {/* Windows */}
-              {winXs.map((wx, wi) => (
-                <rect
-                  key={wi}
-                  x={wx}
-                  y={winY}
-                  width={winW}
-                  height={winH}
-                  rx="1.5"
-                  fill={heatmapColor(avg)}
-                  opacity={0.85}
-                  stroke={isSelected ? 'var(--blue)' : 'none'}
-                  strokeWidth={isSelected ? 0.5 : 0}
-                />
-              ))}
-              {/* Floor label */}
-              <text x="186" y={y + 22} fontSize="8" fill="var(--t3)" fontFamily="sans-serif" fontWeight="500">
-                {floor.name}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Heatmap Sidebar */}
-      <div style={{
-        flex: 1,
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '4px',
-        maxHeight: 290,
-        overflowY: 'auto',
-        paddingRight: '4px',
-      }}>
-        {displayFloors.map((floor) => {
-          const progress = floorProgresses[floor.id] ?? 0;
-          const isSelected = floor.id === selectedFloorId;
-
-          return (
-            <div
-              key={floor.id}
-              onClick={() => onSelectFloor(floor.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '4px 6px',
-                borderRadius: '5px',
-                cursor: 'pointer',
-                background: isSelected ? 'rgba(27,111,232,.12)' : 'transparent',
-                border: isSelected ? '1px solid var(--blue)' : 'none',
-                fontSize: '10px',
-                fontWeight: 500,
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--t2)' }}>
-                {floor.name}
-              </div>
-              <div className="ao-pbar" style={{ minWidth: '40px', minHeight: '3px' }}>
-                <div
-                  className="ao-pfill"
-                  style={{
-                    width: `${progress}%`,
-                    background: heatmapColor(progress),
-                    borderRadius: '1px',
-                  }}
-                />
-              </div>
-              <div style={{ minWidth: '24px', textAlign: 'right', fontWeight: 600, color: 'var(--t1)' }}>
-                {Math.round(progress)}%
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Heatmap Legend ────────────────────────────────────────────────────────────
-
-function HeatmapLegend() {
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(2, 1fr)',
-      gap: '8px',
-      fontSize: '10px',
-      marginTop: '10px',
-      padding: '10px',
-      background: 'var(--s2)',
-      borderRadius: 'var(--r-md)',
-      border: '1px solid var(--bd)',
-    }}>
-      {[
-        { pct: 100, label: 'Concluído' },
-        { pct: 70, label: 'Em andamento' },
-        { pct: 30, label: 'Iniciado' },
-        { pct: 0, label: 'Não iniciado' },
-      ].map((item) => (
-        <div key={item.pct} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div
+        {deviation != null && (
+          <span
+            title="Desvio do baseline: realizado − previsto (pontos percentuais)"
             style={{
-              width: '16px',
-              height: '10px',
-              borderRadius: '2px',
-              background: heatmapColor(item.pct),
+              display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+              padding: '3px 10px', borderRadius: 999, fontFamily: 'var(--mono)',
+              background: devPositive ? 'var(--grn-bg)' : 'var(--amb-bg)',
+              color: devPositive ? 'var(--green)' : 'var(--amber)',
+              border: `1px solid ${devPositive ? 'var(--green)' : 'var(--amber)'}`,
             }}
-          />
-          <span style={{ color: 'var(--t2)' }}>{item.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: devPositive ? 'var(--green)' : 'var(--amber)' }} />
+            {devPositive ? '+' : ''}{deviation.toFixed(1)} p.p. vs baseline
+          </span>
+        )}
+      </div>
 
-// ── Filter Buttons ────────────────────────────────────────────────────────────
-
-interface FilterProps {
-  current: StatusFilter;
-  onChange: (filter: StatusFilter) => void;
-}
-
-function StatusFilterButtons({ current, onChange }: FilterProps) {
-  const filters: Array<{ value: StatusFilter; label: string }> = [
-    { value: 'todos', label: 'Todos' },
-    { value: 'ni', label: 'Não iniciado' },
-    { value: 'ea', label: 'Em andamento' },
-    { value: 'co', label: 'Concluído' },
-  ];
-
-  return (
-    <div className="ao-tab-bar" style={{ marginBottom: '10px', display: 'inline-flex', borderBottom: 'none', border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
-      {filters.map((f) => (
-        <button
-          key={f.value}
-          onClick={() => onChange(f.value)}
-          className={`ao-tab${current === f.value ? ' active' : ''}`}
-          style={{ borderTop: 'none', marginBottom: 0, padding: '5px 12px' }}
-        >
-          {f.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── Progress Cascade ──────────────────────────────────────────────────────────
-
-interface ProgressCascadeProps {
-  unitProgress: number;
-  floorProgress: number;
-  towerProgress: number;
-  overallProgress: number;
-  selectedUnit: Unit | null;
-  selectedFloor: Floor | null;
-  selectedTower: Tower | null;
-}
-
-function ProgressCascade({
-  unitProgress,
-  floorProgress,
-  towerProgress,
-  overallProgress,
-  selectedUnit,
-  selectedFloor,
-  selectedTower,
-}: ProgressCascadeProps) {
-  const cascadeItems = [
-    { label: `${selectedUnit?.name ?? 'Unidade'}`, value: unitProgress },
-    { label: `${selectedFloor?.name ?? 'Pavimento'}`, value: floorProgress },
-    { label: `${selectedTower?.name ?? 'Torre'}`, value: towerProgress },
-    { label: 'Obra Geral', value: overallProgress },
-  ];
-
-  return (
-    <div style={{
-      background: 'var(--s1)',
-      border: '1px solid var(--bd)',
-      borderRadius: '8px',
-      padding: '12px',
-      marginTop: '12px',
-      fontSize: '11px',
-    }}>
-      <div style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: '8px' }}>Progresso em Cascata</div>
-      {cascadeItems.map((item, idx) => (
-        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: idx < cascadeItems.length - 1 ? '6px' : 0 }}>
-          <div style={{ minWidth: '80px', textAlign: 'right', fontWeight: 500, color: 'var(--t1)' }}>
-            {item.label}:
-          </div>
-          <div className="ao-pbar" style={{ flex: 1, minHeight: '6px' }}>
-            <div
-              className="ao-pfill"
-              style={{
-                width: `${item.value}%`,
-                background: heatmapColor(item.value),
-                borderRadius: '3px',
-              }}
-            />
-          </div>
-          <div style={{ minWidth: '36px', textAlign: 'right', fontWeight: 600, color: 'var(--t1)' }}>
-            {Math.round(item.value)}%
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+        {/* Card A — Avanço geral · previsto × realizado */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={kpiLabel}>Avanço geral · previsto × realizado</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 30, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--blue)', letterSpacing: '-1px', lineHeight: 1 }}>
+                  {realized.toFixed(1).replace('.', ',')}%
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>
+                realizado
+                {planned != null && <> · previsto <span style={{ color: 'var(--t2)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{planned.toFixed(1).replace('.', ',')}%</span></>}
+              </div>
+            </div>
+            <CurvaSSparkline points={curva} realized={realized} planned={planned} />
           </div>
         </div>
-      ))}
+
+        {/* Card B — Atividades */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={kpiLabel}>Atividades</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--t1)', lineHeight: 1 }}>
+              {counts.done}
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--t3)', fontFamily: 'var(--mono)' }}>/ {counts.total}</span>
+            <span style={{ fontSize: 10, color: 'var(--t3)' }}>concluídas</span>
+          </div>
+          <SegmentedStatusBar counts={counts} />
+          <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--t3)', flexWrap: 'wrap' }}>
+            <StatusLegendCount color={ST_DONE} label="concluídas" n={counts.done} />
+            <StatusLegendCount color={ST_PROGRESS} label="em andamento" n={counts.inProgress} />
+            <StatusLegendCount color={ST_DELAYED} label="atrasadas" n={counts.delayed} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+const kpiLabel: React.CSSProperties = { fontSize: 9, fontWeight: 800, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 4 };
+
+function StatusLegendCount({ color, label, n }: { color: string; label: string; n: number }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+      <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--t2)' }}>{n}</span> {label}
+    </span>
+  );
+}
+
+function SegmentedStatusBar({ counts }: { counts: LeafStatusCounts }) {
+  const total = Math.max(counts.total, 1);
+  const seg = (n: number) => `${(n / total) * 100}%`;
+  return (
+    <div style={{ display: 'flex', width: '100%', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--s2)' }}>
+      <div style={{ width: seg(counts.done), background: ST_DONE }} />
+      <div style={{ width: seg(counts.inProgress), background: ST_PROGRESS }} />
+      <div style={{ width: seg(counts.delayed), background: ST_DELAYED }} />
     </div>
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+/** Mini Curva S (SVG): linha tracejada = previsto, sólida = realizado, ponto na medição atual. */
+function CurvaSSparkline({ points, realized, planned }: { points: CurvaSPoint[]; realized: number; planned: number | null }) {
+  const W = 132, H = 44, pad = 3;
+  const data = points.length >= 2 ? points : null;
+
+  const path = (key: 'planned' | 'actual') => {
+    if (!data) return '';
+    const n = data.length;
+    return data.map((p, i) => {
+      const x = pad + (i / (n - 1)) * (W - 2 * pad);
+      const y = H - pad - (Math.min(100, Math.max(0, p[key])) / 100) * (H - 2 * pad);
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  };
+
+  // Ponto da medição atual = último ponto com realizado registrado.
+  let curX = W - pad, curY = H - pad;
+  if (data) {
+    let idx = data.length - 1;
+    for (let i = data.length - 1; i >= 0; i--) { if (data[i].actual > 0) { idx = i; break; } }
+    curX = pad + (idx / (data.length - 1)) * (W - 2 * pad);
+    curY = H - pad - (Math.min(100, Math.max(0, data[idx].actual)) / 100) * (H - 2 * pad);
+  }
+
+  if (!data) {
+    // Fallback sem série: barrinhas previsto/realizado (mantém a leitura prev×real).
+    const py = planned == null ? H / 2 : H - pad - (planned / 100) * (H - 2 * pad);
+    const ry = H - pad - (realized / 100) * (H - 2 * pad);
+    return (
+      <svg width={W} height={H} style={{ flexShrink: 0 }} aria-label="Curva S indisponível">
+        {planned != null && <line x1={pad} y1={py} x2={W - pad} y2={py} stroke="var(--t3)" strokeWidth={1.5} strokeDasharray="4 3" />}
+        <line x1={pad} y1={ry} x2={W - pad} y2={ry} stroke="var(--blue)" strokeWidth={2} />
+        <circle cx={W - pad} cy={ry} r={2.6} fill="var(--blue)" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={W} height={H} style={{ flexShrink: 0 }} aria-label="Curva S previsto × realizado">
+      <path d={path('planned')} fill="none" stroke="var(--t3)" strokeWidth={1.5} strokeDasharray="4 3" />
+      <path d={path('actual')} fill="none" stroke="var(--blue)" strokeWidth={2} strokeLinejoin="round" />
+      <circle cx={curX} cy={curY} r={3} fill="var(--blue)" stroke="var(--s0)" strokeWidth={1} />
+    </svg>
+  );
+}
+
+// ── Toolbar ──────────────────────────────────────────────────────────────────
+
+function MedicaoToolbar({ mode, onModeChange, towers, floors, selectedTowerId, selectedFloorId, onTowerChange, onFloorChange, hasIfc }: {
+  mode: ViewerMode; onModeChange: (m: ViewerMode) => void; towers: Tower[]; floors: Floor[];
+  selectedTowerId: string | null; selectedFloorId: string | null;
+  onTowerChange: (id: string | null) => void; onFloorChange: (id: string | null) => void; hasIfc: boolean;
+}) {
+  return (
+    <div className="ao-card" style={{ padding: '10px 12px', marginBottom: 12 }}>
+      <Toolbar style={{ gap: 12 }}>
+        <ToolbarToggleGroup
+          value={mode}
+          onChange={onModeChange}
+          options={[
+            {
+              value: '3d' as const,
+              icon: <Box size={12} />,
+              label: <>Modelo 3D {hasIfc && <span style={{ fontSize: 8, opacity: .85 }}>· IFC</span>}</>,
+            },
+            { value: '2d' as const, icon: <FileImage size={12} />, label: 'Planta 2D' },
+            { value: 'heatmap' as const, icon: <LayoutGrid size={12} />, label: 'Mapa de calor' },
+          ]}
+        />
+        <ToolbarSeparator />
+        <ToolbarLabeledSelect
+          label="Torre:"
+          value={selectedTowerId}
+          onChange={onTowerChange}
+          options={towers.map((t) => ({ value: t.id, label: t.name }))}
+        />
+        <ToolbarLabeledSelect
+          label="Pavto:"
+          value={selectedFloorId}
+          onChange={onFloorChange}
+          disabled={floors.length === 0}
+          options={floors.map((f) => ({ value: f.id, label: f.name }))}
+        />
+      </Toolbar>
+    </div>
+  );
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Medicao() {
   const { currentProject, addToast } = useStore();
   const projectId = currentProject?.id;
-  const { push, triggerDataOnly, dataOnlyTrigger, past, future, undo, redo, isProcessing: historyProcessing } = useHistoryStore();
-  // Tracks the last-saved state of entries per unit (for undo)
-  const committedEntriesRef = useRef<Map<string, ActivityEntry[]>>(new Map());
-  const [measurementRefreshTick, setMeasurementRefreshTick] = useState(0);
-
-  // dataOnlyTrigger: undo/redo refreshes only measurements for current unit, preserving navigation
-  useEffect(() => {
-    if (dataOnlyTrigger > 0) setMeasurementRefreshTick((t) => t + 1);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataOnlyTrigger]);
 
   const [towers, setTowers] = useState<Tower[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [activityTypes, setActivityTypes] = useState<ActivityType[]>([]);
-  const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [allFloors, setAllFloors] = useState<Floor[]>([]);
+  const [floorUnitsCache, setFloorUnitsCache] = useState<Record<string, Unit[]>>({});
+
+  const [tasks, setTasks] = useState<GanttTask[]>([]);
+  const [navPath, setNavPath] = useState<string[]>([]);
+  const [canteiroMode, setCanteiroMode] = useState(false);
 
   const [selectedTowerId, setSelectedTowerId] = useState<string | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
+  const [hoveredFloorId, setHoveredFloorId] = useState<string | null>(null);
 
-  const [floorUnitsCache, setFloorUnitsCache] = useState<Record<string, Unit[]>>({});
-  const [floorProgresses, setFloorProgresses] = useState<FloorProgress>({});
-  const [towerProgresses, setTowerProgresses] = useState<TowerProgress>({});
-
-  const [loadingTowers, setLoadingTowers] = useState(false);
-  const [loadingFloors, setLoadingFloors] = useState(false);
-  const [loadingUnits, setLoadingUnits] = useState(false);
-  const [loadingMeasurements, setLoadingMeasurements] = useState(false);
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('3d');
+  const [ifcUrl, setIfcUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  // KPIs / Curva S (topo)
+  const [curva, setCurva] = useState<CurvaSPoint[]>([]);
 
-  // Calculates floor progress from units
-  const calculateFloorProgress = useCallback((floorId: string, cache: Record<string, Unit[]>): number => {
-    const floorUnits = cache[floorId] ?? [];
-    if (floorUnits.length === 0) return 0;
-    const sum = floorUnits.reduce((acc, u) => acc + (u.progressPercent ?? 0), 0);
-    return Math.round(sum / floorUnits.length);
+  // Report state
+  const [reports, setReports] = useState<ProjectReport[]>([]);
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
+  const [showSaveReport, setShowSaveReport] = useState(false);
+  const [reportDescription, setReportDescription] = useState('');
+  const [savingReport, setSavingReport] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<ReportComparison | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectReport | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  useRealtime(projectId);
+
+  // ── Data loaders ──────────────────────────────────────────────────────────
+  const loadSchedule = useCallback(async (pid: string) => {
+    const g = await scheduleApi.ganttData(pid).catch(() => [] as GanttTask[]);
+    setTasks(g);
+    return g;
   }, []);
 
-  // Calculates tower progress from floors
-  const calculateTowerProgress = useCallback(
-    (towerId: string, towerFloors: Floor[], cache: Record<string, Unit[]>): number => {
-      const floorProgresses = towerFloors.map((f) => calculateFloorProgress(f.id, cache));
-      if (floorProgresses.length === 0) return 0;
-      const sum = floorProgresses.reduce((a, b) => a + b, 0);
-      return Math.round(sum / floorProgresses.length);
-    },
-    [calculateFloorProgress],
-  );
-
-  // Calculates overall progress from towers
-  const calculateOverallProgress = useCallback(
-    (allTowers: Tower[], allFloors: Floor[], cache: Record<string, Unit[]>): number => {
-      const towerProgs = allTowers.map((t) => {
-        const towerFloors = allFloors.filter((f) => f.towerId === t.id);
-        return calculateTowerProgress(t.id, towerFloors, cache);
+  const loadStructure = useCallback(async (pid: string) => {
+    setLoading(true);
+    try {
+      const [t, bd, ifc] = await Promise.all([
+        towersApi.list(pid),
+        measurementsApi.buildingData(pid),
+        uploadsApi.getIfcModel(pid).catch(() => null),
+      ]);
+      setTowers(t);
+      setIfcUrl(ifc?.url ?? null);
+      const unitsCache: Record<string, Unit[]> = {};
+      const allFloorsAcc: Floor[] = [];
+      bd.towers.forEach((tower) => {
+        tower.floors.forEach((floor, fIdx) => {
+          unitsCache[floor.id] = floor.units.map((unit, idx) => ({ id: unit.id, floorId: floor.id, name: unit.name, area: 0, order: idx } as Unit));
+          allFloorsAcc.push({ id: floor.id, towerId: tower.id, name: floor.name, level: floor.level, order: fIdx } as Floor);
+        });
       });
-      if (towerProgs.length === 0) return 0;
-      const sum = towerProgs.reduce((a, b) => a + b, 0);
-      return Math.round(sum / towerProgs.length);
-    },
-    [calculateTowerProgress],
-  );
+      setFloorUnitsCache(unitsCache);
+      setAllFloors(allFloorsAcc);
+      return t;
+    } catch {
+      addToast({ type: 'error', title: 'Erro ao carregar dados' });
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
 
-  // ── Load towers + activity types + building data ─────────────────────────
+  const loadMetrics = useCallback(async (pid: string) => {
+    const m = await progressApi.metrics(pid).catch(() => null);
+    if (m) setMetrics(m);
+  }, []);
+
+  const loadCurva = useCallback(async (pid: string) => {
+    const c = await scheduleApi.curvaS(pid).catch(() => [] as CurvaSPoint[]);
+    setCurva(c);
+  }, []);
 
   useEffect(() => {
     if (!projectId) return;
-    setLoadingTowers(true);
-    Promise.all([
-      towersApi.list(projectId),
-      activityTypesApi.list(projectId),
-      measurementsApi.buildingData(projectId),
-    ])
-      .then(([t, at, bd]) => {
-        setTowers(t);
-        setActivityTypes(at);
-        if (t.length > 0) setSelectedTowerId(t[0].id);
+    loadStructure(projectId).then((t) => { if (t.length > 0) setSelectedTowerId((cur) => cur ?? t[0].id); });
+    loadSchedule(projectId);
+    loadMetrics(projectId);
+    loadCurva(projectId);
+  }, [projectId, loadStructure, loadSchedule, loadMetrics, loadCurva]);
 
-        // Populate floorUnitsCache and floorProgresses from buildingData
-        const unitsCache: Record<string, Unit[]> = {};
-        const floorProgs: FloorProgress = {};
-
-        bd.towers.forEach((tower) => {
-          tower.floors.forEach((floor) => {
-            floorProgs[floor.id] = floor.averageProgress;
-            unitsCache[floor.id] = floor.units.map((unit, idx) => ({
-              id: unit.id,
-              floorId: floor.id,
-              name: unit.name,
-              area: 0,
-              order: idx,
-              progressPercent: unit.progressPercent,
-            } as Unit));
-          });
-        });
-
-        setFloorUnitsCache(unitsCache);
-        setFloorProgresses(floorProgs);
-      })
-      .catch(() => {
-        addToast({ type: 'error', title: 'Erro ao carregar dados', description: 'Não foi possível carregar as torres.' });
-      })
-      .finally(() => setLoadingTowers(false));
-  }, [projectId, addToast]);
-
-  // ── Load floors when tower changes ───────────────────────────────────────
-
-  useEffect(() => {
-    if (!projectId || !selectedTowerId) {
-      setFloors([]);
-      return;
-    }
-    setLoadingFloors(true);
-    setSelectedFloorId(null);
-    setFloorUnitsCache({});
-    setFloorProgresses({});
-    towersApi
-      .listFloors(projectId, selectedTowerId)
-      .then((f) => {
-        setFloors(f);
-        if (f.length > 0) setSelectedFloorId(f[0].id);
-      })
-      .catch(() => {})
-      .finally(() => setLoadingFloors(false));
-  }, [selectedTowerId, projectId]);
-
-  // ── Load units when floor changes ────────────────────────────────────────
-
-  useEffect(() => {
-    if (!selectedFloorId) {
-      setUnits([]);
-      return;
-    }
-    setLoadingUnits(true);
-    setSelectedUnitId(null);
-    towersApi
-      .listUnits(selectedFloorId)
-      .then((u) => {
-        setUnits(u);
-        setFloorUnitsCache((prev) => ({ ...prev, [selectedFloorId]: u }));
-      })
-      .catch(() => {})
-      .finally(() => setLoadingUnits(false));
-  }, [selectedFloorId]);
-
-  // ── Load measurements when unit changes ──────────────────────────────────
-
-  const buildEntries = useCallback(
-    (meas: Measurement[], types: ActivityType[]): ActivityEntry[] => {
-      return types.map((at) => {
-        const existing = meas.find((m) => m.activityTypeId === at.id);
-        const percent = existing?.percentComplete ?? 0;
-        const execQty = existing?.executedQty ?? 0;
-        const totalQty = existing?.totalQty ?? at.defaultQuantity;
-        const mode: 'PERCENT' | 'METRIC' = at.measurementMethod !== 'PERCENT' && totalQty > 0 ? 'METRIC' : 'PERCENT';
-        const computed = mode === 'METRIC' ? calcFromMetric(execQty, totalQty) : percent;
-        return {
-          activityTypeId: at.id,
-          name: at.name,
-          measurementMethod: at.measurementMethod as 'PERCENT' | 'METRIC' | 'COUNT',
-          unit: at.unit,
-          defaultQuantity: at.defaultQuantity,
-          mode,
-          percentValue: percent,
-          executedQty: execQty,
-          totalQty,
-          computed,
-          isDirty: false,
-        };
-      });
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!selectedUnitId) {
-      setEntries([]);
-      return;
-    }
-    setLoadingMeasurements(true);
-    measurementsApi
-      .list(selectedUnitId)
-      .then((meas) => {
-        setMeasurements(meas);
-        const built = buildEntries(meas, activityTypes);
-        setEntries(built);
-        committedEntriesRef.current.set(selectedUnitId, built);
-      })
-      .catch(() => {
-        const empty = buildEntries([], activityTypes);
-        setEntries(empty);
-        if (selectedUnitId) committedEntriesRef.current.set(selectedUnitId, empty);
-      })
-      .finally(() => setLoadingMeasurements(false));
-  }, [selectedUnitId, activityTypes, buildEntries, measurementRefreshTick]);
-
-  // ── Calculate all progress values ────────────────────────────────────────
-
-  const overallProgress = useMemo(() => {
-    return calculateOverallProgress(towers, floors, floorUnitsCache);
-  }, [towers, floors, floorUnitsCache, calculateOverallProgress]);
-
-  const currentUnitProgress = useMemo(() => calcOverallProgress(entries), [entries]);
-
-  const currentFloorProgress = useMemo(() => {
-    if (!selectedFloorId) return 0;
-    return calculateFloorProgress(selectedFloorId, floorUnitsCache);
-  }, [selectedFloorId, floorUnitsCache, calculateFloorProgress]);
-
-  const currentTowerProgress = useMemo(() => {
-    if (!selectedTowerId) return 0;
-    const towerFloors = floors.filter((f) => f.towerId === selectedTowerId);
-    return calculateTowerProgress(selectedTowerId, towerFloors, floorUnitsCache);
-  }, [selectedTowerId, floors, floorUnitsCache, calculateTowerProgress]);
-
-  // Update tower progresses for KPI
-  useEffect(() => {
-    const newTowerProgresses: TowerProgress = {};
-    towers.forEach((t) => {
-      const towerFloors = floors.filter((f) => f.towerId === t.id);
-      newTowerProgresses[t.id] = calculateTowerProgress(t.id, towerFloors, floorUnitsCache);
+  // ── Realtime sync (cronograma ↔ medição) ─────────────────────────────────
+  const refreshDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useScheduleUpdates(projectId, (e) => {
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t.id === e.scheduleItemId);
+      if (idx < 0) return prev;
+      if (Math.abs((prev[idx].physicalProgress || 0) - e.physicalProgress) < 0.01) return prev;
+      const next = prev.map((t) => (t.id === e.scheduleItemId ? { ...t, physicalProgress: e.physicalProgress } : t));
+      return recalcParents(next).tasks;
     });
-    setTowerProgresses(newTowerProgresses);
-  }, [towers, floors, floorUnitsCache, calculateTowerProgress]);
+  });
+  useScheduleChanges(projectId, () => {
+    if (!projectId) return;
+    if (refreshDebounce.current) clearTimeout(refreshDebounce.current);
+    refreshDebounce.current = setTimeout(() => {
+      loadSchedule(projectId);
+      loadStructure(projectId);
+    }, 400);
+  });
+  useEffect(() => {
+    function onVisible() { if (document.visibilityState === 'visible' && projectId) { loadSchedule(projectId); loadMetrics(projectId); } }
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => { document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); };
+  }, [projectId, loadSchedule, loadMetrics]);
 
-  const selectedUnit = useMemo(() => units.find((u) => u.id === selectedUnitId) ?? null, [units, selectedUnitId]);
+  // ── Floors list for selected tower ────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedTowerId) { setFloors([]); return; }
+    const towerFloors = allFloors.filter((f) => f.towerId === selectedTowerId).sort((a, b) => a.level - b.level);
+    setFloors(towerFloors);
+    setSelectedFloorId((cur) => cur && towerFloors.some((f) => f.id === cur) ? cur : (towerFloors[0]?.id ?? null));
+  }, [selectedTowerId, allFloors]);
+
+  // ── Derived: schedule maps ─────────────────────────────────────────────────
+  const forest = useMemo(() => buildForest(tasks), [tasks]);
+  const nodeById = useMemo(() => indexNodes(forest), [forest]);
+
+  // Floor (Tower/Floor model) → WBS node (level-1 com mesmo nome normalizado)
+  const floorTaskByFloorId = useMemo(() => {
+    const wbsByName = new Map<string, GanttTask>();
+    for (const t of tasks) if ((t.level ?? 0) === 1 && FLOOR_PATTERN.test(t.name)) wbsByName.set(normKey(t.name), t);
+    const m = new Map<string, GanttTask>();
+    for (const f of allFloors) { const node = wbsByName.get(normKey(f.name)); if (node) m.set(f.id, node); }
+    return m;
+  }, [tasks, allFloors]);
+
+  const floorProgress = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const node of forest) collectFloorProgress(node, m, floorTaskByFloorId);
+    // map por floorId
+    const out: Record<string, number> = {};
+    for (const f of allFloors) {
+      const node = floorTaskByFloorId.get(f.id);
+      out[f.id] = node ? (m[node.id] ?? node.physicalProgress ?? 0) : 0;
+    }
+    return out;
+  }, [forest, floorTaskByFloorId, allFloors]);
+
+  const towerProgresses = useMemo(() => {
+    const root = forest[0];
+    const m: Record<string, number> = {};
+    const overall = root ? subtreeProgress(root) : 0;
+    for (const t of towers) m[t.id] = overall;
+    return m;
+  }, [forest, towers]);
+
+  const overallProgress = useMemo(() => (forest[0] ? subtreeProgress(forest[0]) : 0), [forest]);
+
+  // Contagem por status (live) das folhas: concluída / em andamento / atrasada.
+  const leafCounts = useMemo<LeafStatusCounts>(() => {
+    const leaves = tasks.filter((t) => !tasks.some((c) => c.parentId === t.id));
+    let done = 0, delayed = 0, inProgress = 0;
+    for (const l of leaves) {
+      const phys = l.physicalProgress || 0;
+      const plan = l.plannedProgress || 0;
+      if (phys >= 100) done++;
+      else if (phys + 0.01 < plan) delayed++; // abaixo do previsto do baseline
+      else inProgress++;
+    }
+    return { done, inProgress, delayed, total: leaves.length };
+  }, [tasks]);
+
+  // Previsto geral (baseline) — ponderado pelas folhas, mesma lógica do realizado.
+  const plannedOverall = useMemo<number | null>(() => {
+    const leaves = tasks.filter((t) => !tasks.some((c) => c.parentId === t.id));
+    const tw = leaves.reduce((s, l) => s + (l.weight || 1), 0);
+    if (tw === 0) return null;
+    return Math.round((leaves.reduce((s, l) => s + (l.plannedProgress || 0) * (l.weight || 1), 0) / tw) * 100) / 100;
+  }, [tasks]);
+
+  // Canteiro: folhas sem ancestral de pavimento
+  const sitework = useMemo(() => {
+    const leaves: GanttTask[] = [];
+    const collect = (n: ReturnType<typeof buildForest>[number]) => { if (n.unlocated) leaves.push(n.task); else n.children.forEach(collect); };
+    forest.forEach(collect);
+    if (leaves.length === 0) return null;
+    const tw = leaves.reduce((s, l) => s + (l.weight || 1), 0);
+    const prog = tw > 0 ? Math.round((leaves.reduce((s, l) => s + (l.physicalProgress || 0) * (l.weight || 1), 0) / tw) * 100) / 100 : 0;
+    return { progress: prog, count: leaves.length };
+  }, [forest]);
+
+  const unitProgressMap = useMemo(() => {
+    // unidades (Geral) herdam o progresso do seu pavimento (via cronograma)
+    const m: Record<string, number> = {};
+    for (const [floorId, units] of Object.entries(floorUnitsCache)) {
+      const p = floorProgress[floorId] ?? 0;
+      for (const u of units) m[u.id] = p;
+    }
+    return m;
+  }, [floorUnitsCache, floorProgress]);
+
   const selectedFloor = useMemo(() => floors.find((f) => f.id === selectedFloorId) ?? null, [floors, selectedFloorId]);
-  const selectedTower = useMemo(() => towers.find((t) => t.id === selectedTowerId) ?? null, [towers, selectedTowerId]);
+  // taskId (nó de pavimento) → floorId, para sincronizar navegação ↔ 3D.
+  const floorIdByTaskId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [floorId, node] of floorTaskByFloorId.entries()) m.set(node.id, floorId);
+    return m;
+  }, [floorTaskByFloorId]);
 
-  // Count units done
-  const unitsDone = useMemo(() => {
-    return Object.values(floorUnitsCache)
-      .flat()
-      .filter((u) => (u.progressPercent ?? 0) >= 100).length;
-  }, [floorUnitsCache]);
-
-  const unitsTotal = useMemo(() => {
-    return Object.values(floorUnitsCache).flat().length;
-  }, [floorUnitsCache]);
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  function handleEntryChange(idx: number, updated: Partial<ActivityEntry>) {
-    setEntries((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], ...updated };
-      return next;
+  // Matriz do mapa de calor: linhas = pavimentos (desc), colunas = unidades.
+  const heatRows = useMemo<HeatRow[]>(() => {
+    if (!selectedTowerId) return [];
+    const towerFloors = allFloors.filter((f) => f.towerId === selectedTowerId).sort((a, b) => b.level - a.level);
+    return towerFloors.map((f) => {
+      const fNode = floorTaskByFloorId.get(f.id);
+      const wnode = fNode ? nodeById.get(fNode.id) : undefined;
+      const cells: HeatCell[] = [];
+      // Só há "unidades" quando o pavimento tem sub-containers (Áreas comuns, Ap 1..N).
+      if (wnode && wnode.children.length > 0 && !wnode.children.every((c) => c.isLeaf)) {
+        for (const child of wnode.children) {
+          cells.push({ nodeId: child.task.id, label: child.task.name, progress: subtreeProgress(child) });
+        }
+      }
+      return { floorId: f.id, floorName: f.name, floorProgress: floorProgress[f.id] ?? 0, cells };
     });
-  }
+  }, [selectedTowerId, allFloors, floorTaskByFloorId, nodeById, floorProgress]);
 
-  function handleMarkDone(idx: number) {
-    handleEntryChange(idx, { computed: 100, percentValue: 100, isDirty: true });
-  }
+  // ── Navegação (blocos) ──────────────────────────────────────────────────────
+  // Selecionar pavimento (toolbar/3D) → drilla os blocos até aquele pavimento.
+  const goToFloor = useCallback((floorId: string | null) => {
+    setCanteiroMode(false);
+    setSelectedFloorId(floorId);
+    if (!floorId) { setNavPath([]); return; }
+    const node = floorTaskByFloorId.get(floorId);
+    setNavPath(node ? [node.id] : []);
+  }, [floorTaskByFloorId]);
 
-  function handleAllDone() {
-    setEntries((prev) => prev.map((e) => ({ ...e, computed: 100, percentValue: 100, isDirty: true })));
-  }
+  // Clique numa célula (unidade) do mapa de calor → abre as atividades da unidade.
+  const openUnitActivities = useCallback((floorId: string, nodeId: string) => {
+    setCanteiroMode(false);
+    setSelectedFloorId(floorId);
+    const floorNode = floorTaskByFloorId.get(floorId);
+    setNavPath(floorNode ? [floorNode.id, nodeId] : [nodeId]);
+  }, [floorTaskByFloorId]);
 
-  async function handleSave() {
-    if (!selectedUnitId || !selectedFloorId) return;
-    const dirty = entries.filter((e) => e.isDirty);
-    if (dirty.length === 0) return;
+  // Mudança de navPath nos blocos → reflete o pavimento no 3D/breadcrumb.
+  const handleNavPathChange = useCallback((path: string[]) => {
+    setNavPath(path);
+    const fid = path.length > 0 ? floorIdByTaskId.get(path[0]) : undefined;
+    if (fid) setSelectedFloorId(fid);
+  }, [floorIdByTaskId]);
+
+  const commitLeaf = useCallback(async (taskId: string, value: number) => {
+    const prevTasks = tasks;
+    const target = prevTasks.find((t) => t.id === taskId);
+    if (!target) return;
+    const oldValue = target.physicalProgress || 0;
+
+    // otimista: aplica folha + rollup de pais
+    const withLeaf = prevTasks.map((t) => (t.id === taskId ? { ...t, physicalProgress: value } : t));
+    const { tasks: rolled, changed } = recalcParents(withLeaf);
+    setTasks(rolled);
     setSaving(true);
-
-    // Capture old (committed) state before overwriting
-    const unitId = selectedUnitId;
-    const oldCommitted = committedEntriesRef.current.get(unitId) ?? [];
-    const oldSnapshots = dirty.map((e) => {
-      const old = oldCommitted.find((o) => o.activityTypeId === e.activityTypeId);
-      return { activityTypeId: e.activityTypeId, percentComplete: old?.computed ?? 0, executedQty: old?.executedQty, totalQty: old?.totalQty };
-    });
-    const newSnapshots = dirty.map((e) => ({
-      activityTypeId: e.activityTypeId, percentComplete: e.computed,
-      executedQty: e.mode === 'METRIC' ? e.executedQty : undefined,
-      totalQty: e.mode === 'METRIC' ? e.totalQty : undefined,
-    }));
-
     try {
-      await Promise.all(
-        dirty.map((e) =>
-          measurementsApi.create(unitId, {
-            activityTypeId: e.activityTypeId,
-            percentComplete: e.computed,
-            executedQty: e.mode === 'METRIC' ? e.executedQty : undefined,
-            totalQty: e.mode === 'METRIC' ? e.totalQty : undefined,
-          }),
-        ),
-      );
-
-      // Calculate new unit progress from entries
-      const cleanedEntries = entries.map((e) => ({ ...e, isDirty: false }));
-      const newUnitProgress = calcOverallProgress(cleanedEntries);
-
-      // Update entries to clean state
-      setEntries(cleanedEntries);
-      committedEntriesRef.current.set(unitId, cleanedEntries);
-
-      // Update unit in cache with new progress
-      const updatedUnits = (floorUnitsCache[selectedFloorId] ?? []).map((u) =>
-        u.id === unitId ? { ...u, progressPercent: newUnitProgress } : u,
-      );
-
-      setFloorUnitsCache((prev) => ({ ...prev, [selectedFloorId]: updatedUnits }));
-
-      // Recalculate floor progress from updated units
-      const unitProgresses = updatedUnits.map((u) => u.progressPercent ?? 0);
-      const newFloorProgress =
-        unitProgresses.length > 0
-          ? Math.round(unitProgresses.reduce((a, b) => a + b, 0) / unitProgresses.length)
-          : 0;
-
-      setFloorProgresses((prev) => ({ ...prev, [selectedFloorId]: newFloorProgress }));
-
-      addToast({ type: 'success', title: 'Salvo com sucesso', description: 'Medição da unidade salva.' });
-
-      // Record in history
-      push({
-        description: `Medição: ${dirty.length} atividade(s) salva(s)`,
-        module: 'medicao',
-        undo: async () => {
-          await Promise.all(oldSnapshots.map((s) => measurementsApi.create(unitId, s)));
-          triggerDataOnly();
-        },
-        redo: async () => {
-          await Promise.all(newSnapshots.map((s) => measurementsApi.create(unitId, s)));
-          triggerDataOnly();
-        },
-      });
+      await scheduleApi.update(taskId, { physicalProgress: value });
+      await Promise.all(changed.map((c) => scheduleApi.update(c.id, { physicalProgress: c.physicalProgress })));
+      loadMetrics(projectId!);
     } catch {
-      addToast({ type: 'error', title: 'Erro ao salvar', description: 'Tente novamente.' });
+      setTasks(prevTasks);
+      addToast({ type: 'error', title: 'Erro ao salvar', description: 'Não foi possível atualizar o avanço.' });
+      return;
     } finally {
       setSaving(false);
     }
+    addToast({ type: 'success', title: 'Avanço atualizado', description: `${target.name}: ${oldValue}% → ${value}%` });
+  }, [tasks, addToast, projectId, loadMetrics]);
+
+  // ── Report handlers ────────────────────────────────────────────────────────
+  async function saveReport() {
+    if (!projectId) return;
+    setSavingReport(true);
+    try {
+      const result = await progressApi.createReport(projectId, reportDescription || undefined);
+      addToast({ type: 'success', title: 'Report gravado', description: `Report #${result.reportNumber} criado. Cronograma e indicadores atualizados.` });
+      setShowSaveReport(false);
+      setReportDescription('');
+      await Promise.all([loadMetrics(projectId), loadSchedule(projectId), loadCurva(projectId)]);
+    } catch {
+      addToast({ type: 'error', title: 'Erro ao gravar Report' });
+    } finally {
+      setSavingReport(false);
+    }
+  }
+  async function openHistory() {
+    if (!projectId) return;
+    setShowHistory(true);
+    const data = await progressApi.listReports(projectId).catch(() => []);
+    setReports(data);
+  }
+  async function compareReport(r: ProjectReport) {
+    if (!projectId) return;
+    const cmp = await progressApi.getReport(projectId, r.id).catch(() => null);
+    if (cmp) setSelectedReport(cmp);
   }
 
-  // ── No project guard ──────────────────────────────────────────────────────
+  /** Sobrescreve o estado atual com o do report escolhido. */
+  async function confirmRestore() {
+    if (!projectId || !restoreTarget) return;
+    setRestoring(true);
+    try {
+      const result = await progressApi.restoreReport(projectId, restoreTarget.id);
+      addToast({
+        type: 'success',
+        title: `Report #${restoreTarget.reportNumber} restaurado`,
+        description: `Avanço físico agora em ${result.physicalProgress.toFixed(2)}%.`
+          + (result.partial ? ' Apenas o cronograma foi restaurado.' : '')
+          + ` Estado anterior salvo no Report #${result.safetyReportNumber}.`,
+      });
+      setRestoreTarget(null);
+      setShowHistory(false);
+      setSelectedReport(null);
+      await Promise.all([loadSchedule(projectId), loadMetrics(projectId), loadCurva(projectId)]);
+    } catch {
+      addToast({
+        type: 'error',
+        title: 'Erro ao restaurar',
+        description: 'Nada foi alterado — a medição continua como estava.',
+      });
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  const lastReportLabel = metrics
+    ? (metrics.lastReportNumber > 0
+        ? `Último Report #${metrics.lastReportNumber}${metrics.lastReportDate ? ` · ${new Date(metrics.lastReportDate).toLocaleDateString('pt-BR')}` : ''} · consolidado ${metrics.physicalProgress.toFixed(1)}%`
+        : 'Nenhum Report gravado — grave para consolidar o avanço no cronograma')
+    : null;
+
+  // Esc limpa seleção; M alterna 3D/2D
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      const tag = (ev.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (ev.key === 'm' || ev.key === 'M') setViewerMode((m) => (m === '3d' ? '2d' : '3d'));
+      if (ev.key === 'Escape') { setSelectedUnitId(null); setCanteiroMode(false); setNavPath([]); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   if (!currentProject) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, textAlign: 'center', padding: '0 1rem' }}>
-        <div style={{ fontSize: 13, color: 'var(--t2)' }}>
-          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>Selecione um projeto</p>
-          <p>Escolha um projeto no seletor acima para registrar medições.</p>
-        </div>
-      </div>
-    );
+    return <NoProjectState message="Escolha um projeto no seletor acima para registrar medições." />;
   }
-
-  // ── Filtered units ────────────────────────────────────────────────────────
-
-  const filteredUnits = useMemo(() => {
-    if (statusFilter === 'todos') return units;
-    return units.filter((u) => unitState(u.progressPercent ?? 0) === statusFilter);
-  }, [units, statusFilter]);
-
-  // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
     <>
-      {/* KPI Bar */}
-      <KpiBar
-        overallProgress={overallProgress}
-        towerProgresses={towerProgresses}
-        towers={towers}
-        unitsTotal={unitsTotal}
-        unitsDone={unitsDone}
+      <KpiBar realized={overallProgress} planned={plannedOverall} counts={leafCounts} curva={curva} />
+
+      <MedicaoToolbar
+        mode={viewerMode} onModeChange={setViewerMode}
+        towers={towers} floors={floors}
+        selectedTowerId={selectedTowerId} selectedFloorId={selectedFloorId}
+        onTowerChange={(id) => { setSelectedTowerId(id); setCanteiroMode(false); }}
+        onFloorChange={(id) => goToFloor(id)}
+        hasIfc={!!ifcUrl}
       />
 
-      {/* Main content */}
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', marginBottom: '2rem' }}>
-
-        {/* Left: Building Model */}
-        <div style={{ flexShrink: 0 }}>
-          <div className="ao-card" style={{ padding: '.875rem', width: 280 }}>
-            <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--t1)' }}>Modelo do Empreendimento</p>
-
-            {/* Tower select */}
-            <div style={{ marginBottom: 10 }}>
-              <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4, fontWeight: 500 }}>Torre</label>
-              {loadingTowers ? (
-                <div style={{ height: 32, background: 'var(--s2)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
-              ) : (
-                <select
-                  value={selectedTowerId ?? ''}
-                  onChange={(e) => setSelectedTowerId(e.target.value || null)}
-                  style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
-                >
-                  <option value="">Selecione a torre</option>
-                  {towers.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            {/* Building model 3D */}
-            {loadingFloors ? (
-              <div style={{ height: 290, background: 'var(--s2)', borderRadius: 8, marginBottom: 10 }} />
-            ) : (
-              <BuildingModel3D
-                floors={floors}
-                unitsCache={floorUnitsCache}
-                selectedFloorId={selectedFloorId}
-                onSelectFloor={setSelectedFloorId}
-                floorProgresses={floorProgresses}
-              />
-            )}
-
-            {/* Floor select */}
-            <div style={{ marginTop: 10 }}>
-              <label style={{ fontSize: 11, color: 'var(--t2)', display: 'block', marginBottom: 4, fontWeight: 500 }}>Andar</label>
-              <select
-                value={selectedFloorId ?? ''}
-                onChange={(e) => setSelectedFloorId(e.target.value || null)}
-                disabled={floors.length === 0}
-                style={{ width: '100%', padding: '5px 8px', fontSize: 11, border: '1px solid var(--bd)', borderRadius: 8, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
-              >
-                <option value="">Selecione o andar</option>
-                {floors.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Floor summary */}
-            {selectedFloor && (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '0.5px solid var(--bd)', fontSize: 11, color: 'var(--t2)' }}>
-                <p style={{ fontWeight: 600, color: 'var(--t1)', marginBottom: 3 }}>{selectedFloor.name}</p>
-                <p>{units.length} unidades</p>
-                <p>{units.filter((u) => (u.progressPercent ?? 0) >= 100).length} concluídas</p>
-              </div>
-            )}
-
-            {/* Heatmap Legend */}
-            <HeatmapLegend />
-          </div>
-        </div>
-
-        {/* Right: Units + Activities */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-
-          {/* Units card */}
-          <div className="ao-card">
-            <div className="ao-card-hdr" style={{ marginBottom: 10 }}>
-              <span className="ao-card-title">
-                Unidades {selectedFloor ? `— ${selectedFloor.name}` : ''}
-              </span>
-              {selectedUnit && (
-                <span className={statusBadgeClass(currentUnitProgress)}>
-                  {Math.round(currentUnitProgress)}% {statusLabel(currentUnitProgress)}
-                </span>
-              )}
-            </div>
-
-            {/* Filters */}
-            {units.length > 0 && <StatusFilterButtons current={statusFilter} onChange={setStatusFilter} />}
-
-            {loadingUnits ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} style={{ height: 60, background: 'var(--s2)', borderRadius: 8 }} />
-                ))}
-              </div>
-            ) : units.length === 0 ? (
-              <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
-                Selecione um andar para ver as unidades
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(78px,1fr))', gap: 5 }}>
-                {filteredUnits.map((unit) => {
-                  const p = unit.progressPercent ?? 0;
-                  const state = unitState(p);
-                  const isSelected = unit.id === selectedUnitId;
-
-                  const bgColor = state === 'ni' ? 'var(--s1)' : state === 'co' ? 'var(--grn-bg)' : 'var(--amb-bg)';
-                  const textColor = state === 'ni' ? 'var(--t2)' : state === 'co' ? 'var(--grn-t)' : 'var(--amb-t)';
-
-                  return (
-                    <button
-                      key={unit.id}
-                      onClick={() => setSelectedUnitId(unit.id)}
-                      style={{
-                        padding: 7,
-                        borderRadius: 8,
-                        fontSize: 10,
-                        textAlign: 'center',
-                        cursor: 'pointer',
-                        border: isSelected ? '1.5px solid var(--blue)' : '1px solid var(--bd)',
-                        background: bgColor,
-                        color: textColor,
-                        transition: 'all .15s',
-                        boxShadow: isSelected ? '0 0 0 2px rgba(27,111,232,.18)' : 'none',
-                        fontFamily: 'var(--font)',
-                      }}
-                    >
-                      <div style={{ fontWeight: 500, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{unit.name}</div>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{p.toFixed(0)}%</div>
-                      <div className="ao-pbar" style={{ marginTop: 4 }}>
-                        <div
-                          className="ao-pfill"
-                          style={{
-                            width: `${p}%`,
-                            background: heatmapColor(p),
-                          }}
-                        />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Activities card */}
-          <div className="ao-card">
-            <div className="ao-card-hdr" style={{ marginBottom: 4 }}>
-              <span className="ao-card-title">
-                {selectedUnit ? `Atividades — ${selectedUnit.name}` : 'Atividades'}
-              </span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button
-                  className="ao-btn ao-btn-sm"
-                  onClick={undo}
-                  disabled={past.length === 0 || historyProcessing}
-                  title={past.length > 0 ? `Desfazer: ${past[past.length - 1]?.description} (Ctrl+Z)` : 'Nada para desfazer'}
-                  style={{ opacity: past.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
-                >
-                  <Undo2 style={{ width: 12, height: 12 }} />
-                </button>
-                <button
-                  className="ao-btn ao-btn-sm"
-                  onClick={redo}
-                  disabled={future.length === 0 || historyProcessing}
-                  title={future.length > 0 ? `Refazer: ${future[0]?.description} (Ctrl+Y)` : 'Nada para refazer'}
-                  style={{ opacity: future.length > 0 && !historyProcessing ? 1 : 0.4, padding: '4px 8px' }}
-                >
-                  <Redo2 style={{ width: 12, height: 12 }} />
-                </button>
-                {selectedUnit && (
-                  <>
-                    <div style={{ width: 1, height: 16, background: 'var(--bd)' }} />
-                    <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
-                      Tudo concluído
-                    </button>
-                    <button
-                      className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
-                      onClick={handleSave}
-                      disabled={saving || entries.every((e) => !e.isDirty)}
-                    >
-                      {saving ? 'Salvando…' : 'Salvar'}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {!selectedUnitId ? (
-              <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
-                Selecione uma unidade para registrar medições
-              </div>
-            ) : loadingMeasurements ? (
-              <div>
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} style={{ height: 44, background: 'var(--s2)', borderRadius: 8, marginBottom: 6 }} />
-                ))}
-              </div>
-            ) : entries.length === 0 ? (
-              <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>
-                Nenhum tipo de atividade cadastrado para este projeto.
-              </div>
-            ) : (
-              <div>
-                {entries.map((entry, idx) => {
-                  const isMetric = entry.mode === 'METRIC' && entry.measurementMethod !== 'PERCENT';
-                  const p = entry.computed;
-
-                  function handlePercentChange(val: string) {
-                    const n = Math.min(100, Math.max(0, parseFloat(val) || 0));
-                    handleEntryChange(idx, { percentValue: n, computed: n, isDirty: true });
-                  }
-
-                  function handleExecutedChange(val: string) {
-                    const executed = parseFloat(val) || 0;
-                    const computed = calcFromMetric(executed, entry.totalQty);
-                    handleEntryChange(idx, { executedQty: executed, computed, isDirty: true });
-                  }
-
-                  function handleTotalChange(val: string) {
-                    const total = parseFloat(val) || 0;
-                    const computed = calcFromMetric(entry.executedQty, total);
-                    handleEntryChange(idx, { totalQty: total, computed, isDirty: true });
-                  }
-
-                  return (
-                    <div
-                      key={entry.activityTypeId}
-                      style={{
-                        padding: '8px 0',
-                        borderBottom: '0.5px solid var(--bd)',
-                        background: entry.isDirty ? 'rgba(186,117,23,.04)' : undefined,
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        {/* Name + method */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--t1)' }}>{entry.name}</span>
-                            <span className="ao-badge ao-bk" style={{ flexShrink: 0 }}>{methodLabel(entry.measurementMethod)}</span>
-                          </div>
-                        </div>
-
-                        {/* Mode toggle */}
-                        {entry.measurementMethod !== 'PERCENT' && (
-                          <div style={{ display: 'flex', borderRadius: 6, border: '1px solid var(--bd)', overflow: 'hidden', flexShrink: 0 }}>
-                            <button
-                              onClick={() => handleEntryChange(idx, { mode: 'PERCENT', isDirty: true })}
-                              style={{
-                                padding: '3px 8px',
-                                fontSize: 9,
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontFamily: 'var(--font)',
-                                background: !isMetric ? 'var(--blue)' : 'var(--s1)',
-                                color: !isMetric ? '#fff' : 'var(--t2)',
-                              }}
-                            >
-                              %
-                            </button>
-                            <button
-                              onClick={() => handleEntryChange(idx, { mode: 'METRIC', isDirty: true })}
-                              style={{
-                                padding: '3px 8px',
-                                fontSize: 9,
-                                border: 'none',
-                                cursor: 'pointer',
-                                fontFamily: 'var(--font)',
-                                background: isMetric ? 'var(--blue)' : 'var(--s1)',
-                                color: isMetric ? '#fff' : 'var(--t2)',
-                              }}
-                            >
-                              Métrica
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Progress display */}
-                        <span style={{ fontSize: 12, fontWeight: 600, minWidth: 36, textAlign: 'right', color: p >= 100 ? 'var(--green)' : p > 0 ? 'var(--amber)' : 'var(--t3)' }}>
-                          {p.toFixed(0)}%
-                        </span>
-
-                        {/* Status badge */}
-                        <span className={statusBadgeClass(p)} style={{ flexShrink: 0, minWidth: 66, justifyContent: 'center', fontSize: 9 }}>
-                          {statusLabel(p)}
-                        </span>
-
-                        {/* Mark done button */}
-                        <button
-                          onClick={() => handleMarkDone(idx)}
-                          title="Marcar 100%"
-                          className="ao-btn ao-btn-sm ao-btn-ok"
-                          style={{ flexShrink: 0, borderRadius: '50%', width: 22, height: 22, padding: 0 }}
-                        >
-                          ✓
-                        </button>
-                      </div>
-
-                      {/* Progress bar */}
-                      <div className="ao-pbar" style={{ marginBottom: 6 }}>
-                        <div
-                          className="ao-pfill"
-                          style={{
-                            width: `${p}%`,
-                            background: heatmapColor(p),
-                          }}
-                        />
-                      </div>
-
-                      {/* Inputs */}
-                      {isMetric ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-                          <span style={{ color: 'var(--t2)' }}>Executado:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={entry.executedQty}
-                            onChange={(e) => handleExecutedChange(e.target.value)}
-                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
-                          />
-                          <span style={{ color: 'var(--t3)' }}>/</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={entry.totalQty}
-                            onChange={(e) => handleTotalChange(e.target.value)}
-                            style={{ width: 60, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
-                          />
-                          <span style={{ color: 'var(--t2)', fontWeight: 500 }}>{entry.unit}</span>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-                          <span style={{ color: 'var(--t2)' }}>Percentual:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={entry.percentValue}
-                            onChange={(e) => handlePercentChange(e.target.value)}
-                            style={{ width: 70, padding: '4px 6px', fontSize: 10, border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s0)', color: 'var(--t1)', fontFamily: 'var(--font)' }}
-                          />
-                          <span style={{ color: 'var(--t2)', fontWeight: 500 }}>%</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Footer buttons */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 12 }}>
-                  <button className="ao-btn ao-btn-sm ao-btn-ok" onClick={handleAllDone} disabled={saving}>
-                    Tudo concluído
-                  </button>
-                  <button
-                    className={`ao-btn ao-btn-sm${entries.some((e) => e.isDirty) ? ' ao-btn-primary' : ''}`}
-                    onClick={handleSave}
-                    disabled={saving || entries.every((e) => !e.isDirty)}
-                  >
-                    {saving ? 'Salvando…' : 'Salvar Medição'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Progress Cascade */}
-          {selectedUnit && (
-            <ProgressCascade
-              unitProgress={currentUnitProgress}
-              floorProgress={currentFloorProgress}
-              towerProgress={currentTowerProgress}
-              overallProgress={overallProgress}
-              selectedUnit={selectedUnit}
-              selectedFloor={selectedFloor}
-              selectedTower={selectedTower}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(420px, 1fr)', gap: 12, alignItems: 'start', marginBottom: 24 }}>
+        {/* Left: viewer — altura DEFINIDA (não %) p/ o canvas R3F não crescer indefinidamente */}
+        <div style={{ minWidth: 0, height: VIEWER_H }}>
+          {loading ? (
+            <div style={{ height: '100%', minHeight: 460, background: 'var(--s2)', borderRadius: 12 }} />
+          ) : viewerMode === '3d' ? (
+            <BuildingViewer3D
+              mode={ifcUrl ? 'ifc' : 'procedural'}
+              ifcUrl={ifcUrl}
+              towers={towers}
+              floors={allFloors}
+              unitsByFloor={floorUnitsCache}
+              unitProgress={unitProgressMap}
+              floorProgress={floorProgress}
+              towerProgress={towerProgresses}
+              selection={{ towerId: selectedTowerId, floorId: selectedFloorId, unitId: selectedUnitId }}
+              hoveredFloorId={hoveredFloorId}
+              onSelectTower={(id) => { setSelectedTowerId(id); setCanteiroMode(false); }}
+              onSelectFloor={(id) => goToFloor(id)}
+              onSelectUnit={(id) => setSelectedUnitId(id)}
+              height="100%"
+              sitework={sitework ? { ...sitework, selected: canteiroMode, onSelect: () => { setCanteiroMode(true); setNavPath([]); setSelectedFloorId(null); setSelectedUnitId(null); } } : null}
+            />
+          ) : viewerMode === '2d' ? (
+            <FloorPlanViewer2D floorId={selectedFloorId} floorName={selectedFloor?.name} projectId={projectId!} height="100%" />
+          ) : (
+            <HeatmapMatrix
+              rows={heatRows}
+              selectedFloorId={selectedFloorId}
+              onSelectUnit={openUnitActivities}
+              onSelectFloor={(id) => goToFloor(id)}
+              onHoverFloor={setHoveredFloorId}
+              height="100%"
             />
           )}
         </div>
+
+        {/* Right: activities blocks (drill-down) — breadcrumb único vive no painel */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+          <ScheduleBlocksPanel
+            tasks={tasks}
+            navPath={navPath}
+            onNavPathChange={handleNavPathChange}
+            canteiroMode={canteiroMode}
+            onCommitLeaf={commitLeaf}
+            saving={saving || savingReport}
+            onSaveReport={() => setShowSaveReport(true)}
+            onOpenHistory={openHistory}
+            lastReportLabel={lastReportLabel}
+            onHoverNode={(taskId) => setHoveredFloorId(taskId ? floorIdByTaskId.get(taskId) ?? null : null)}
+          />
+        </div>
       </div>
+
+      <SaveReportModal
+        open={showSaveReport}
+        description={reportDescription}
+        saving={savingReport}
+        onChange={setReportDescription}
+        onCancel={() => { setShowSaveReport(false); setReportDescription(''); }}
+        onConfirm={saveReport}
+      />
+      <ReportHistoryModal
+        open={showHistory}
+        reports={reports}
+        selected={selectedReport}
+        onCompare={compareReport}
+        onClose={() => { setShowHistory(false); setSelectedReport(null); }}
+        onRestore={setRestoreTarget}
+        restoring={restoring}
+      />
+      <RestoreReportModal
+        open={!!restoreTarget}
+        report={restoreTarget}
+        restoring={restoring}
+        onCancel={() => setRestoreTarget(null)}
+        onConfirm={confirmRestore}
+      />
     </>
   );
+}
+
+// Helper: preenche map[node.id]=progress agregado para nós de pavimento.
+function collectFloorProgress(
+  node: ReturnType<typeof buildForest>[number],
+  out: Record<string, number>,
+  floorTaskByFloorId: Map<string, GanttTask>,
+) {
+  const floorTaskIds = new Set([...floorTaskByFloorId.values()].map((t) => t.id));
+  if (floorTaskIds.has(node.task.id)) out[node.task.id] = subtreeProgress(node);
+  node.children.forEach((c) => collectFloorProgress(c, out, floorTaskByFloorId));
 }

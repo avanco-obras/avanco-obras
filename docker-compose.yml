@@ -52,6 +52,10 @@ services:
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin}
       MINIO_BUCKET: avanco-obras
       MINIO_USE_SSL: "false"
+      # Host que o NAVEGADOR alcança — usado só para assinar URLs (presigned)
+      MINIO_PUBLIC_ENDPOINT: localhost
+      MINIO_PUBLIC_PORT: 9000
+      MINIO_PUBLIC_USE_SSL: "false"
       NODE_ENV: development
       PORT: 3001
       FRONTEND_URL: http://localhost:5173
@@ -67,7 +71,7 @@ services:
       redis:
         condition: service_started
     command: >
-      sh -c "npx prisma db push && npx prisma db seed && npm run start:dev"
+      sh -c "npx prisma db push --accept-data-loss && npx prisma db seed && npm run start:dev"
 
   frontend:
     build:

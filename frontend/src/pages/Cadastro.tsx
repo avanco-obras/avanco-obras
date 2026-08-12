@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '@/store';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { DataTable } from '@/components/DataTable';
 import { projectsApi, uploadsApi, aiImportApi, activityTypesApi, scheduleApi } from '@/services/api';
 import {
   FileText,
@@ -131,8 +133,11 @@ function sketchfabEmbedUrl(url: string): string {
 
 export default function Cadastro() {
   const { currentProject, setCurrentProject, addToast } = useStore();
+  const confirm = useConfirm();
 
   const [form, setForm] = useState<ProjectFormData>(DEFAULT_FORM);
+  // Snapshot do último estado salvo/carregado, para detectar alterações não salvas.
+  const [savedSnapshot, setSavedSnapshot] = useState<ProjectFormData>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
 
   // Plantas state
@@ -151,6 +156,9 @@ export default function Cadastro() {
 
   // Modelo 3D state
   const [sketchfabUrl, setSketchfabUrl] = useState('');
+  const [ifcUpload, setIfcUpload] = useState<{ id: string; fileName: string } | null>(null);
+  const [ifcUploading, setIfcUploading] = useState(false);
+  const ifcFileInputRef = useRef<HTMLInputElement>(null);
 
   // Equipe state
   const [members, setMembers] = useState<TeamMemberEntry[]>([]);
@@ -165,7 +173,7 @@ export default function Cadastro() {
   // Pre-fill from currentProject
   useEffect(() => {
     if (currentProject) {
-      setForm({
+      const filled: ProjectFormData = {
         name: currentProject.name ?? '',
         company: currentProject.company ?? '',
         address: currentProject.address ?? '',
@@ -181,9 +189,11 @@ export default function Cadastro() {
         towers: '',
         floorsPerTower: '',
         unitsPerFloor: '',
-        engineer: '',
-        contact: '',
-      });
+        engineer: currentProject.engineer ?? '',
+        contact: currentProject.contact ?? '',
+      };
+      setForm(filled);
+      setSavedSnapshot(filled);
 
       if (currentProject.members) {
         setMembers(
@@ -198,6 +208,19 @@ export default function Cadastro() {
     }
   }, [currentProject]);
 
+  // Alterações não salvas: botão só ativo quando há mudança + aviso ao sair/recarregar.
+  const isDirty = useMemo(
+    () => JSON.stringify(form) !== JSON.stringify(savedSnapshot),
+    [form, savedSnapshot],
+  );
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
   // Load uploads on mount when project exists
   useEffect(() => {
     if (currentProject) {
@@ -207,6 +230,10 @@ export default function Cadastro() {
         .then((data) => setUploads(data.filter((u) => u.category === 'PLANT')))
         .catch(() => {})
         .finally(() => setLoadingUploads(false));
+      uploadsApi
+        .getIfcModel(currentProject.id)
+        .then((ifc) => setIfcUpload(ifc ? { id: ifc.id, fileName: ifc.fileName } : null))
+        .catch(() => setIfcUpload(null));
     }
   }, [currentProject]);
 
@@ -224,6 +251,8 @@ export default function Cadastro() {
       name: form.name.trim(),
       company: form.company.trim(),
       address: form.address.trim(),
+      engineer: form.engineer.trim(),
+      contact: form.contact.trim(),
       status: form.status,
       startDate: form.startDate || undefined,
       endDate: form.endDate || undefined,
@@ -288,6 +317,45 @@ export default function Cadastro() {
       addToast({ type: 'success', title: 'Arquivo removido' });
     } catch {
       addToast({ type: 'error', title: 'Erro ao remover arquivo' });
+    }
+  }
+
+  async function handleIfcUpload(files: FileList | null) {
+    if (!files || files.length === 0 || !currentProject) return;
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.ifc')) {
+      addToast({ type: 'warning', title: 'Envie um arquivo .ifc' });
+      return;
+    }
+    setIfcUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const uploaded = await uploadsApi.upload(currentProject.id, fd, { category: 'IFC_MODEL' });
+      setIfcUpload({ id: uploaded.id, fileName: uploaded.fileName });
+      addToast({ type: 'success', title: 'Modelo IFC enviado', description: file.name });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Falha no upload do IFC', description: (err as Error).message });
+    } finally {
+      setIfcUploading(false);
+      if (ifcFileInputRef.current) ifcFileInputRef.current.value = '';
+    }
+  }
+
+  async function handleRemoveIfc() {
+    if (!ifcUpload) return;
+    if (!(await confirm({
+      title: 'Remover modelo IFC',
+      message: 'Remover o modelo IFC atual?',
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    }))) return;
+    try {
+      await uploadsApi.delete(ifcUpload.id);
+      setIfcUpload(null);
+      addToast({ type: 'success', title: 'Modelo IFC removido' });
+    } catch (err) {
+      addToast({ type: 'error', title: 'Falha ao remover', description: (err as Error).message });
     }
   }
 
@@ -427,7 +495,7 @@ export default function Cadastro() {
           level: item.level,
           durationDays: item.durationDays,
           plannedProgress: 0,
-          actualProgress: 0,
+          physicalProgress: 0,
           weight: item.weight,
           isCriticalPath: item.isCriticalPath,
           startDate: startDate.toISOString(),
@@ -549,10 +617,15 @@ export default function Cadastro() {
       <div className="ao-card">
         <div className="ao-card-hdr">
           <span className="ao-card-title">Empreendimento</span>
-          <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving}>
-            {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
-            {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {isDirty && !saving && (
+              <span style={{ fontSize: 10.5, color: 'var(--amber)', fontWeight: 600 }}>Alterações não salvas</span>
+            )}
+            <button className="ao-btn ao-btn-primary ao-btn-sm" onClick={handleSaveProject} disabled={saving || !isDirty}>
+              {saving ? <Loader2 size={12} className="ao-spin" /> : <Save size={12} />}
+              {saving ? 'Salvando…' : currentProject ? 'Salvar alterações' : 'Criar empreendimento'}
+            </button>
+          </div>
         </div>
 
         <div className="ao-card-body" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -614,6 +687,9 @@ export default function Cadastro() {
                 <input style={inputStyle} type="number" min="0" step="0.01" value={form.totalArea} onChange={(e) => handleFormChange('totalArea', e.target.value)} placeholder="0,00" />
               </div>
             </div>
+            <p style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 8, lineHeight: 1.5 }}>
+              Torres, pavimentos e unidades servem para <strong>pré-preencher a importação por IA</strong> — não são salvos como dados do projeto. A área total é salva.
+            </p>
           </div>
 
           {/* ── Prazo e custo ── */}
@@ -765,7 +841,41 @@ export default function Cadastro() {
             <span className="ao-badge ao-bb">BIM · IFC</span>
           </div>
           <div className="ao-card-body">
-            {sketchfabUrl ? (
+            <input
+              ref={ifcFileInputRef}
+              type="file"
+              accept=".ifc"
+              onChange={(e) => handleIfcUpload(e.target.files)}
+              style={{ display: 'none' }}
+            />
+            {ifcUpload ? (
+              <div style={{ border: '1px solid var(--bd)', borderRadius: 'var(--r-md)', padding: 14, background: 'var(--grn-bg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Box size={28} style={{ color: 'var(--green)' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--grn-t)' }}>Modelo IFC carregado</p>
+                    <p style={{ fontSize: 11, color: 'var(--t2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {ifcUpload.fileName}
+                    </p>
+                  </div>
+                </div>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginTop: 8 }}>
+                  O modelo será exibido na tela de Medição assim que o pavimento for selecionado.
+                </p>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                  <button
+                    className="ao-btn ao-btn-sm"
+                    onClick={() => ifcFileInputRef.current?.click()}
+                    disabled={ifcUploading}
+                  >
+                    <Upload size={11} /> Substituir
+                  </button>
+                  <button className="ao-btn ao-btn-sm" onClick={handleRemoveIfc} disabled={ifcUploading}>
+                    <X size={11} /> Remover
+                  </button>
+                </div>
+              </div>
+            ) : sketchfabUrl ? (
               <div>
                 <iframe
                   src={sketchfabUrl}
@@ -790,19 +900,23 @@ export default function Cadastro() {
                 </div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', marginBottom: 3 }}>Nenhum modelo vinculado</p>
                 <p style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 14 }}>
-                  Suporte a IFC, OBJ, FBX, GLB e embed Sketchfab / Autodesk BIM 360
+                  Envie um .IFC (BIM) para visualização real, ou use procedural automático na Medição.
                 </p>
                 <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button
-                    className="ao-btn ao-btn-sm"
-                    onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.ifc,.obj,.fbx,.glb,.gltf'; i.click(); }}
+                    className="ao-btn ao-btn-sm ao-btn-primary"
+                    onClick={() => ifcFileInputRef.current?.click()}
+                    disabled={ifcUploading}
                   >
-                    <Upload size={11} /> Arquivo local
+                    <Upload size={11} /> {ifcUploading ? 'Enviando...' : 'Subir IFC'}
                   </button>
                   <button className="ao-btn ao-btn-sm" onClick={handleSetSketchfab}>
                     <Link size={11} /> URL Sketchfab
                   </button>
                 </div>
+                <p style={{ fontSize: 10, color: 'var(--t3)', marginTop: 10 }}>
+                  Para arquivos Revit (.rvt), exporte como IFC 2x3/4 no Revit primeiro.
+                </p>
               </div>
             )}
           </div>
@@ -843,50 +957,45 @@ export default function Cadastro() {
         </div>
 
         {/* Members table */}
-        {members.length === 0 ? (
-          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--t3)', fontSize: 12 }}>
-            Nenhum membro adicionado. Use o formulário acima para convidar a equipe.
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="ao-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}></th>
-                  <th>Nome</th>
-                  <th>E-mail</th>
-                  <th>Função</th>
-                  <th style={{ width: 44 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((member) => {
-                  const initials = member.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
-                  return (
-                    <tr key={member.id}>
-                      <td>
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                          {initials}
-                        </div>
-                      </td>
-                      <td style={{ fontWeight: 500 }}>{member.name || '—'}</td>
-                      <td className="mono">{member.email}</td>
-                      <td><span className="ao-badge ao-bk">{ROLE_LABELS[member.role]}</span></td>
-                      <td>
-                        <button
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
-                          onClick={() => handleRemoveMember(member.id)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          rows={members}
+          getRowKey={(m) => m.id}
+          searchable
+          searchAccessor={(m) => `${m.name} ${m.email}`}
+          searchPlaceholder="Buscar membro…"
+          emptyMessage="Nenhum membro adicionado. Use o formulário acima para convidar a equipe."
+          columns={[
+            {
+              key: 'avatar',
+              header: '',
+              width: 36,
+              render: (m) => {
+                const initials = m.name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase() || '?';
+                return (
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--blu-bg)', color: 'var(--blu-t)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                    {initials}
+                  </div>
+                );
+              },
+            },
+            { key: 'name', header: 'Nome', sortable: true, sortValue: (m) => m.name, render: (m) => <span style={{ fontWeight: 500 }}>{m.name || '—'}</span> },
+            { key: 'email', header: 'E-mail', sortable: true, cellClassName: 'mono', render: (m) => m.email },
+            { key: 'role', header: 'Função', sortable: true, sortValue: (m) => ROLE_LABELS[m.role], render: (m) => <span className="ao-badge ao-bk">{ROLE_LABELS[m.role]}</span> },
+            {
+              key: 'actions',
+              header: '',
+              width: 44,
+              render: (m) => (
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--t4)', display: 'flex', alignItems: 'center', padding: '3px 6px', borderRadius: 3 }}
+                  onClick={() => handleRemoveMember(m.id)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              ),
+            },
+          ]}
+        />
       </div>
 
       {/* ── AI Import Modal ──────────────────────────────────────────── */}

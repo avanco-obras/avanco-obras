@@ -20,6 +20,7 @@ const USER_SAFE_SELECT = {
   crea: true,
   avatarUrl: true,
   isActive: true,
+  notificationPreferences: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -78,6 +79,7 @@ export class UsersService {
         ...(dto.phone !== undefined && { phone: dto.phone }),
         ...(dto.crea !== undefined && { crea: dto.crea }),
         ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
+        ...(dto.notificationPreferences !== undefined && { notificationPreferences: dto.notificationPreferences }),
       },
       select: USER_SAFE_SELECT,
     });

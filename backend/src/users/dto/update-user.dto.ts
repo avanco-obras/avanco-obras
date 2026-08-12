@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEmail, MinLength } from 'class-validator';
+import { IsString, IsOptional, IsEmail, MinLength, IsObject } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateUserDto {
@@ -8,4 +8,9 @@ export class UpdateUserDto {
   @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() crea?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() avatarUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Preferências de notificação (objeto livre)' })
+  @IsOptional()
+  @IsObject()
+  notificationPreferences?: Record<string, boolean>;
 }
