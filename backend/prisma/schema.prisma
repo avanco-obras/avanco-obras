@@ -101,7 +101,6 @@ model Project {
   hoursPerDay      Int           @default(8) @map("hours_per_day")
   weekStartDay     Int           @default(1) @map("week_start_day") // 0=Domingo … 6=Sábado
   timezone         String        @default("America/Sao_Paulo")
-  progressCriteria String        @default("COST") @map("progress_criteria")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 

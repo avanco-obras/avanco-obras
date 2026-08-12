@@ -28,7 +28,6 @@ export interface AuthResponse {
 
 // Project types
 export type ProjectStatus = 'PLANNING' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED';
-export type ProgressCriteria = 'COST' | 'QUANTITY' | 'HYBRID';
 
 export interface Project {
   id: string;
@@ -47,7 +46,6 @@ export interface Project {
   hoursPerDay: number;
   weekStartDay: number; // 0=Domingo … 6=Sábado
   timezone: string;
-  progressCriteria: ProgressCriteria;
   createdAt: string;
   updatedAt: string;
   members?: ProjectMember[];

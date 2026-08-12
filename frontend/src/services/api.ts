@@ -100,12 +100,8 @@ export const towersApi = {
 
 // ── Activity Types ────────────────────────────────────────────────
 export const activityTypesApi = {
-  list: (projectId: string) =>
-    api.get<ActivityType[]>(`/projects/${projectId}/activity-types`).then((r) => r.data),
   create: (projectId: string, data: Partial<ActivityType>) =>
     api.post<ActivityType>(`/projects/${projectId}/activity-types`, data).then((r) => r.data),
-  update: (id: string, data: Partial<ActivityType>) =>
-    api.patch<ActivityType>(`/activity-types/${id}`, data).then((r) => r.data),
   delete: (id: string) =>
     api.delete(`/activity-types/${id}`).then((r) => r.data),
 };

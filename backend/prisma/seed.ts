@@ -100,7 +100,6 @@ async function main() {
       workdaysPerWeek: 5,
       hoursPerDay: 8,
       timezone: 'America/Sao_Paulo',
-      progressCriteria: 'COST',
     },
   });
 

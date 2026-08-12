@@ -64,7 +64,6 @@ export class ProjectsService {
         workdaysPerWeek: dto.workdaysPerWeek ?? 5,
         hoursPerDay: dto.hoursPerDay ?? 8,
         timezone: dto.timezone ?? 'America/Sao_Paulo',
-        progressCriteria: dto.progressCriteria ?? 'COST',
         members: {
           create: {
             userId,
@@ -249,7 +248,6 @@ export class ProjectsService {
         ...(dto.hoursPerDay !== undefined && { hoursPerDay: dto.hoursPerDay }),
         ...(dto.weekStartDay !== undefined && { weekStartDay: dto.weekStartDay }),
         ...(dto.timezone !== undefined && { timezone: dto.timezone }),
-        ...(dto.progressCriteria !== undefined && { progressCriteria: dto.progressCriteria }),
       },
       include: {
         _count: { select: { towers: true, members: true } },

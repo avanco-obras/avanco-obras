@@ -94,13 +94,4 @@ export class CreateProjectDto {
   @IsOptional()
   @IsString()
   timezone?: string;
-
-  @ApiPropertyOptional({
-    description: 'Progress calculation criteria',
-    enum: ['COST', 'QUANTITY', 'HYBRID'],
-    default: 'COST',
-  })
-  @IsOptional()
-  @IsString()
-  progressCriteria?: string;
 }
